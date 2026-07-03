@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"liberator-node-go/utils/quictransport"
+	"liberator-node-go/internal/utils/quictransport"
 	"net"
 	"sync/atomic"
 

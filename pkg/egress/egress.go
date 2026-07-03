@@ -20,7 +20,7 @@ type Egress struct {
 }
 
 // New создаёт и настраивает TUN-интерфейс.
-func New(ifaceName, ipCIDR, externalIface string) (*Egress, error) {
+func New(ifaceName, ipCIDR, externalIface string, mtu int) (*Egress, error) {
 	eg := &Egress{
 		ifName:   ifaceName,
 		extIface: externalIface,
@@ -58,6 +58,14 @@ func New(ifaceName, ipCIDR, externalIface string) (*Egress, error) {
 	if err := netlink.AddrAdd(link, addr); err != nil {
 		eg.Close()
 		return nil, fmt.Errorf("добавление IP: %w", err)
+	}
+
+	// Задаем MTU
+	if mtu > 0 {
+		if err := netlink.LinkSetMTU(link, mtu); err != nil {
+			eg.Close()
+			return nil, fmt.Errorf("установка MTU: %w", err)
+		}
 	}
 
 	// Поднимаем интерфейс

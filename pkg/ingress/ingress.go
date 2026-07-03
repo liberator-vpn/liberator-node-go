@@ -3,11 +3,12 @@ package ingress
 import (
 	"context"
 	"crypto/tls"
-	"liberator-node-go/egress"
-	"liberator-node-go/ingress/ingressproto"
-	"liberator-node-go/utils/ipalloc"
-	"liberator-node-go/utils/liberatorjwt"
-	"liberator-node-go/utils/safemap"
+	"liberator-node-go/internal/utils/ipalloc"
+	"liberator-node-go/internal/utils/liberatorjwt"
+	"liberator-node-go/internal/utils/safemap"
+	"liberator-node-go/pkg/egress"
+	"liberator-node-go/pkg/ingress/ingressproto"
+
 	"log"
 	"net"
 	"time"
@@ -52,7 +53,7 @@ func New(ctx context.Context, lisAddr string, jwtSecret []byte, cert *tls.Certif
 		return nil, err
 	}
 
-	ig.egr, err = egress.New("liberator", "10.8.0.0/16", "enp11s0")
+	ig.egr, err = egress.New("liberator", "10.8.0.0/16", "enp11s0", 1400)
 	if err != nil {
 		panic(err)
 	}
@@ -122,7 +123,7 @@ func (ig *Ingress) Run() {
 			}
 			err = target.SendDatagram(data)
 			if err != nil {
-				log.Printf("failed to send datagram: %v", err)
+				log.Printf("failed to send datagram %d: %v", len(data), err)
 			}
 		}
 	}()
@@ -190,17 +191,14 @@ func (ig *Ingress) Authorize(ctx context.Context, source *IngressConnection, rq 
 	// Add connection to authorized
 	ig.authorizedConnections.Set(ip.String(), source)
 
-	// Milestone 1: static tunnel configuration. A real allocator will hand out
-	// per-session IPs; for now every client gets the same config, which is
-	// enough to validate connect + authorize + datagram-send.
 	return &ingressproto.AuthorizeResponse{
 		Ok:         true,
 		Reason:     nil,
 		AssignedIp: ip.String(),
-		PrefixLen:  24,
+		PrefixLen:  16,
 		Mtu:        1400,
 		Routes:     []string{"0.0.0.0/0"},
-		Dns:        []string{"1.1.1.1"},
+		Dns:        []string{"8.8.8.8"},
 	}, nil
 }
 
@@ -208,12 +206,8 @@ func (ig *Ingress) Datagram(ctx context.Context, source *IngressConnection, data
 	if len(data) == 0 {
 		return
 	}
-	// TODO: manually set source ip to frame, so user cant change it.
-
 	version := data[0] >> 4
-
 	var packet gopacket.Packet
-
 	switch version {
 	case 4:
 		packet = gopacket.NewPacket(data, layers.LayerTypeIPv4, gopacket.DecodeOptions{
@@ -221,7 +215,7 @@ func (ig *Ingress) Datagram(ctx context.Context, source *IngressConnection, data
 			NoCopy: true,
 		})
 	case 6:
-		// Not supported ipv6
+		// ipv6 is not supported
 		return
 	}
 
@@ -231,14 +225,30 @@ func (ig *Ingress) Datagram(ctx context.Context, source *IngressConnection, data
 	}
 
 	if !ipv4Layer.SrcIP.Equal(source.GetVirtualIP()) {
-		// We need to manually set ip for packet
 		ipv4Layer.SrcIP = source.GetVirtualIP()
-		// TODO: fix allocations here
 		buffer := gopacket.NewSerializeBuffer()
-		err := ipv4Layer.SerializeTo(buffer, gopacket.SerializeOptions{
+
+		allLayers := packet.Layers()
+		for _, layer := range allLayers {
+			switch l := layer.(type) {
+			case *layers.TCP:
+				l.SetNetworkLayerForChecksum(ipv4Layer)
+			case *layers.UDP:
+				l.SetNetworkLayerForChecksum(ipv4Layer)
+			}
+		}
+		serializableLayers := make([]gopacket.SerializableLayer, 0, len(allLayers))
+		for _, layer := range allLayers {
+			if s, ok := layer.(gopacket.SerializableLayer); ok {
+				serializableLayers = append(serializableLayers, s)
+			} else {
+				return
+			}
+		}
+		err := gopacket.SerializeLayers(buffer, gopacket.SerializeOptions{
 			FixLengths:       true,
 			ComputeChecksums: true,
-		})
+		}, serializableLayers...)
 		if err != nil {
 			return
 		}

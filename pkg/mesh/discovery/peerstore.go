@@ -1,8 +1,8 @@
 package discovery
 
 import (
-	"liberator-node-go/infra/ipapi"
-	"liberator-node-go/utils/safemap"
+	"liberator-node-go/internal/infra/ipapi"
+	"liberator-node-go/internal/utils/safemap"
 	"net"
 	"time"
 )

@@ -2,8 +2,8 @@ package ingress
 
 import (
 	"context"
-	"liberator-node-go/ingress/ingressproto"
-	"liberator-node-go/utils/quictransport"
+	"liberator-node-go/internal/utils/quictransport"
+	"liberator-node-go/pkg/ingress/ingressproto"
 	"log"
 	"net"
 

@@ -2,9 +2,11 @@ package discovery
 
 import (
 	"context"
-	"liberator-node-go/infra/ipapi"
-	"liberator-node-go/mesh/discovery/proto"
-	"liberator-node-go/utils/safemap"
+
+	"liberator-node-go/internal/infra/ipapi"
+	"liberator-node-go/internal/utils/safemap"
+	"liberator-node-go/pkg/mesh/discovery/proto"
+
 	"log"
 	"time"
 

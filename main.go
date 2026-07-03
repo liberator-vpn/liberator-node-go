@@ -8,9 +8,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
-	"liberator-node-go/ingress"
-	"liberator-node-go/mesh"
-	"liberator-node-go/utils/liberatorjwt"
+	"liberator-node-go/internal/appconfig"
+	"liberator-node-go/internal/utils/liberatorjwt"
+	"liberator-node-go/pkg/ingress"
+	"liberator-node-go/pkg/mesh"
+
 	"math/big"
 	"time"
 
@@ -39,6 +41,13 @@ func createNode(ctx context.Context, rootCert *x509.Certificate, priv_key []byte
 }
 
 func main() {
+	cfg, err := appconfig.LoadAppConfig("./config.yaml")
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(cfg)
+
 	ctx := context.Background()
 
 	jwtSecret := []byte("sraka")
