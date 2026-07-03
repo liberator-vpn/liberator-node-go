@@ -13,6 +13,12 @@ message AuthorizeRequest {
 message AuthorizeResponse {
     bool ok = 1;
     optional string reason = 2;
+    // Tunnel configuration assigned to the client on success.
+    string assigned_ip = 3;      // e.g. "10.8.0.2"
+    uint32 prefix_len = 4;       // e.g. 24
+    uint32 mtu = 5;              // e.g. 1400
+    repeated string routes = 6;  // CIDRs to route into the tunnel, e.g. ["0.0.0.0/0"]
+    repeated string dns = 7;     // optional DNS servers
 }
 
 service IngressService {

@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"liberator-node-go/ingress"
 	"liberator-node-go/mesh"
+	"liberator-node-go/utils/liberatorjwt"
 	"math/big"
-	mrand "math/rand"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func createNode(ctx context.Context, rootCert *x509.Certificate, priv_key []byte, bootstrap []string) *mesh.MeshNode {
@@ -39,6 +41,8 @@ func createNode(ctx context.Context, rootCert *x509.Certificate, priv_key []byte
 func main() {
 	ctx := context.Background()
 
+	jwtSecret := []byte("sraka")
+
 	_, priv_key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		panic(err)
@@ -49,19 +53,20 @@ func main() {
 		panic(err)
 	}
 
-	nodes := []*mesh.MeshNode{createNode(ctx, rootCert, priv_key, nil)}
+	/*
+		nodes := []*mesh.MeshNode{createNode(ctx, rootCert, priv_key, nil)}
 
-	for range 3 {
-		randomNode := mrand.Int31n(min(int32(3), int32(len(nodes))))
+		for range 3 {
+			randomNode := mrand.Int31n(min(int32(3), int32(len(nodes))))
 
-		node := createNode(ctx, rootCert, priv_key, []string{nodes[randomNode].Addr().String()})
-		nodes = append(nodes, node)
-	}
+			node := createNode(ctx, rootCert, priv_key, []string{nodes[randomNode].Addr().String()})
+			nodes = append(nodes, node)
+		}
 
-	for _, node := range nodes {
-		go node.Run()
-	}
-
+		for _, node := range nodes {
+			go node.Run()
+		}
+	*/
 	// Start ingress
 	_, igPriv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -71,22 +76,30 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	ig, err := ingress.New(ctx, ":2100", []byte("sraka"), ingressCert)
+	ig, err := ingress.New(ctx, ":2100", jwtSecret, ingressCert)
 	if err != nil {
 		panic(err)
 	}
 	go ig.Run()
 
-	for {
-		<-time.After(time.Second * 10)
-		s := make([]int, 0)
-		c := make([]int, 0)
-		for _, node := range nodes {
-			s = append(s, node.PeerStore().Count())
-			c = append(c, node.ConnectionsCount())
-		}
-		fmt.Println("nodes peers: ", s, "conn: ", c)
+	token, err := liberatorjwt.SignToken(uuid.MustParse("a784a74d-ce92-4648-865f-2bd02a4d07ce"), jwtSecret)
+	if err != nil {
+		panic(err)
 	}
+
+	fmt.Println("Token: ", token)
+	/*
+		for {
+			<-time.After(time.Second * 10)
+			s := make([]int, 0)
+			c := make([]int, 0)
+			for _, node := range nodes {
+				s = append(s, node.PeerStore().Count())
+				c = append(c, node.ConnectionsCount())
+			}
+			fmt.Println("nodes peers: ", s, "conn: ", c)
+		}
+	*/
 	select {}
 }
 

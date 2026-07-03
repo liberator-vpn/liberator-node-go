@@ -5,6 +5,7 @@ import (
 	"liberator-node-go/ingress/ingressproto"
 	"liberator-node-go/utils/quictransport"
 	"log"
+	"net"
 
 	"github.com/google/uuid"
 	"github.com/quic-go/quic-go"
@@ -71,9 +72,13 @@ func (ic *IngressConnection) Run() {
 		for {
 			biStream, err := ic.conn.AcceptStream(ctx)
 			if err != nil {
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					continue
+				}
 				log.Printf("failed to accept stream: %v", err)
 				return
 			}
+
 			netConn := quictransport.NewBiStreamConn(biStream, ic.conn.LocalAddr(), ic.conn.RemoteAddr())
 			ic.grpcLis.PushConnection(netConn)
 		}
@@ -82,12 +87,20 @@ func (ic *IngressConnection) Run() {
 	for {
 		data, err := ic.conn.ReceiveDatagram(ctx)
 		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			log.Printf("failed to read datagram: %v", err)
 			break
 		}
 		ic.ingress.Datagram(ctx, ic, data)
 	}
 
 	ic.closeFunc(ic)
+}
+
+func (ic *IngressConnection) SendDatagram(data []byte) error {
+	return ic.conn.SendDatagram(data)
 }
 
 func (ic *IngressConnection) Authorize(ctx context.Context, rq *ingressproto.AuthorizeRequest) (*ingressproto.AuthorizeResponse, error) {

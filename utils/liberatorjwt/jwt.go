@@ -2,6 +2,7 @@ package liberatorjwt
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -39,4 +40,19 @@ func Verify(token string, secret []byte) (*LiberatorClaims, uuid.UUID, error) {
 	}
 
 	return claims, userID, nil
+}
+
+func SignToken(userID uuid.UUID, jwtSecret []byte) (string, error) {
+	claims := &LiberatorClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "liberator",
+			Subject:   userID.String(),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 24 * 256)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ID:        uuid.NewString(),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(jwtSecret)
 }

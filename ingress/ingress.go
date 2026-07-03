@@ -3,6 +3,8 @@ package ingress
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
+	"liberator-node-go/egress"
 	"liberator-node-go/ingress/ingressproto"
 	"liberator-node-go/utils/liberatorjwt"
 	"liberator-node-go/utils/safemap"
@@ -10,7 +12,10 @@ import (
 	"net"
 	"time"
 
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"github.com/quic-go/quic-go"
+	"github.com/songgao/packets/ethernet"
 )
 
 type Ingress struct {
@@ -24,6 +29,8 @@ type Ingress struct {
 	jwtSecret []byte
 
 	connections safemap.Safemap[string, *IngressConnection]
+
+	egr *egress.Egress
 }
 
 func New(ctx context.Context, lisAddr string, jwtSecret []byte, cert *tls.Certificate) (*Ingress, error) {
@@ -32,6 +39,12 @@ func New(ctx context.Context, lisAddr string, jwtSecret []byte, cert *tls.Certif
 		cert:        cert,
 		connections: safemap.New[string, *IngressConnection](),
 		jwtSecret:   jwtSecret,
+	}
+	var err error
+
+	ig.egr, err = egress.New("liberator", "10.8.0.0/24", "enp11s0")
+	if err != nil {
+		panic(err)
 	}
 
 	addr, err := net.ResolveUDPAddr("udp", lisAddr)
@@ -64,12 +77,38 @@ func New(ctx context.Context, lisAddr string, jwtSecret []byte, cert *tls.Certif
 }
 
 func (ig *Ingress) Run() {
+
+	go func() {
+		var frame ethernet.Frame
+		frame.Resize(1500)
+		for {
+			n, err := ig.egr.Read(frame)
+			if err != nil {
+				log.Printf("failed to read from egr: %v", err)
+				continue
+			}
+			data := frame[:n]
+			var conn *IngressConnection
+			ig.connections.ForeachCond(func(s string, ic *IngressConnection) bool {
+				conn = ic
+				return false
+			})
+			if conn != nil {
+				err = conn.SendDatagram(data)
+				if err != nil {
+					log.Printf("failed to send datagram: %v", err)
+				}
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <-ig.ctx.Done():
 			return
 		default:
 		}
+
 		conn, err := ig.lis.Accept(ig.ctx)
 		if err != nil {
 			log.Printf("failed to accept ingress connection: %v", err)
@@ -101,15 +140,50 @@ func (ig *Ingress) Authorize(ctx context.Context, source *IngressConnection, rq 
 	source.SetUserID(userID)
 	_ = claims
 
+	// Milestone 1: static tunnel configuration. A real allocator will hand out
+	// per-session IPs; for now every client gets the same config, which is
+	// enough to validate connect + authorize + datagram-send.
 	return &ingressproto.AuthorizeResponse{
-		Ok:     true,
-		Reason: nil,
+		Ok:         true,
+		Reason:     nil,
+		AssignedIp: "10.8.0.2",
+		PrefixLen:  24,
+		Mtu:        1400,
+		Routes:     []string{"0.0.0.0/0"},
+		Dns:        []string{"1.1.1.1"},
 	}, nil
 }
 
 func (ig *Ingress) Datagram(ctx context.Context, source *IngressConnection, data []byte) {
-	if !source.IsAuthorized() {
+	if !source.IsAuthorized() || len(data) == 0 {
 		return
 	}
+	// TODO: manually set source ip to frame, so user cant change it.
 
+	version := data[0] >> 4
+	fmt.Printf("IP version=%d, len=%d\n", version, len(data))
+
+	if version == 4 {
+		p := gopacket.NewPacket(data, layers.LayerTypeIPv4, gopacket.Default)
+		if l := p.Layer(layers.LayerTypeIPv4); l != nil {
+			ip := l.(*layers.IPv4)
+			fmt.Printf("v4 Src: %s, Dst: %s\n", ip.SrcIP, ip.DstIP)
+		}
+	} else if version == 6 {
+		p := gopacket.NewPacket(data, layers.LayerTypeIPv6, gopacket.Default)
+		if l := p.Layer(layers.LayerTypeIPv6); l != nil {
+			ip := l.(*layers.IPv6)
+			fmt.Printf("v6 Src: %s, Dst: %s\n", ip.SrcIP, ip.DstIP)
+		}
+	}
+
+	n, err := ig.egr.Write(data)
+	if err != nil {
+		log.Printf("failed to write to egr: %v", err)
+		return
+	}
+	if n != len(data) {
+		log.Printf("write egr size len missmatch: %v", err)
+		return
+	}
 }

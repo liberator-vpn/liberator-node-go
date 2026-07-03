@@ -67,9 +67,15 @@ func (x *AuthorizeRequest) GetToken() string {
 }
 
 type AuthorizeResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
-	Reason        *string                `protobuf:"bytes,2,opt,name=reason,proto3,oneof" json:"reason,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Ok     bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	Reason *string                `protobuf:"bytes,2,opt,name=reason,proto3,oneof" json:"reason,omitempty"`
+	// Tunnel configuration assigned to the client on success.
+	AssignedIp    string   `protobuf:"bytes,3,opt,name=assigned_ip,json=assignedIp,proto3" json:"assigned_ip,omitempty"` // e.g. "10.8.0.2"
+	PrefixLen     uint32   `protobuf:"varint,4,opt,name=prefix_len,json=prefixLen,proto3" json:"prefix_len,omitempty"`   // e.g. 24
+	Mtu           uint32   `protobuf:"varint,5,opt,name=mtu,proto3" json:"mtu,omitempty"`                                // e.g. 1400
+	Routes        []string `protobuf:"bytes,6,rep,name=routes,proto3" json:"routes,omitempty"`                           // CIDRs to route into the tunnel, e.g. ["0.0.0.0/0"]
+	Dns           []string `protobuf:"bytes,7,rep,name=dns,proto3" json:"dns,omitempty"`                                 // optional DNS servers
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -118,16 +124,58 @@ func (x *AuthorizeResponse) GetReason() string {
 	return ""
 }
 
+func (x *AuthorizeResponse) GetAssignedIp() string {
+	if x != nil {
+		return x.AssignedIp
+	}
+	return ""
+}
+
+func (x *AuthorizeResponse) GetPrefixLen() uint32 {
+	if x != nil {
+		return x.PrefixLen
+	}
+	return 0
+}
+
+func (x *AuthorizeResponse) GetMtu() uint32 {
+	if x != nil {
+		return x.Mtu
+	}
+	return 0
+}
+
+func (x *AuthorizeResponse) GetRoutes() []string {
+	if x != nil {
+		return x.Routes
+	}
+	return nil
+}
+
+func (x *AuthorizeResponse) GetDns() []string {
+	if x != nil {
+		return x.Dns
+	}
+	return nil
+}
+
 var File_ingress_ingressproto_ingress_proto protoreflect.FileDescriptor
 
 const file_ingress_ingressproto_ingress_proto_rawDesc = "" +
 	"\n" +
 	"\"ingress/ingressproto/ingress.proto\x12\fingressproto\x1a\x1bgoogle/protobuf/empty.proto\"(\n" +
 	"\x10AuthorizeRequest\x12\x14\n" +
-	"\x05token\x18\x01 \x01(\tR\x05token\"K\n" +
+	"\x05token\x18\x01 \x01(\tR\x05token\"\xc7\x01\n" +
 	"\x11AuthorizeResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x1b\n" +
-	"\x06reason\x18\x02 \x01(\tH\x00R\x06reason\x88\x01\x01B\t\n" +
+	"\x06reason\x18\x02 \x01(\tH\x00R\x06reason\x88\x01\x01\x12\x1f\n" +
+	"\vassigned_ip\x18\x03 \x01(\tR\n" +
+	"assignedIp\x12\x1d\n" +
+	"\n" +
+	"prefix_len\x18\x04 \x01(\rR\tprefixLen\x12\x10\n" +
+	"\x03mtu\x18\x05 \x01(\rR\x03mtu\x12\x16\n" +
+	"\x06routes\x18\x06 \x03(\tR\x06routes\x12\x10\n" +
+	"\x03dns\x18\a \x03(\tR\x03dnsB\t\n" +
 	"\a_reason2^\n" +
 	"\x0eIngressService\x12L\n" +
 	"\tAuthorize\x12\x1e.ingressproto.AuthorizeRequest\x1a\x1f.ingressproto.AuthorizeResponseB\x10Z\x0e./ingressprotob\x06proto3"
