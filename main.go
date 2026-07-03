@@ -53,20 +53,6 @@ func main() {
 		panic(err)
 	}
 
-	/*
-		nodes := []*mesh.MeshNode{createNode(ctx, rootCert, priv_key, nil)}
-
-		for range 3 {
-			randomNode := mrand.Int31n(min(int32(3), int32(len(nodes))))
-
-			node := createNode(ctx, rootCert, priv_key, []string{nodes[randomNode].Addr().String()})
-			nodes = append(nodes, node)
-		}
-
-		for _, node := range nodes {
-			go node.Run()
-		}
-	*/
 	// Start ingress
 	_, igPriv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -86,20 +72,16 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	fmt.Println("Original Token: ", token, "\n")
 
-	fmt.Println("Token: ", token)
-	/*
-		for {
-			<-time.After(time.Second * 10)
-			s := make([]int, 0)
-			c := make([]int, 0)
-			for _, node := range nodes {
-				s = append(s, node.PeerStore().Count())
-				c = append(c, node.ConnectionsCount())
-			}
-			fmt.Println("nodes peers: ", s, "conn: ", c)
+	for range 5 {
+		token, err := liberatorjwt.SignToken(uuid.New(), jwtSecret)
+		if err != nil {
+			panic(err)
 		}
-	*/
+		fmt.Println("New Token: ", token, "\n")
+	}
+
 	select {}
 }
 

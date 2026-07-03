@@ -15,8 +15,9 @@ import (
 type IngressConnection struct {
 	ingressproto.IngressServiceServer
 
-	id     string
-	userID uuid.UUID
+	id        string
+	userID    uuid.UUID
+	virtualIp net.IP
 
 	ingress *Ingress
 	conn    *quic.Conn
@@ -48,14 +49,21 @@ func (ic *IngressConnection) ConnectionID() string {
 	return ic.id
 }
 
+func (ic *IngressConnection) Authorized() bool {
+	return ic.userID != uuid.Nil
+}
 func (ic *IngressConnection) UserID() uuid.UUID {
 	return ic.userID
 }
 func (ic *IngressConnection) SetUserID(userID uuid.UUID) {
 	ic.userID = userID
 }
-func (ic *IngressConnection) IsAuthorized() bool {
-	return ic.userID != uuid.Nil
+
+func (ic *IngressConnection) SetVirtualIP(ip net.IP) {
+	ic.virtualIp = ip
+}
+func (ic *IngressConnection) GetVirtualIP() net.IP {
+	return ic.virtualIp
 }
 
 func (c *IngressConnection) Close() {
@@ -93,7 +101,10 @@ func (ic *IngressConnection) Run() {
 			log.Printf("failed to read datagram: %v", err)
 			break
 		}
-		ic.ingress.Datagram(ctx, ic, data)
+		// Drop unathorized
+		if ic.userID != uuid.Nil {
+			ic.ingress.Datagram(ctx, ic, data)
+		}
 	}
 
 	ic.closeFunc(ic)
