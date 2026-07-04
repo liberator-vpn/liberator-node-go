@@ -12,13 +12,23 @@ type LiberatorClaims struct {
 	jwt.RegisteredClaims
 }
 
-func Verify(token string, secret []byte) (*LiberatorClaims, uuid.UUID, error) {
+type LiberatorJWT struct {
+	secret []byte
+}
+
+func New(secret []byte) *LiberatorJWT {
+	return &LiberatorJWT{
+		secret: secret,
+	}
+}
+
+func (j *LiberatorJWT) Verify(token string) (*LiberatorClaims, uuid.UUID, error) {
 	parsed, err := jwt.ParseWithClaims(token, &LiberatorClaims{}, func(t *jwt.Token) (any, error) {
 		// Проверяем алгоритм подписи
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
-		return secret, nil
+		return j.secret, nil
 	})
 	if err != nil {
 		return nil, uuid.Nil, err
@@ -42,7 +52,7 @@ func Verify(token string, secret []byte) (*LiberatorClaims, uuid.UUID, error) {
 	return claims, userID, nil
 }
 
-func SignToken(userID uuid.UUID, jwtSecret []byte) (string, error) {
+func (j *LiberatorJWT) SignToken(userID uuid.UUID) (string, error) {
 	claims := &LiberatorClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    "liberator",
@@ -54,5 +64,5 @@ func SignToken(userID uuid.UUID, jwtSecret []byte) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	return token.SignedString(j.secret)
 }

@@ -6,8 +6,8 @@ import (
 	"liberator-node-go/internal/utils/ipalloc"
 	"liberator-node-go/internal/utils/liberatorjwt"
 	"liberator-node-go/internal/utils/safemap"
-	"liberator-node-go/pkg/egress"
 	"liberator-node-go/pkg/ingress/ingressproto"
+	"sync"
 
 	"log"
 	"net"
@@ -16,7 +16,6 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/quic-go/quic-go"
-	"github.com/songgao/packets/ethernet"
 )
 
 type Ingress struct {
@@ -27,35 +26,32 @@ type Ingress struct {
 	transport *quic.Transport
 	lis       *quic.Listener
 
-	jwtSecret []byte
+	jwtIss *liberatorjwt.LiberatorJWT
 
 	connections safemap.Safemap[string, *IngressConnection]
 	// By virtual ip
 	authorizedConnections safemap.Safemap[string, *IngressConnection]
 
-	egr *egress.Egress
-
 	ipAlloc *ipalloc.IPAllocator
+
+	in, out chan []byte
+
+	runOnce sync.Once
 }
 
-func New(ctx context.Context, lisAddr string, jwtSecret []byte, cert *tls.Certificate) (*Ingress, error) {
+func New(ctx context.Context, lisAddr string, jwtIss *liberatorjwt.LiberatorJWT, cert *tls.Certificate) (*Ingress, error) {
 	ig := &Ingress{
 		ctx:                   ctx,
 		cert:                  cert,
 		connections:           safemap.New[string, *IngressConnection](),
 		authorizedConnections: safemap.New[string, *IngressConnection](),
-		jwtSecret:             jwtSecret,
+		jwtIss:                jwtIss,
 	}
 	var err error
 
 	ig.ipAlloc, err = ipalloc.New("10.8.0.0/16")
 	if err != nil {
 		return nil, err
-	}
-
-	ig.egr, err = egress.New("liberator", "10.8.0.0/16", "enp11s0", 1400)
-	if err != nil {
-		panic(err)
 	}
 
 	addr, err := net.ResolveUDPAddr("udp", lisAddr)
@@ -87,71 +83,68 @@ func New(ctx context.Context, lisAddr string, jwtSecret []byte, cert *tls.Certif
 	return ig, nil
 }
 
-func (ig *Ingress) Run() {
-	go func() {
-		var frame ethernet.Frame
-		frame.Resize(1500)
+func (ig *Ingress) Run(in, out chan []byte) {
+	ig.runOnce.Do(func() {
+
+		ig.in = in
+		ig.out = out
+
+		go func() {
+			for data := range in {
+				version := data[0] >> 4
+				var packet gopacket.Packet
+				switch version {
+				case 4:
+					packet = gopacket.NewPacket(data, layers.LayerTypeIPv4, gopacket.DecodeOptions{
+						Lazy:   true,
+						NoCopy: true,
+					})
+				case 6:
+					// Not supported ipv6
+					continue
+				}
+
+				ipv4Layer := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
+				if ipv4Layer == nil {
+					continue
+				}
+				targetIP := ipv4Layer.DstIP
+				target, ex := ig.authorizedConnections.Get(targetIP.String())
+				if !ex {
+					continue
+				}
+				err := target.SendDatagram(data)
+				if err != nil {
+					log.Printf("failed to send datagram %d: %v", len(data), err)
+				}
+			}
+		}()
+
 		for {
-			n, err := ig.egr.Read(frame)
+			select {
+			case <-ig.ctx.Done():
+				return
+			default:
+			}
+
+			conn, err := ig.lis.Accept(ig.ctx)
 			if err != nil {
-				log.Printf("failed to read from egr: %v", err)
+				log.Printf("failed to accept ingress connection: %v", err)
 				continue
 			}
-			data := frame[:n]
-
-			version := data[0] >> 4
-			var packet gopacket.Packet
-			switch version {
-			case 4:
-				packet = gopacket.NewPacket(data, layers.LayerTypeIPv4, gopacket.DecodeOptions{
-					Lazy:   true,
-					NoCopy: true,
-				})
-			case 6:
-				// Not supported ipv6
-				continue
-			}
-
-			ipv4Layer := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
-			if ipv4Layer == nil {
-				continue
-			}
-			targetIP := ipv4Layer.DstIP
-			target, ex := ig.authorizedConnections.Get(targetIP.String())
-			if !ex {
-				continue
-			}
-			err = target.SendDatagram(data)
+			wc, err := wrapConnetion(conn, ig, func(c *IngressConnection) {
+				ig.connections.Delete(c.ConnectionID())
+				ig.authorizedConnections.Delete(c.GetVirtualIP().String())
+			})
 			if err != nil {
-				log.Printf("failed to send datagram %d: %v", len(data), err)
+				log.Printf("failed to wrap ingress connection: %v", err)
+				continue
 			}
-		}
-	}()
+			ig.connections.Set(wc.ConnectionID(), wc)
 
-	for {
-		select {
-		case <-ig.ctx.Done():
-			return
-		default:
+			go wc.Run()
 		}
-
-		conn, err := ig.lis.Accept(ig.ctx)
-		if err != nil {
-			log.Printf("failed to accept ingress connection: %v", err)
-			continue
-		}
-		wc, err := wrapConnetion(conn, ig, func(c *IngressConnection) {
-			ig.connections.Delete(c.ConnectionID())
-			ig.authorizedConnections.Delete(c.GetVirtualIP().String())
-		})
-		if err != nil {
-			log.Printf("failed to wrap ingress connection: %v", err)
-			continue
-		}
-		ig.connections.Set(wc.ConnectionID(), wc)
-
-		go wc.Run()
-	}
+	})
 }
 
 func (ig *Ingress) Authorize(ctx context.Context, source *IngressConnection, rq *ingressproto.AuthorizeRequest) (*ingressproto.AuthorizeResponse, error) {
@@ -163,7 +156,7 @@ func (ig *Ingress) Authorize(ctx context.Context, source *IngressConnection, rq 
 		}, nil
 	}
 
-	claims, userID, err := liberatorjwt.Verify(rq.Token, ig.jwtSecret)
+	claims, userID, err := ig.jwtIss.Verify(rq.Token)
 	if err != nil {
 		reason := err.Error()
 		return &ingressproto.AuthorizeResponse{
@@ -255,13 +248,7 @@ func (ig *Ingress) Datagram(ctx context.Context, source *IngressConnection, data
 		data = buffer.Bytes()
 	}
 
-	n, err := ig.egr.Write(data)
-	if err != nil {
-		log.Printf("failed to write to egr: %v", err)
-		return
-	}
-	if n != len(data) {
-		log.Printf("write egr size len missmatch: %v", err)
-		return
+	if ig.out != nil {
+		ig.out <- data
 	}
 }

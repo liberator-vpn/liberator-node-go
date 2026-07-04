@@ -10,25 +10,26 @@ type AuthConfig struct {
 	RootCA    string `yaml:"root_ca"`
 }
 
+// IngressConfig настройки входящих QUIC-соединений
+type IngressConfig struct {
+	ListenAddr string `yaml:"listen_addr"`
+	Cert       string `yaml:"cert"`
+	Key        string `yaml:"key"`
+}
+
 // EgressConfig настройки выхода в интернет
 type EgressConfig struct {
 	IfaceInName  string `yaml:"iface_in_name"`
 	IfaceOutName string `yaml:"iface_out_name"`
 }
 
-// IngressConfig настройки входящих QUIC-соединений
-type IngressConfig struct {
-	ListenAddr string `yaml:"listen_addr"`
-	Cert       string `yaml:"cert"`
-}
-
-// BridgeConfig связывает ingress и egress, задаёт подсеть
+// BridgeConfig описывает один мост (bridge) со своим ingress/egress и сетевой конфигурацией
 type BridgeConfig struct {
-	Ingress string `yaml:"ingress"`
-	Egress  string `yaml:"egress"`
-	CIDR    string `yaml:"cidr"`
-	MTU     int    `yaml:"mtu"`
-	DNS     string `yaml:"dns"`
+	Ingress IngressConfig `yaml:"ingress"`
+	Egress  EgressConfig  `yaml:"egress"`
+	CIDR    string        `yaml:"cidr"`
+	MTU     int           `yaml:"mtu"`
+	DNS     string        `yaml:"dns"`
 }
 
 // MeshConfig для кластеризации (обнаружение пиров)
@@ -36,8 +37,8 @@ type MeshConfig struct {
 	ListenAddr        string   `yaml:"listen_addr"`
 	BootstrapAddr     []string `yaml:"bootstrap_addr"`
 	PeersStore        string   `yaml:"peers_store"`
-	DiscoveryInterval string   `yaml:"discovery_interval"`
-	RTTUpdateInterval string   `yaml:"rtt_update_interval"`
+	DiscoveryInterval string   `yaml:"discovery_interval"`  // можно заменить на time.Duration
+	RTTUpdateInterval string   `yaml:"rtt_update_interval"` // можно заменить на time.Duration
 }
 
 // MetricsConfig для сбора метрик
@@ -47,12 +48,10 @@ type MetricsConfig struct {
 
 // AppConfig общая структура конфигурации
 type AppConfig struct {
-	Auth    AuthConfig               `yaml:"auth"`
-	Egress  map[string]EgressConfig  `yaml:"egress"`
-	Ingress map[string]IngressConfig `yaml:"ingress"`
-	Bridge  map[string]BridgeConfig  `yaml:"bridge"`
-	Mesh    MeshConfig               `yaml:"mesh"`
-	Metrics MetricsConfig            `yaml:"metrics"`
+	Auth    AuthConfig              `yaml:"auth"`
+	Bridge  map[string]BridgeConfig `yaml:"bridge"` // ключ — имя моста
+	Mesh    MeshConfig              `yaml:"mesh"`
+	Metrics MetricsConfig           `yaml:"metrics"`
 }
 
 // LoadAppConfig загружает конфигурацию из YAML-файла

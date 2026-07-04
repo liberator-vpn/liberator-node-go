@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"liberator-node-go/internal/appconfig"
 	"liberator-node-go/internal/utils/liberatorjwt"
-	"liberator-node-go/pkg/ingress"
+	"liberator-node-go/pkg/bridge"
 	"liberator-node-go/pkg/mesh"
 
 	"math/big"
@@ -46,11 +46,7 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Println(cfg)
-
 	ctx := context.Background()
-
-	jwtSecret := []byte("sraka")
 
 	_, priv_key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -71,20 +67,27 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	ig, err := ingress.New(ctx, ":2100", jwtSecret, ingressCert)
-	if err != nil {
-		panic(err)
-	}
-	go ig.Run()
 
-	token, err := liberatorjwt.SignToken(uuid.MustParse("a784a74d-ce92-4648-865f-2bd02a4d07ce"), jwtSecret)
+	jwtIss := liberatorjwt.New([]byte(cfg.Auth.JWTSecret))
+
+	bridges := map[string]*bridge.Bridge{}
+	for name, br := range cfg.Bridge {
+		bridge, err := bridge.New(ctx, br, jwtIss, ingressCert)
+		if err != nil {
+			panic(err)
+		}
+		go bridge.Run()
+		bridges[name] = bridge
+	}
+
+	token, err := jwtIss.SignToken(uuid.MustParse("a784a74d-ce92-4648-865f-2bd02a4d07ce"))
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println("Original Token: ", token, "\n")
 
 	for range 5 {
-		token, err := liberatorjwt.SignToken(uuid.New(), jwtSecret)
+		token, err := jwtIss.SignToken(uuid.New())
 		if err != nil {
 			panic(err)
 		}

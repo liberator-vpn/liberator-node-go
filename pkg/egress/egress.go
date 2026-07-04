@@ -1,9 +1,12 @@
 package egress
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net"
 	"strings"
+	"sync"
 
 	"github.com/coreos/go-iptables/iptables"
 	"github.com/songgao/water"
@@ -12,18 +15,24 @@ import (
 
 // Egress управляет TUN-интерфейсом и маршрутизацией.
 type Egress struct {
+	ctx      context.Context
 	ifce     *water.Interface
 	ifName   string
 	ipNet    *net.IPNet
 	ipt      *iptables.IPTables
 	extIface string // внешний интерфейс для NAT
+	mtu      int
+
+	runOnce sync.Once
 }
 
 // New создаёт и настраивает TUN-интерфейс.
-func New(ifaceName, ipCIDR, externalIface string, mtu int) (*Egress, error) {
+func New(ctx context.Context, ifaceName, ipCIDR, externalIface string, mtu int) (*Egress, error) {
 	eg := &Egress{
+		ctx:      ctx,
 		ifName:   ifaceName,
 		extIface: externalIface,
+		mtu:      mtu,
 	}
 
 	// 1. Создаём TUN-интерфейс
@@ -35,14 +44,14 @@ func New(ifaceName, ipCIDR, externalIface string, mtu int) (*Egress, error) {
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("создание TUN: %w", err)
+		return nil, fmt.Errorf("failed to create TUn: %w", err)
 	}
 
 	// 2. Парсим IP и маску
 	ip, ipNet, err := net.ParseCIDR(ipCIDR)
 	if err != nil {
 		eg.Close()
-		return nil, fmt.Errorf("неверный CIDR: %w", err)
+		return nil, fmt.Errorf("invalid CIDR: %w", err)
 	}
 	eg.ipNet = &net.IPNet{IP: ip, Mask: ipNet.Mask}
 
@@ -50,28 +59,28 @@ func New(ifaceName, ipCIDR, externalIface string, mtu int) (*Egress, error) {
 	link, err := netlink.LinkByName(ifaceName)
 	if err != nil {
 		eg.Close()
-		return nil, fmt.Errorf("получение интерфейса: %w", err)
+		return nil, fmt.Errorf("failed to get iface with name %s: %w", ifaceName, err)
 	}
 
 	// Добавляем IP-адрес
 	addr := &netlink.Addr{IPNet: eg.ipNet}
 	if err := netlink.AddrAdd(link, addr); err != nil {
 		eg.Close()
-		return nil, fmt.Errorf("добавление IP: %w", err)
+		return nil, fmt.Errorf("failed to add IP: %w", err)
 	}
 
 	// Задаем MTU
 	if mtu > 0 {
 		if err := netlink.LinkSetMTU(link, mtu); err != nil {
 			eg.Close()
-			return nil, fmt.Errorf("установка MTU: %w", err)
+			return nil, fmt.Errorf("failed to set MTU: %w", err)
 		}
 	}
 
 	// Поднимаем интерфейс
 	if err := netlink.LinkSetUp(link); err != nil {
 		eg.Close()
-		return nil, fmt.Errorf("поднятие интерфейса: %w", err)
+		return nil, fmt.Errorf("failed to up iface: %w", err)
 	}
 
 	// 4. Включаем IP-форвардинг
@@ -81,7 +90,7 @@ func New(ifaceName, ipCIDR, externalIface string, mtu int) (*Egress, error) {
 	eg.ipt, err = iptables.New()
 	if err != nil {
 		eg.Close()
-		return nil, fmt.Errorf("инициализация iptables: %w", err)
+		return nil, fmt.Errorf("failed to initialize iptables: %w", err)
 	}
 
 	if err := eg.setupNAT(); err != nil {
@@ -96,7 +105,7 @@ func (eg *Egress) setupNAT() error {
 	if eg.extIface == "" {
 		ext, err := getDefaultInterface()
 		if err != nil {
-			return fmt.Errorf("определение внешнего интерфейса: %w", err)
+			return fmt.Errorf("failed to get default iface: %w", err)
 		}
 		eg.extIface = ext
 	}
@@ -105,7 +114,7 @@ func (eg *Egress) setupNAT() error {
 
 	// Маскарадинг (NAT)
 	if err := eg.ipt.Append("nat", "POSTROUTING", "-s", tunNet, "-o", eg.extIface, "-j", "MASQUERADE"); err != nil {
-		return fmt.Errorf("добавление NAT: %w", err)
+		return fmt.Errorf("failed to setup NAT: %w", err)
 	}
 
 	// Разрешаем форвардинг для TUN-интерфейса
@@ -114,7 +123,7 @@ func (eg *Egress) setupNAT() error {
 		{"-o", eg.ifName, "-j", "ACCEPT"},
 	} {
 		if err := eg.ipt.Append("filter", "FORWARD", rule...); err != nil {
-			return fmt.Errorf("добавление FORWARD: %w", err)
+			return fmt.Errorf("failed to setup iface FORWARD: %w", err)
 		}
 	}
 	return nil
@@ -138,7 +147,7 @@ func getDefaultInterface() (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("не найден интерфейс по умолчанию")
+	return "", fmt.Errorf("failed to get default iface")
 }
 
 // Close удаляет интерфейс и очищает правила iptables.
@@ -151,7 +160,7 @@ func (eg *Egress) Close() error {
 
 		// Удаляем NAT
 		if err := eg.ipt.Delete("nat", "POSTROUTING", "-s", tunNet, "-o", eg.extIface, "-j", "MASQUERADE"); err != nil {
-			errs = append(errs, fmt.Sprintf("удаление NAT: %v", err))
+			errs = append(errs, fmt.Sprintf("failed to remove NAT: %v", err))
 		}
 
 		// Удаляем FORWARD правила
@@ -160,7 +169,7 @@ func (eg *Egress) Close() error {
 			{"-o", eg.ifName, "-j", "ACCEPT"},
 		} {
 			if err := eg.ipt.Delete("filter", "FORWARD", rule...); err != nil {
-				errs = append(errs, fmt.Sprintf("удаление FORWARD: %v", err))
+				errs = append(errs, fmt.Sprintf("failed to remove FORWARD: %v", err))
 			}
 		}
 	}
@@ -169,15 +178,15 @@ func (eg *Egress) Close() error {
 	if eg.ifce != nil {
 		if link, err := netlink.LinkByName(eg.ifName); err == nil {
 			if err := netlink.LinkDel(link); err != nil {
-				errs = append(errs, fmt.Sprintf("удаление интерфейса: %v", err))
+				errs = append(errs, fmt.Sprintf("failed to remove iface: %v", err))
 			}
 		} else {
-			errs = append(errs, fmt.Sprintf("интерфейс не найден: %v", err))
+			errs = append(errs, fmt.Sprintf("failed to find iface: %v", err))
 		}
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("ошибки при закрытии: %s", strings.Join(errs, "; "))
+		return fmt.Errorf("failed to close: %s", strings.Join(errs, "; "))
 	}
 	return nil
 }
@@ -188,4 +197,49 @@ func (eg *Egress) Write(p []byte) (int, error) {
 
 func (eg *Egress) Read(p []byte) (int, error) {
 	return eg.ifce.Read(p)
+}
+
+func (eg *Egress) Run(in, out chan []byte) {
+	eg.runOnce.Do(func() {
+		ctx, cancel := context.WithCancel(eg.ctx)
+		defer cancel()
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					break
+				default:
+				}
+				buf := make([]byte, eg.mtu)
+
+				n, err := eg.Read(buf)
+				if err != nil {
+					log.Printf("failed to read from iface: %v", err)
+					continue
+				}
+				if n == 0 {
+					continue
+				}
+				out <- buf[:n]
+			}
+		}()
+
+		func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case data := <-in:
+					n, err := eg.Write(data)
+					if err != nil {
+						log.Printf("failed to write to iface: %v", err)
+						continue
+					}
+					if n != len(data) {
+						log.Printf("iface write size missmatch iface: %v", err)
+					}
+				}
+			}
+		}()
+	})
 }
