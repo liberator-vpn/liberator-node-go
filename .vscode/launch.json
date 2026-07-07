@@ -10,9 +10,20 @@
             "type": "go",
             "request": "launch",
             "mode": "auto",
-            "program": "${workspaceFolder}/main.go",
+            "program": "${workspaceFolder}/cmd/node/main.go",
             "console": "integratedTerminal",
-            "asRoot": true
+            "asRoot": true,
+            "cwd": "."
+        },
+        {
+            "name": "Generate certificates",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/certgen/main.go",
+            "console": "integratedTerminal",
+            "asRoot": false,
+            "cwd": "."
         }
     ]
 }

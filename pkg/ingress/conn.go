@@ -15,9 +15,11 @@ import (
 type IngressConnection struct {
 	ingressproto.IngressServiceServer
 
-	id        string
-	userID    uuid.UUID
-	virtualIp net.IP
+	id string
+
+	authorized bool
+	userID     uuid.UUID
+	virtualIp  net.IP
 
 	ingress *Ingress
 	conn    *quic.Conn
@@ -39,6 +41,7 @@ func wrapConnetion(conn *quic.Conn, ingress *Ingress, closeFunc func(c *IngressC
 
 		closeFunc: closeFunc,
 		userID:    uuid.Nil,
+		virtualIp: nil,
 	}
 	ingressproto.RegisterIngressServiceServer(ic.grpcServer, ic)
 
@@ -49,18 +52,26 @@ func (ic *IngressConnection) ConnectionID() string {
 	return ic.id
 }
 
-func (ic *IngressConnection) Authorized() bool {
-	return ic.userID != uuid.Nil
+func (ic *IngressConnection) GetAuthorized() bool {
+	return ic.authorized
 }
-func (ic *IngressConnection) UserID() uuid.UUID {
+func (ic *IngressConnection) SetAuthorized() {
+	ic.authorized = true
+}
+
+func (ic *IngressConnection) GetUserID() uuid.UUID {
 	return ic.userID
 }
 func (ic *IngressConnection) SetUserID(userID uuid.UUID) {
-	ic.userID = userID
+	if ic.userID == uuid.Nil {
+		ic.userID = userID
+	}
 }
 
 func (ic *IngressConnection) SetVirtualIP(ip net.IP) {
-	ic.virtualIp = ip
+	if ic.virtualIp == nil {
+		ic.virtualIp = ip
+	}
 }
 func (ic *IngressConnection) GetVirtualIP() net.IP {
 	return ic.virtualIp

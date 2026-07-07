@@ -44,7 +44,7 @@ func IssueNodeCertificate(
 	nodeName string, // Имя ноды (например, "node-1.mesh")
 	caCert *x509.Certificate, // Сертификат корневого CA из первого метода
 	caPrivKey ed25519.PrivateKey, // Приватный ключ корневого CA для подписи
-) (*tls.Certificate, error) {
+) (*x509.Certificate, error) {
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
@@ -73,10 +73,12 @@ func IssueNodeCertificate(
 	if err != nil {
 		return nil, err
 	}
+	return x509.ParseCertificate(certDER)
+}
 
-	// Возвращаем готовую структуру для tls.Config
+func X509ToTLSCertificate(cert *x509.Certificate, privKey ed25519.PrivateKey) *tls.Certificate {
 	return &tls.Certificate{
-		Certificate: [][]byte{certDER},
-		PrivateKey:  nodePrivKey,
-	}, nil
+		Certificate: [][]byte{cert.Raw}, // DER-представление сертификата
+		PrivateKey:  privKey,
+	}
 }

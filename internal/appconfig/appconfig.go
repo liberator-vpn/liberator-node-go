@@ -12,6 +12,7 @@ type AuthConfig struct {
 
 // IngressConfig настройки входящих QUIC-соединений
 type IngressConfig struct {
+	Type       string `yaml:"type"`
 	ListenAddr string `yaml:"listen_addr"`
 	Cert       string `yaml:"cert"`
 	Key        string `yaml:"key"`
@@ -25,11 +26,11 @@ type EgressConfig struct {
 
 // BridgeConfig описывает один мост (bridge) со своим ingress/egress и сетевой конфигурацией
 type BridgeConfig struct {
-	Ingress IngressConfig `yaml:"ingress"`
-	Egress  EgressConfig  `yaml:"egress"`
-	CIDR    string        `yaml:"cidr"`
-	MTU     int           `yaml:"mtu"`
-	DNS     string        `yaml:"dns"`
+	Ingresses map[string]IngressConfig `yaml:"ingresses"`
+	Egress    EgressConfig             `yaml:"egress"`
+	CIDR      string                   `yaml:"cidr"`
+	MTU       int                      `yaml:"mtu"`
+	DNS       string                   `yaml:"dns"`
 }
 
 // MeshConfig для кластеризации (обнаружение пиров)

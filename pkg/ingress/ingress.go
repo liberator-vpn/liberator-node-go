@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"liberator-node-go/internal/utils/ipalloc"
 	"liberator-node-go/internal/utils/liberatorjwt"
+	"liberator-node-go/internal/utils/routingtable"
 	"liberator-node-go/internal/utils/safemap"
 	"liberator-node-go/pkg/ingress/ingressproto"
 	"sync"
@@ -15,8 +16,14 @@ import (
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
+	"github.com/google/uuid"
 	"github.com/quic-go/quic-go"
 )
+
+type DatagramMessage struct {
+	Data []byte
+	User uuid.UUID
+}
 
 type Ingress struct {
 	ctx  context.Context
@@ -29,30 +36,27 @@ type Ingress struct {
 	jwtIss *liberatorjwt.LiberatorJWT
 
 	connections safemap.Safemap[string, *IngressConnection]
-	// By virtual ip
-	authorizedConnections safemap.Safemap[string, *IngressConnection]
 
 	ipAlloc *ipalloc.IPAllocator
 
-	in, out chan []byte
+	in, out chan *DatagramMessage
 
 	runOnce sync.Once
+
+	routingTable routingtable.RoutingTable
 }
 
-func New(ctx context.Context, lisAddr string, jwtIss *liberatorjwt.LiberatorJWT, cert *tls.Certificate) (*Ingress, error) {
+func New(ctx context.Context, routingTable routingtable.RoutingTable, ipAlloc *ipalloc.IPAllocator, lisAddr string, jwtIss *liberatorjwt.LiberatorJWT, cert *tls.Certificate) (*Ingress, error) {
 	ig := &Ingress{
-		ctx:                   ctx,
-		cert:                  cert,
-		connections:           safemap.New[string, *IngressConnection](),
-		authorizedConnections: safemap.New[string, *IngressConnection](),
-		jwtIss:                jwtIss,
+		ctx:          ctx,
+		cert:         cert,
+		routingTable: routingTable,
+		jwtIss:       jwtIss,
+		ipAlloc:      ipAlloc,
+
+		connections: safemap.New[string, *IngressConnection](),
 	}
 	var err error
-
-	ig.ipAlloc, err = ipalloc.New("10.8.0.0/16")
-	if err != nil {
-		return nil, err
-	}
 
 	addr, err := net.ResolveUDPAddr("udp", lisAddr)
 	if err != nil {
@@ -83,42 +87,9 @@ func New(ctx context.Context, lisAddr string, jwtIss *liberatorjwt.LiberatorJWT,
 	return ig, nil
 }
 
-func (ig *Ingress) Run(in, out chan []byte) {
+func (ig *Ingress) Run(out chan *DatagramMessage) {
 	ig.runOnce.Do(func() {
-
-		ig.in = in
 		ig.out = out
-
-		go func() {
-			for data := range in {
-				version := data[0] >> 4
-				var packet gopacket.Packet
-				switch version {
-				case 4:
-					packet = gopacket.NewPacket(data, layers.LayerTypeIPv4, gopacket.DecodeOptions{
-						Lazy:   true,
-						NoCopy: true,
-					})
-				case 6:
-					// Not supported ipv6
-					continue
-				}
-
-				ipv4Layer := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
-				if ipv4Layer == nil {
-					continue
-				}
-				targetIP := ipv4Layer.DstIP
-				target, ex := ig.authorizedConnections.Get(targetIP.String())
-				if !ex {
-					continue
-				}
-				err := target.SendDatagram(data)
-				if err != nil {
-					log.Printf("failed to send datagram %d: %v", len(data), err)
-				}
-			}
-		}()
 
 		for {
 			select {
@@ -134,7 +105,7 @@ func (ig *Ingress) Run(in, out chan []byte) {
 			}
 			wc, err := wrapConnetion(conn, ig, func(c *IngressConnection) {
 				ig.connections.Delete(c.ConnectionID())
-				ig.authorizedConnections.Delete(c.GetVirtualIP().String())
+				ig.routingTable.Delete(c)
 			})
 			if err != nil {
 				log.Printf("failed to wrap ingress connection: %v", err)
@@ -148,7 +119,7 @@ func (ig *Ingress) Run(in, out chan []byte) {
 }
 
 func (ig *Ingress) Authorize(ctx context.Context, source *IngressConnection, rq *ingressproto.AuthorizeRequest) (*ingressproto.AuthorizeResponse, error) {
-	if source.Authorized() {
+	if source.GetAuthorized() {
 		reason := "already authorized"
 		return &ingressproto.AuthorizeResponse{
 			Ok:     false,
@@ -166,8 +137,6 @@ func (ig *Ingress) Authorize(ctx context.Context, source *IngressConnection, rq 
 	}
 	_ = claims
 
-	source.SetUserID(userID)
-
 	// Get ip address for client
 	ip, err := ig.ipAlloc.Get()
 	if err != nil {
@@ -178,11 +147,20 @@ func (ig *Ingress) Authorize(ctx context.Context, source *IngressConnection, rq 
 			Reason: &reason,
 		}, nil
 	}
-
+	source.SetUserID(userID)
 	source.SetVirtualIP(ip)
+	source.SetAuthorized()
 
-	// Add connection to authorized
-	ig.authorizedConnections.Set(ip.String(), source)
+	// Add connection to routing table
+	err = ig.routingTable.Add(source)
+	if err != nil {
+		log.Printf("failed to add ingress connection to routing table: %v", err)
+		reason := "server error"
+		return &ingressproto.AuthorizeResponse{
+			Ok:     false,
+			Reason: &reason,
+		}, nil
+	}
 
 	return &ingressproto.AuthorizeResponse{
 		Ok:         true,
@@ -249,6 +227,9 @@ func (ig *Ingress) Datagram(ctx context.Context, source *IngressConnection, data
 	}
 
 	if ig.out != nil {
-		ig.out <- data
+		ig.out <- &DatagramMessage{
+			Data: data,
+			User: source.GetUserID(),
+		}
 	}
 }

@@ -22,8 +22,6 @@ type Egress struct {
 	ipt      *iptables.IPTables
 	extIface string // внешний интерфейс для NAT
 	mtu      int
-
-	runOnce sync.Once
 }
 
 // New создаёт и настраивает TUN-интерфейс.
@@ -199,47 +197,58 @@ func (eg *Egress) Read(p []byte) (int, error) {
 	return eg.ifce.Read(p)
 }
 
-func (eg *Egress) Run(in, out chan []byte) {
-	eg.runOnce.Do(func() {
-		ctx, cancel := context.WithCancel(eg.ctx)
-		defer cancel()
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					break
-				default:
-				}
-				buf := make([]byte, eg.mtu)
+func (eg *Egress) Run() (chan<- []byte, <-chan []byte) {
+	in := make(chan []byte, 10)
+	out := make(chan []byte, 10)
 
-				n, err := eg.Read(buf)
-				if err != nil {
-					log.Printf("failed to read from iface: %v", err)
-					continue
-				}
-				if n == 0 {
-					continue
-				}
-				out <- buf[:n]
-			}
-		}()
+	var wg sync.WaitGroup
 
-		func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case data := <-in:
-					n, err := eg.Write(data)
-					if err != nil {
-						log.Printf("failed to write to iface: %v", err)
-						continue
-					}
-					if n != len(data) {
-						log.Printf("iface write size missmatch iface: %v", err)
-					}
-				}
+	wg.Go(func() {
+		buf := make([]byte, eg.mtu)
+		for {
+			select {
+			case <-eg.ctx.Done():
+				return
+			default:
 			}
-		}()
+
+			n, err := eg.Read(buf)
+			if err != nil {
+				log.Printf("failed to read from iface: %v", err)
+				continue
+			}
+			if n == 0 {
+				continue
+			}
+
+			data := make([]byte, n)
+			copy(data, buf[:n])
+			out <- data
+		}
 	})
+
+	wg.Go(func() {
+		for {
+			select {
+			case <-eg.ctx.Done():
+				return
+			case data := <-in:
+				n, err := eg.Write(data)
+				if err != nil {
+					log.Printf("failed to write to iface: %v", err)
+					continue
+				}
+				if n != len(data) {
+					log.Printf("iface write size missmatch iface: %v", err)
+				}
+			}
+		}
+	})
+
+	go func() {
+		wg.Wait()
+		close(in)
+		close(out)
+	}()
+	return in, out
 }
