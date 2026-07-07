@@ -27,3 +27,7 @@ func (r *DbPool) Close() {
 		r.pool.Close()
 	}
 }
+
+func (r *DbPool) Query() *Queries {
+	return New(r.pool)
+}

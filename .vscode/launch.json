@@ -13,7 +13,8 @@
             "program": "${workspaceFolder}/cmd/node/main.go",
             "console": "integratedTerminal",
             "asRoot": true,
-            "cwd": "."
+            "cwd": ".",
+            "args": ["./config.yaml"]
         },
         {
             "name": "Generate certificates",

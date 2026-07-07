@@ -12,18 +12,83 @@ import (
 )
 
 const getUserById = `-- name: GetUserById :one
-select id, login from libusers where id = $1 limit 1
+select id, created_at, login from libusers where id = $1 limit 1
 `
 
 func (q *Queries) GetUserById(ctx context.Context, id uuid.UUID) (Libuser, error) {
 	row := q.db.QueryRow(ctx, getUserById, id)
 	var i Libuser
-	err := row.Scan(&i.ID, &i.Login)
+	err := row.Scan(&i.ID, &i.CreatedAt, &i.Login)
 	return i, err
 }
 
+const insertPendingInterconnection = `-- name: InsertPendingInterconnection :exec
+INSERT INTO user_interconnections (user1_id, user2_id, status)
+VALUES (LEAST($1::uuid, $2::uuid), GREATEST($1::uuid, $2::uuid), 'pending')
+ON CONFLICT (user1_id, user2_id) DO NOTHING
+`
+
+type InsertPendingInterconnectionParams struct {
+	Column1 uuid.UUID
+	Column2 uuid.UUID
+}
+
+func (q *Queries) InsertPendingInterconnection(ctx context.Context, arg InsertPendingInterconnectionParams) error {
+	_, err := q.db.Exec(ctx, insertPendingInterconnection, arg.Column1, arg.Column2)
+	return err
+}
+
+const isApprovedInterconnection = `-- name: IsApprovedInterconnection :one
+select 1 from user_interconnections where (user1_id = $1 and user2_id = $2 or user1_id = $2 and user2_id = $1) and status = 'approved' limit 1
+`
+
+type IsApprovedInterconnectionParams struct {
+	User1ID *uuid.UUID
+	User2ID *uuid.UUID
+}
+
+func (q *Queries) IsApprovedInterconnection(ctx context.Context, arg IsApprovedInterconnectionParams) (int32, error) {
+	row := q.db.QueryRow(ctx, isApprovedInterconnection, arg.User1ID, arg.User2ID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const listUserApprovedInterconnections = `-- name: ListUserApprovedInterconnections :many
+SELECT user1_id, user2_id
+FROM user_interconnections
+WHERE (user1_id = $1 OR user2_id = $1)
+  AND status = 'approved'
+ORDER BY created_at DESC
+`
+
+type ListUserApprovedInterconnectionsRow struct {
+	User1ID *uuid.UUID
+	User2ID *uuid.UUID
+}
+
+func (q *Queries) ListUserApprovedInterconnections(ctx context.Context, user1ID *uuid.UUID) ([]ListUserApprovedInterconnectionsRow, error) {
+	rows, err := q.db.Query(ctx, listUserApprovedInterconnections, user1ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUserApprovedInterconnectionsRow
+	for rows.Next() {
+		var i ListUserApprovedInterconnectionsRow
+		if err := rows.Scan(&i.User1ID, &i.User2ID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUserRules = `-- name: ListUserRules :many
-select id, login from libusers where user = $1
+select id, created_at, login from libusers where user = $1
 `
 
 func (q *Queries) ListUserRules(ctx context.Context, dollar_1 interface{}) ([]Libuser, error) {
@@ -35,7 +100,31 @@ func (q *Queries) ListUserRules(ctx context.Context, dollar_1 interface{}) ([]Li
 	var items []Libuser
 	for rows.Next() {
 		var i Libuser
-		if err := rows.Scan(&i.ID, &i.Login); err != nil {
+		if err := rows.Scan(&i.ID, &i.CreatedAt, &i.Login); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUsers = `-- name: ListUsers :many
+select id, created_at, login from libusers
+`
+
+func (q *Queries) ListUsers(ctx context.Context) ([]Libuser, error) {
+	rows, err := q.db.Query(ctx, listUsers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Libuser
+	for rows.Next() {
+		var i Libuser
+		if err := rows.Scan(&i.ID, &i.CreatedAt, &i.Login); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

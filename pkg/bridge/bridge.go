@@ -78,7 +78,7 @@ func New(
 			return nil, fmt.Errorf("failed to load cert key pair: %v", err)
 		}
 
-		ing, err := ingress.New(ctx, br.routingTable, br.ipAlloc, iconf.ListenAddr, jwtIss, &certificate)
+		ing, err := ingress.New(ctx, br.routingTable, br.ipAlloc, iconf.ListenAddr, jwtIss, &certificate, br.dbPool)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create ingress %s: %w", name, err)
 		}
@@ -142,8 +142,9 @@ func (br *Bridge) Run() {
 		case dg := <-ing2bridge:
 			if br.network.Contains(dg.DstIP) && !dg.DstIP.Equal(br.gatewayAddr) {
 				// Ip addr is in our network but not gateway.
-				// TODO: Apply custom routing here
-				continue
+				if !br.routingTable.IsAllowedIps(dg.SrcIP, dg.DstIP) {
+					continue
+				}
 			}
 			bridge2egr <- dg.Data
 		}

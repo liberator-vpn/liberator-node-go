@@ -6,16 +6,19 @@ package repos
 
 import (
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Libuser struct {
-	ID    uuid.UUID
-	Login string
+	ID        uuid.UUID
+	CreatedAt pgtype.Timestamp
+	Login     string
 }
 
-type UserRulesTable struct {
-	ID    int64
-	User  *uuid.UUID
-	Type  string
-	Value string
+type UserInterconnection struct {
+	ID        int64
+	CreatedAt pgtype.Timestamp
+	User1ID   *uuid.UUID
+	User2ID   *uuid.UUID
+	Status    string
 }

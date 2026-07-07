@@ -9,8 +9,6 @@ import (
 	"liberator-node-go/internal/utils/safemap"
 	"liberator-node-go/pkg/bridge"
 	"liberator-node-go/pkg/mesh"
-
-	"github.com/google/uuid"
 )
 
 type App struct {
@@ -58,8 +56,14 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		app.bridges.Set(name, bridge)
 	}
 
-	token, _ := app.jwtIss.SignToken(uuid.New())
-	fmt.Println("Some random token: ", token)
+	users, err := app.repo.Query().ListUsers(ctx)
+	if err != nil {
+		panic(err)
+	}
+	for _, u := range users {
+		token, _ := app.jwtIss.SignToken(u.ID)
+		fmt.Printf("[%s]: %s\n", u.Login, token)
+	}
 
 	return app, nil
 }

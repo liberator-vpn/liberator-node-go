@@ -17,23 +17,11 @@ import (
 	"log"
 	"maps"
 	"net"
-	"os"
 	"time"
 
 	"github.com/quic-go/quic-go"
 	"google.golang.org/grpc"
 )
-
-func fileExists(filename string) (bool, error) {
-	_, err := os.Stat(filename)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, err // ошибка доступа и т.д.
-}
 
 func extractPeerId(cert *tls.Certificate) (string, error) {
 	if len(cert.Certificate) == 0 {
@@ -124,14 +112,9 @@ func New(ctx context.Context, cfg appconfig.MeshConfig) (*MeshNode, error) {
 	n.serverCaPool.AddCert(rootCa)
 
 	// Load peerstore from file if file exists
-	ex, _ := fileExists(cfg.PeersStore)
-	if ex {
-		err = n.peerStore.Load(cfg.PeersStore)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				return nil, fmt.Errorf("failed to load peerstore: %v", err)
-			}
-		}
+	err = n.peerStore.Load(cfg.PeersStore)
+	if err != nil {
+		log.Printf("failed to load peerStore: %v", err)
 	}
 
 	n.discovery = discovery.New(n.grpcServer, n.peerStore, n.connections)

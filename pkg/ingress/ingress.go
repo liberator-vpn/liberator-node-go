@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"crypto/tls"
+	"liberator-node-go/internal/infra/repos"
 	"liberator-node-go/internal/utils/ipalloc"
 	"liberator-node-go/internal/utils/liberatorjwt"
 	"liberator-node-go/internal/utils/routingtable"
@@ -46,15 +47,26 @@ type Ingress struct {
 	runOnce sync.Once
 
 	routingTable routingtable.RoutingTable
+
+	dbPool *repos.DbPool
 }
 
-func New(ctx context.Context, routingTable routingtable.RoutingTable, ipAlloc *ipalloc.IPAllocator, lisAddr string, jwtIss *liberatorjwt.LiberatorJWT, cert *tls.Certificate) (*Ingress, error) {
+func New(
+	ctx context.Context,
+	routingTable routingtable.RoutingTable,
+	ipAlloc *ipalloc.IPAllocator,
+	lisAddr string,
+	jwtIss *liberatorjwt.LiberatorJWT,
+	cert *tls.Certificate,
+	dbPool *repos.DbPool,
+) (*Ingress, error) {
 	ig := &Ingress{
 		ctx:          ctx,
 		cert:         cert,
 		routingTable: routingTable,
 		jwtIss:       jwtIss,
 		ipAlloc:      ipAlloc,
+		dbPool:       dbPool,
 
 		connections: safemap.New[string, *IngressConnection](),
 	}
@@ -153,6 +165,23 @@ func (ig *Ingress) Authorize(ctx context.Context, source *IngressConnection, rq 
 	source.SetVirtualIP(ip)
 	source.SetAuthorized()
 
+	// Get user allowed list
+	allowedList, err := ig.dbPool.Query().ListUserApprovedInterconnections(ctx, &userID)
+	if err != nil {
+		log.Printf("failed to list user allowed interconnections: %v", err)
+		reason := "server error"
+		return &ingressproto.AuthorizeResponse{
+			Ok:     false,
+			Reason: &reason,
+		}, nil
+	}
+	for _, r := range allowedList {
+		if r.User1ID == nil || r.User2ID == nil {
+			continue
+		}
+		ig.routingTable.Allow(*r.User1ID, *r.User2ID)
+	}
+
 	// Add connection to routing table
 	err = ig.routingTable.Add(source)
 	if err != nil {
@@ -164,6 +193,8 @@ func (ig *Ingress) Authorize(ctx context.Context, source *IngressConnection, rq 
 		}, nil
 	}
 
+	// Load list of allowed interconnections for user
+
 	return &ingressproto.AuthorizeResponse{
 		Ok:         true,
 		Reason:     nil,
@@ -171,7 +202,7 @@ func (ig *Ingress) Authorize(ctx context.Context, source *IngressConnection, rq 
 		PrefixLen:  16,
 		Mtu:        1400,
 		Routes:     []string{"0.0.0.0/0"},
-		Dns:        []string{"8.8.8.8"},
+		Dns:        []string{"8.8.8.8"}, // TODO: Fix this
 	}, nil
 }
 

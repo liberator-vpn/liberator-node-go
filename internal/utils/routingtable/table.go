@@ -21,19 +21,27 @@ type RoutingTable interface {
 
 	GetByUserID(uuid.UUID) (RoutingObject, bool)
 	GetByVirtualIp(net.IP) (RoutingObject, bool)
+
+	IsAllowedUsers(u1, u2 uuid.UUID) bool
+	IsAllowedIps(u1, u2 net.IP) bool
+
+	Allow(u1, u2 uuid.UUID)
 }
 
 type routingTableImpl struct {
 	byUserID    map[uuid.UUID]RoutingObject
 	byVirtualIp map[string]RoutingObject
 
+	userAllowMap map[uuid.UUID]map[uuid.UUID]struct{}
+
 	updateLock sync.RWMutex
 }
 
 func New() RoutingTable {
 	return &routingTableImpl{
-		byUserID:    map[uuid.UUID]RoutingObject{},
-		byVirtualIp: map[string]RoutingObject{},
+		byUserID:     map[uuid.UUID]RoutingObject{},
+		byVirtualIp:  map[string]RoutingObject{},
+		userAllowMap: make(map[uuid.UUID]map[uuid.UUID]struct{}),
 	}
 }
 
@@ -86,4 +94,55 @@ func (r *routingTableImpl) GetByVirtualIp(ip net.IP) (RoutingObject, bool) {
 	defer r.updateLock.RUnlock()
 	obj, ex := r.byVirtualIp[ip.String()]
 	return obj, ex
+}
+
+// INTERCONNECTIONS
+
+func (r *routingTableImpl) IsAllowedUsers(u1, u2 uuid.UUID) bool {
+	r.updateLock.RLock()
+	defer r.updateLock.RUnlock()
+
+	if peers, ok := r.userAllowMap[u1]; ok {
+		if _, exists := peers[u2]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *routingTableImpl) Allow(u1, u2 uuid.UUID) {
+	if u1 == u2 {
+		return
+	}
+
+	r.updateLock.Lock()
+	defer r.updateLock.Unlock()
+
+	// Инициализируем множество для u1, если его нет
+	if r.userAllowMap[u1] == nil {
+		r.userAllowMap[u1] = make(map[uuid.UUID]struct{})
+	}
+	r.userAllowMap[u1][u2] = struct{}{}
+
+	// Инициализируем множество для u2, если его нет
+	if r.userAllowMap[u2] == nil {
+		r.userAllowMap[u2] = make(map[uuid.UUID]struct{})
+	}
+	r.userAllowMap[u2][u1] = struct{}{}
+}
+
+func (r *routingTableImpl) IsAllowedIps(u1, u2 net.IP) bool {
+	r.updateLock.RLock()
+	defer r.updateLock.RUnlock()
+
+	obj1, ex := r.byVirtualIp[u1.String()]
+	if !ex {
+		return false
+	}
+	obj2, ex := r.byVirtualIp[u2.String()]
+	if !ex {
+		return false
+	}
+
+	return r.IsAllowedUsers(obj1.GetUserID(), obj2.GetUserID())
 }
