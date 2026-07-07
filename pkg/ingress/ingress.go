@@ -21,8 +21,10 @@ import (
 )
 
 type DatagramMessage struct {
-	Data []byte
-	User uuid.UUID
+	Data  []byte
+	User  uuid.UUID
+	SrcIP net.IP
+	DstIP net.IP
 }
 
 type Ingress struct {
@@ -174,6 +176,9 @@ func (ig *Ingress) Authorize(ctx context.Context, source *IngressConnection, rq 
 }
 
 func (ig *Ingress) Datagram(ctx context.Context, source *IngressConnection, data []byte) {
+	if ig.out == nil {
+		return
+	}
 	if len(data) == 0 {
 		return
 	}
@@ -190,10 +195,11 @@ func (ig *Ingress) Datagram(ctx context.Context, source *IngressConnection, data
 		return
 	}
 
-	ipv4Layer := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
-	if ipv4Layer == nil {
+	ipv4LayerSt := packet.Layer(layers.LayerTypeIPv4)
+	if ipv4LayerSt == nil {
 		return
 	}
+	ipv4Layer := ipv4LayerSt.(*layers.IPv4)
 
 	if !ipv4Layer.SrcIP.Equal(source.GetVirtualIP()) {
 		ipv4Layer.SrcIP = source.GetVirtualIP()
@@ -226,10 +232,10 @@ func (ig *Ingress) Datagram(ctx context.Context, source *IngressConnection, data
 		data = buffer.Bytes()
 	}
 
-	if ig.out != nil {
-		ig.out <- &DatagramMessage{
-			Data: data,
-			User: source.GetUserID(),
-		}
+	ig.out <- &DatagramMessage{
+		Data:  data,
+		User:  source.GetUserID(),
+		SrcIP: source.GetVirtualIP(),
+		DstIP: ipv4Layer.DstIP,
 	}
 }

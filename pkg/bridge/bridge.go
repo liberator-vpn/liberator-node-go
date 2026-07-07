@@ -2,9 +2,9 @@ package bridge
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"liberator-node-go/internal/appconfig"
-	"liberator-node-go/internal/utils/cert"
 	"liberator-node-go/internal/utils/ipalloc"
 	"liberator-node-go/internal/utils/liberatorjwt"
 	"liberator-node-go/internal/utils/routingtable"
@@ -13,6 +13,7 @@ import (
 	"liberator-node-go/pkg/ingress"
 	"liberator-node-go/pkg/mesh"
 	"log"
+	"net"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -25,39 +26,49 @@ type Bridge struct {
 
 	egr       *egress.Egress
 	ingresses safemap.Safemap[string, *ingress.Ingress]
-	mesh      *mesh.MeshNode
+	meshNode  *mesh.MeshNode
+
+	gatewayAddr net.IP
+	network     *net.IPNet
 }
 
-func New(ctx context.Context, cfg appconfig.BridgeConfig, jwtIss *liberatorjwt.LiberatorJWT) (*Bridge, error) {
+func New(ctx context.Context, cfg appconfig.BridgeConfig, jwtIss *liberatorjwt.LiberatorJWT, meshNode *mesh.MeshNode) (*Bridge, error) {
 	br := &Bridge{
 		ctx:          ctx,
 		ingresses:    safemap.New[string, *ingress.Ingress](),
 		routingTable: routingtable.New(),
+		meshNode:     meshNode,
 	}
 
 	var err error
-	br.ipAlloc, err = ipalloc.New(cfg.CIDR)
-	if err != nil {
-		return nil, err
-	}
-
 	br.egr, err = egress.New(ctx, cfg.Egress.IfaceInName, cfg.CIDR, cfg.Egress.IfaceOutName, cfg.MTU)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create egress: %w", err)
 	}
 
+	// Build ip allocator and reserve gateway address
+	br.ipAlloc, err = ipalloc.New(cfg.CIDR)
+	if err != nil {
+		return nil, err
+	}
+	br.gatewayAddr, br.network, err = net.ParseCIDR(cfg.CIDR)
+	if err != nil {
+		return nil, fmt.Errorf("invalid CIDR: %w", err)
+	}
+	err = br.ipAlloc.Reserve(br.gatewayAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reserve ip for gateway: %v", err)
+	}
+	// Launch dns server
+
 	// Build ingresses
 	for name, iconf := range cfg.Ingresses {
-		ingressCert, err := cert.ReadCertificateFromFile(iconf.Cert)
+		certificate, err := tls.LoadX509KeyPair(iconf.Cert, iconf.Key)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load ingress %s cert: %v", name, err)
-		}
-		ingressKey, err := cert.ReadPrivateKeyFromFile(iconf.Key)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load ingress %s key: %v", name, err)
+			return nil, fmt.Errorf("failed to load cert key pair: %v", err)
 		}
 
-		ing, err := ingress.New(ctx, br.routingTable, br.ipAlloc, iconf.ListenAddr, jwtIss, cert.X509ToTLSCertificate(ingressCert, ingressKey))
+		ing, err := ingress.New(ctx, br.routingTable, br.ipAlloc, iconf.ListenAddr, jwtIss, &certificate)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create ingress %s: %w", name, err)
 		}
@@ -66,19 +77,19 @@ func New(ctx context.Context, cfg appconfig.BridgeConfig, jwtIss *liberatorjwt.L
 	return br, nil
 }
 
-func (b *Bridge) Run() {
+func (br *Bridge) Run() {
 	ing2bridge := make(chan *ingress.DatagramMessage, 10)
-	b.ingresses.Foreach(func(s string, i *ingress.Ingress) {
+	br.ingresses.Foreach(func(s string, i *ingress.Ingress) {
 		go i.Run(ing2bridge)
 	})
 
-	bridge2egr, egr2bridge := b.egr.Run()
+	bridge2egr, egr2bridge := br.egr.Run()
 
 	// Egress to ingress
 	go func() {
 		for {
 			select {
-			case <-b.ctx.Done():
+			case <-br.ctx.Done():
 				return
 			case data := <-egr2bridge:
 				if len(data) == 0 {
@@ -89,7 +100,7 @@ func (b *Bridge) Run() {
 					// Ip v6 not supported
 					continue
 				}
-				// Extract ip
+				// Extract ip to identify target ip.
 				packet := gopacket.NewPacket(data, layers.LayerTypeIPv4, gopacket.DecodeOptions{
 					Lazy:   true,
 					NoCopy: true,
@@ -100,8 +111,9 @@ func (b *Bridge) Run() {
 				}
 				targetIP := ipv4Layer.DstIP
 
-				target, ex := b.routingTable.GetByVirtualIp(targetIP)
+				target, ex := br.routingTable.GetByVirtualIp(targetIP)
 				if !ex {
+					// TODO: Here we should check mesh routing table and pass there
 					continue
 				}
 				err := target.SendDatagram(data)
@@ -115,9 +127,14 @@ func (b *Bridge) Run() {
 
 	for {
 		select {
-		case <-b.ctx.Done():
+		case <-br.ctx.Done():
 			return
 		case dg := <-ing2bridge:
+			if br.network.Contains(dg.DstIP) && !dg.DstIP.Equal(br.gatewayAddr) {
+				// Ip addr is in our network but not gateway.
+				// TODO: Apply custom routing here
+				continue
+			}
 			bridge2egr <- dg.Data
 		}
 	}

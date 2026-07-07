@@ -9,15 +9,16 @@ import (
 // IPAllocator управляет пулом IP-адресов в заданной подсети.
 // Потокобезопасен.
 type IPAllocator struct {
-	mu    sync.Mutex
-	start uint32   // первый доступный адрес (после шлюза)
-	end   uint32   // последний доступный адрес (перед широковещательным)
-	next  uint32   // следующий адрес для выдачи (инкрементируется)
-	freed []uint32 // освобождённые адреса (переиспользуются в первую очередь)
+	mu       sync.Mutex
+	start    uint32   // первый доступный адрес (сетевой + 1)
+	end      uint32   // последний доступный адрес (широковещательный - 1)
+	next     uint32   // следующий адрес для выдачи (инкрементируется)
+	freed    []uint32 // освобождённые адреса (переиспользуются в первую очередь)
+	reserved []uint32 // зарезервированные адреса (не выдаются)
 }
 
 // NewIPAllocator создаёт аллокатор для подсети в формате CIDR (например, "10.0.0.0/16").
-// Резервирует адрес сети, широковещательный и шлюз (первый адрес подсети).
+// Резервирует адрес сети и широковещательный, но не резервирует шлюз автоматически.
 // Возвращает ошибку, если подсеть не IPv4 или в ней нет свободных адресов.
 func New(cidr string) (*IPAllocator, error) {
 	_, ipnet, err := net.ParseCIDR(cidr)
@@ -39,21 +40,19 @@ func New(cidr string) (*IPAllocator, error) {
 	network := ipToU32(ipnet.IP.Mask(ipnet.Mask))
 	broadcast := network | ^ipToU32(net.IP(ipnet.Mask))
 
-	// Шлюз – первый адрес после сети
-	gateway := network + 1
-
-	start := gateway + 1 // первый адрес для клиентов
-	end := broadcast - 1 // последний адрес для клиентов
+	start := network + 1 // первый адрес после сети (включая .1)
+	end := broadcast - 1 // последний адрес перед широковещательным
 
 	if start > end {
 		return nil, errors.New("no available addresses in subnet")
 	}
 
 	return &IPAllocator{
-		start: start,
-		end:   end,
-		next:  start,
-		freed: []uint32{},
+		start:    start,
+		end:      end,
+		next:     start,
+		freed:    []uint32{},
+		reserved: []uint32{},
 	}, nil
 }
 
@@ -71,29 +70,113 @@ func u32ToIP(n uint32) net.IP {
 	return net.IPv4(byte(n>>24), byte(n>>16), byte(n>>8), byte(n))
 }
 
+// isReserved проверяет, зарезервирован ли адрес.
+func (a *IPAllocator) isReserved(addr uint32) bool {
+	for _, r := range a.reserved {
+		if r == addr {
+			return true
+		}
+	}
+	return false
+}
+
+// removeFromFreed удаляет адрес из списка освобождённых, если он там есть.
+func (a *IPAllocator) removeFromFreed(addr uint32) {
+	for i, f := range a.freed {
+		if f == addr {
+			a.freed = append(a.freed[:i], a.freed[i+1:]...)
+			return
+		}
+	}
+}
+
+// Reserve резервирует IP-адрес, чтобы он никогда не выдавался аллокатором.
+// Возвращает ошибку, если адрес вне диапазона, уже зарезервирован или уже выдан.
+func (a *IPAllocator) Reserve(ip net.IP) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	addr := ipToU32(ip)
+	if addr < a.start || addr > a.end {
+		return errors.New("address out of range")
+	}
+
+	// Проверяем, не зарезервирован ли уже
+	if a.isReserved(addr) {
+		return errors.New("address already reserved")
+	}
+
+	// Если адрес был освобождён (в freed), удаляем его оттуда
+	a.removeFromFreed(addr)
+
+	// Если адрес уже выдан (addr < next и не в freed), то запрещаем резервирование
+	// (выданные адреса нельзя зарезервировать, пока не освободят)
+	if addr < a.next {
+		// проверяем, не в freed ли он (но мы уже удалили, если был)
+		// Если он не в freed и меньше next, значит он выдан
+		// нужно проверить, нет ли его в freed (уже удалили), тогда он точно выдан
+		// Но мы не храним список выданных, поэтому полагаемся на правило:
+		// если addr < next и не был в freed, то он выдан.
+		// Однако мы только что удалили его из freed, поэтому если он там был, то теперь его нет,
+		// и addr < next - значит выдан. Но мы не хотим резервировать выданные.
+		// Поэтому проверяем, не был ли он в freed до удаления? Мы не знаем.
+		// Проще: проверить, есть ли он в freed после удаления - если нет и addr < next => выдан.
+		// Но мы удалили, так что если он был в freed, то его там нет, и мы ошибочно решим, что он выдан.
+		// Поэтому нужно запомнить, был ли он в freed. Сделаем флаг.
+		foundInFreed := false
+		for _, f := range a.freed {
+			if f == addr {
+				foundInFreed = true
+				break
+			}
+		}
+		if foundInFreed {
+			// он был в freed, мы его удалили, значит он не выдан
+			// ничего не делаем
+		} else {
+			// его нет в freed и addr < next => выдан
+			return errors.New("address already allocated, cannot reserve")
+		}
+	}
+	// Если addr >= next, то он ещё не выдавался (и не в freed), можно резервировать.
+
+	a.reserved = append(a.reserved, addr)
+	return nil
+}
+
 // Get возвращает свободный IP-адрес или ошибку, если пул исчерпан.
 func (a *IPAllocator) Get() (net.IP, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	var addr uint32
-	if len(a.freed) > 0 {
-		// Берём последний освобождённый адрес (LIFO)
+	// Сначала пытаемся использовать освобождённые
+	for len(a.freed) > 0 {
+		// Берём последний
 		addr = a.freed[len(a.freed)-1]
 		a.freed = a.freed[:len(a.freed)-1]
-	} else {
-		if a.next > a.end {
-			return nil, errors.New("no free IP addresses")
+		// Если адрес зарезервирован, пропускаем (но такого быть не должно)
+		if !a.isReserved(addr) {
+			return u32ToIP(addr), nil
 		}
-		addr = a.next
+		// если зарезервирован, просто продолжаем искать в freed
+	}
+
+	// Если freed пуст или все адреса в freed зарезервированы, выдаём новый
+	for a.next <= a.end {
+		if !a.isReserved(a.next) {
+			addr = a.next
+			a.next++
+			return u32ToIP(addr), nil
+		}
 		a.next++
 	}
 
-	return u32ToIP(addr), nil
+	return nil, errors.New("no free IP addresses")
 }
 
 // Free освобождает ранее выданный IP-адрес, делая его доступным для повторного использования.
-// Возвращает ошибку, если адрес вне допустимого диапазона или уже свободен.
+// Возвращает ошибку, если адрес вне допустимого диапазона, уже свободен или зарезервирован.
 func (a *IPAllocator) Free(ip net.IP) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -101,6 +184,11 @@ func (a *IPAllocator) Free(ip net.IP) error {
 	addr := ipToU32(ip)
 	if addr < a.start || addr > a.end {
 		return errors.New("address out of range")
+	}
+
+	// Проверяем, не зарезервирован ли
+	if a.isReserved(addr) {
+		return errors.New("address is reserved, cannot free")
 	}
 
 	// Проверяем, не освобождён ли уже (защита от дубликатов)

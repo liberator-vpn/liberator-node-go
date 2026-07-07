@@ -1,6 +1,8 @@
 package appconfig
 
 import (
+	"time"
+
 	"github.com/ilyakaznacheev/cleanenv"
 )
 
@@ -35,11 +37,14 @@ type BridgeConfig struct {
 
 // MeshConfig для кластеризации (обнаружение пиров)
 type MeshConfig struct {
-	ListenAddr        string   `yaml:"listen_addr"`
-	BootstrapAddr     []string `yaml:"bootstrap_addr"`
-	PeersStore        string   `yaml:"peers_store"`
-	DiscoveryInterval string   `yaml:"discovery_interval"`  // можно заменить на time.Duration
-	RTTUpdateInterval string   `yaml:"rtt_update_interval"` // можно заменить на time.Duration
+	ListenAddr        string        `yaml:"listen_addr"`
+	BootstrapAddrs    []string      `yaml:"bootstrap_addrs"`
+	PeersStore        string        `yaml:"peers_store"`
+	DiscoveryInterval time.Duration `yaml:"discovery_interval"`
+	RTTUpdateInterval time.Duration `yaml:"rtt_update_interval"`
+	Cert              string        `yaml:"cert"`
+	Key               string        `yaml:"key"`
+	RootCert          string        `yaml:"root_cert"`
 }
 
 // MetricsConfig для сбора метрик

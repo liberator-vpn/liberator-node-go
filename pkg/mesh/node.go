@@ -8,17 +8,31 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"liberator-node-go/internal/appconfig"
 	"liberator-node-go/internal/infra/ipapi"
+	"liberator-node-go/internal/utils/cert"
 	"liberator-node-go/internal/utils/quictransport"
 	"liberator-node-go/internal/utils/safemap"
 	"liberator-node-go/pkg/mesh/discovery"
 	"log"
 	"net"
+	"os"
 	"time"
 
 	"github.com/quic-go/quic-go"
 	"google.golang.org/grpc"
 )
+
+func fileExists(filename string) (bool, error) {
+	_, err := os.Stat(filename)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err // ошибка доступа и т.д.
+}
 
 func extractPeerId(cert *tls.Certificate) (string, error) {
 	if len(cert.Certificate) == 0 {
@@ -42,15 +56,10 @@ func extractPeerId(cert *tls.Certificate) (string, error) {
 	return nodeId, nil
 }
 
-type MeshConfig struct {
-	ListenAddr     string
-	BootstrapNodes []string
-}
-
 type MeshNode struct {
 	ctx    context.Context
-	cfg    *MeshConfig
 	ipInfo *ipapi.IpInfo
+	cfg    *appconfig.MeshConfig
 
 	cert         *tls.Certificate
 	serverCaPool *x509.CertPool
@@ -84,8 +93,19 @@ func (n *MeshNode) ConnectionsCount() int {
 func (n *MeshNode) Addr() net.Addr {
 	return n.lis.Addr()
 }
-func New(ctx context.Context, cfg *MeshConfig, cert *tls.Certificate, rootCa *x509.Certificate) (*MeshNode, error) {
-	nodeId, err := extractPeerId(cert)
+func New(ctx context.Context, cfg *appconfig.MeshConfig) (*MeshNode, error) {
+	// Load certs
+	rootCa, err := cert.ReadCertificateFromFile(cfg.RootCert)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load root cert: %v", err)
+	}
+
+	nodeCert, err := tls.LoadX509KeyPair(cfg.Cert, cfg.Key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load node cert: %v", err)
+	}
+
+	nodeId, err := extractPeerId(&nodeCert)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +113,7 @@ func New(ctx context.Context, cfg *MeshConfig, cert *tls.Certificate, rootCa *x5
 	n := &MeshNode{
 		ctx:          ctx,
 		cfg:          cfg,
-		cert:         cert,
+		cert:         &nodeCert,
 		serverCaPool: x509.NewCertPool(),
 		grpcServer:   grpc.NewServer(),
 		nodeId:       nodeId,
@@ -102,8 +122,18 @@ func New(ctx context.Context, cfg *MeshConfig, cert *tls.Certificate, rootCa *x5
 	}
 	n.serverCaPool.AddCert(rootCa)
 
-	n.discovery = discovery.New(n.grpcServer, n.peerStore, n.connections)
+	// Load peerstore from file if file exists
+	ex, _ := fileExists(cfg.PeersStore)
+	if ex {
+		err = n.peerStore.Load(cfg.PeersStore)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("failed to load peerstore: %v", err)
+			}
+		}
+	}
 
+	n.discovery = discovery.New(n.grpcServer, n.peerStore, n.connections)
 	/*
 		n.ipInfo, err = ipapi.GetIpInfo()
 		if err != nil {
@@ -268,10 +298,27 @@ func (n *MeshNode) Run() {
 
 	// Connect to bootstrap nodes
 	go func() {
-		for _, bn := range n.cfg.BootstrapNodes {
+		for _, bn := range n.cfg.BootstrapAddrs {
 			_, err := n.meshConnect(bn)
 			if err != nil {
 				log.Printf("failed to connect to bootstrap node %s: %v", bn, err)
+			}
+		}
+	}()
+
+	// Save peers store every 30 seconds
+	go func() {
+		t := time.NewTicker(time.Second * 30)
+		defer t.Stop()
+		for {
+			select {
+			case <-n.ctx.Done():
+				return
+			case <-t.C:
+				err := n.peerStore.Save(n.cfg.PeersStore)
+				if err != nil {
+					log.Printf("failed to save peer store: %v", err)
+				}
 			}
 		}
 	}()

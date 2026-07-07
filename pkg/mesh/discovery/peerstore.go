@@ -1,9 +1,12 @@
 package discovery
 
 import (
+	"encoding/json"
+	"fmt"
 	"liberator-node-go/internal/infra/ipapi"
 	"liberator-node-go/internal/utils/safemap"
 	"net"
+	"os"
 	"time"
 )
 
@@ -74,4 +77,34 @@ func (ps *PeerStore) InsertMerge(update *PeerInfo) {
 	if update.IpInfo != nil {
 		pi.IpInfo = update.IpInfo
 	}
+}
+
+func (ps *PeerStore) Save(filename string) error {
+	raw := ps.store.CloneRaw()
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("marshal error: %w", err)
+	}
+
+	err = os.WriteFile(filename, data, 0644)
+	if err != nil {
+		return fmt.Errorf("write file error: %w", err)
+	}
+	return nil
+}
+
+func (ps *PeerStore) Load(filename string) error {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return fmt.Errorf("failed to read file: %v", err)
+	}
+
+	var temp map[string]*PeerInfo
+	err = json.Unmarshal(data, &temp)
+	if err != nil {
+		return fmt.Errorf("unmarshal error: %w", err)
+	}
+
+	ps.store = safemap.From(temp)
+	return nil
 }
