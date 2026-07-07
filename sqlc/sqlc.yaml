@@ -1,0 +1,147 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries: "./query"
+    schema: "./migrations"
+    gen:
+      go:
+        package: "repos"
+        out: "../internal/infra/repos"
+        sql_package: "pgx/v5"
+        overrides:
+
+          - column: "accounts.steam_id"
+            nullable: true
+            go_type:
+              type: "int64"
+              pointer: true
+          - column: "accounts.level"
+            nullable: false
+            go_type:
+              type: "int32"
+
+          # UUID
+          - db_type: "uuid"
+            nullable: false
+            go_type: "github.com/google/uuid.UUID"
+          - db_type: "uuid"
+            nullable: true
+            go_type:
+              import: "github.com/google/uuid"
+              type: "UUID"
+              pointer: true
+
+          # TIMESTAMP WITH TIME ZONE / WITHOUT TIME ZONE
+          - db_type: "timestamp"
+            go_type: "time.Time"
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+          - db_type: "timestamptz"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true
+
+          # DATE / TIME
+          - db_type: "date"
+            go_type: "time.Time"
+          - db_type: "date"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true
+          - db_type: "time"
+            go_type: "time.Time"
+          - db_type: "time"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true
+
+          # Текстовые
+          - db_type: "text"
+            go_type: "string"
+          - db_type: "text"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true
+          - db_type: "varchar"
+            go_type: "string"
+          - db_type: "varchar"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true
+          - db_type: "bpchar" # CHAR(n)
+            go_type: "string"
+          - db_type: "bpchar"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true
+
+          # Числовые
+          - db_type: "smallint"
+            go_type: "int16"
+          - db_type: "smallint"
+            nullable: true
+            go_type:
+              type: "int16"
+              pointer: true
+
+          - db_type: "integer"
+            go_type: "int32"
+          - db_type: "integer"
+            nullable: true
+            go_type:
+              type: "int32"
+              pointer: true
+
+          - db_type: "bigint"
+            go_type: "int64"
+          - db_type: "bigint"
+            nullable: true
+            go_type:
+              type: "int64"
+              pointer: true
+
+          # NUMERIC/DECIMAL — рекомендуем decimal.Decimal
+          - db_type: "numeric"
+            go_type: "github.com/shopspring/decimal.Decimal"
+          - db_type: "numeric"
+            nullable: true
+            go_type:
+              import: "github.com/shopspring/decimal"
+              type: "Decimal"
+              pointer: true
+
+          # Boolean
+          - db_type: "bool"
+            go_type: "bool"
+          - db_type: "bool"
+            nullable: true
+            go_type:
+              type: "bool"
+              pointer: true
+
+          # JSON / JSONB — json.RawMessage (удобно для прозрачной отдачи)
+          - db_type: "jsonb"
+            go_type: "encoding/json.RawMessage"
+          - db_type: "jsonb"
+            nullable: true
+            go_type:
+              import: "encoding/json"
+              type: "RawMessage"
+              pointer: true
+          - db_type: "json"
+            go_type: "encoding/json.RawMessage"
+          - db_type: "json"
+            nullable: true
+            go_type:
+              import: "encoding/json"
+              type: "RawMessage"
+              pointer: true

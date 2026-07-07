@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"maps"
 
 	"liberator-node-go/internal/infra/ipapi"
 	"liberator-node-go/internal/utils/safemap"
@@ -63,7 +64,7 @@ func (svc *DiscoveryService[T]) PullKnownPeers(ctx context.Context, _ *emptypb.E
 			Id:       peer.Id,
 			LastSeen: peer.LastSeen.Unix(),
 			IpInfo:   ipInfo,
-			Addr:     peer.Addresses.CloneRaw(),
+			Addr:     maps.Clone(peer.Addresses),
 		}
 		resp.Peers = append(resp.Peers, pi)
 	}
@@ -99,7 +100,7 @@ func (svc *DiscoveryService[T]) RunOnConnection(ctx context.Context, client *grp
 			Id:        peer.Id,
 			LastSeen:  time.Unix(peer.LastSeen, 0),
 			IpInfo:    ipInfo,
-			Addresses: safemap.From(peer.Addr),
+			Addresses: maps.Clone(peer.Addr),
 		}
 		svc.peerStore.InsertMerge(pi)
 	}
@@ -140,7 +141,7 @@ func (svc *DiscoveryService[T]) Run(ctx context.Context) {
 						Id:        peer.Id,
 						LastSeen:  time.Unix(peer.LastSeen, 0),
 						IpInfo:    ipInfo,
-						Addresses: safemap.From(peer.Addr),
+						Addresses: maps.Clone(peer.Addr),
 					}
 
 					svc.peerStore.InsertMerge(pi)

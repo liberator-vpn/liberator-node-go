@@ -7,6 +7,7 @@ import (
 	"liberator-node-go/internal/utils/safemap"
 	"net"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -15,7 +16,8 @@ type PeerInfo struct {
 	LastSeen time.Time
 	IpInfo   *ipapi.IpInfo
 
-	Addresses safemap.Safemap[string, bool]
+	Addresses map[string]bool
+	AddrMut   sync.RWMutex
 }
 
 type PeerStore struct {
@@ -60,15 +62,17 @@ func (ps *PeerStore) InsertMerge(update *PeerInfo) {
 	}
 
 	// Merge addresses map
-	update.Addresses.Foreach(func(a string, _ bool) {
+	update.AddrMut.Lock()
+	for a, _ := range update.Addresses {
 		if len(a) == 0 {
 			return
 		}
 		if _, err := net.ResolveUDPAddr("udp", a); err != nil {
 			return
 		}
-		pi.Addresses.Set(a, true)
-	})
+		pi.Addresses[a] = true
+	}
+	update.AddrMut.Unlock()
 
 	if update.LastSeen.After(pi.LastSeen) {
 		pi.LastSeen = update.LastSeen

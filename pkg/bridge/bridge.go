@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"liberator-node-go/internal/appconfig"
+	"liberator-node-go/internal/infra/repos"
 	"liberator-node-go/internal/utils/ipalloc"
 	"liberator-node-go/internal/utils/liberatorjwt"
 	"liberator-node-go/internal/utils/routingtable"
@@ -28,16 +29,25 @@ type Bridge struct {
 	ingresses safemap.Safemap[string, *ingress.Ingress]
 	meshNode  *mesh.MeshNode
 
+	dbPool *repos.DbPool
+
 	gatewayAddr net.IP
 	network     *net.IPNet
 }
 
-func New(ctx context.Context, cfg appconfig.BridgeConfig, jwtIss *liberatorjwt.LiberatorJWT, meshNode *mesh.MeshNode) (*Bridge, error) {
+func New(
+	ctx context.Context,
+	cfg appconfig.BridgeConfig,
+	jwtIss *liberatorjwt.LiberatorJWT,
+	meshNode *mesh.MeshNode,
+	dbPool *repos.DbPool,
+) (*Bridge, error) {
 	br := &Bridge{
 		ctx:          ctx,
 		ingresses:    safemap.New[string, *ingress.Ingress](),
 		routingTable: routingtable.New(),
 		meshNode:     meshNode,
+		dbPool:       dbPool,
 	}
 
 	var err error

@@ -15,6 +15,7 @@ import (
 	"liberator-node-go/internal/utils/safemap"
 	"liberator-node-go/pkg/mesh/discovery"
 	"log"
+	"maps"
 	"net"
 	"os"
 	"time"
@@ -59,7 +60,7 @@ func extractPeerId(cert *tls.Certificate) (string, error) {
 type MeshNode struct {
 	ctx    context.Context
 	ipInfo *ipapi.IpInfo
-	cfg    *appconfig.MeshConfig
+	cfg    appconfig.MeshConfig
 
 	cert         *tls.Certificate
 	serverCaPool *x509.CertPool
@@ -93,7 +94,7 @@ func (n *MeshNode) ConnectionsCount() int {
 func (n *MeshNode) Addr() net.Addr {
 	return n.lis.Addr()
 }
-func New(ctx context.Context, cfg *appconfig.MeshConfig) (*MeshNode, error) {
+func New(ctx context.Context, cfg appconfig.MeshConfig) (*MeshNode, error) {
 	// Load certs
 	rootCa, err := cert.ReadCertificateFromFile(cfg.RootCert)
 	if err != nil {
@@ -144,7 +145,7 @@ func New(ctx context.Context, cfg *appconfig.MeshConfig) (*MeshNode, error) {
 		Id:        n.nodeId,
 		LastSeen:  time.Now(),
 		IpInfo:    n.ipInfo,
-		Addresses: safemap.New[string, bool](),
+		Addresses: map[string]bool{},
 	})
 
 	addr, err := net.ResolveUDPAddr("udp", cfg.ListenAddr)
@@ -279,12 +280,13 @@ func (n *MeshNode) handleConnection(conn *quic.Conn, isIncoming bool) (WrappedCo
 	n.connections.Set(meshConn.ID(), meshConn)
 	// Store to peers store
 	pi := &discovery.PeerInfo{
-		Id:        meshConn.ID(),
-		LastSeen:  time.Now(),
-		IpInfo:    n.ipInfo,
-		Addresses: safemap.New[string, bool](),
+		Id:       meshConn.ID(),
+		LastSeen: time.Now(),
+		IpInfo:   n.ipInfo,
+		Addresses: map[string]bool{
+			meshConn.RemoteAddr().String(): true,
+		},
 	}
-	pi.Addresses.Set(meshConn.RemoteAddr().String(), true)
 	n.peerStore.InsertMerge(pi)
 	go meshConn.Run()
 
@@ -361,13 +363,15 @@ func (n *MeshNode) nodeWorker() {
 					if n.connections.Exists(peer.Id) {
 						continue
 					}
-					peer.Addresses.ForeachCond(func(s string, _ bool) bool {
-						_, err := n.meshConnect(s)
+					peer.AddrMut.Lock()
+					addrClone := maps.Clone(peer.Addresses)
+					peer.AddrMut.Unlock()
+					for a, _ := range addrClone {
+						_, err := n.meshConnect(a)
 						if err == nil {
-							return false
+							break
 						}
-						return true
-					})
+					}
 				}
 			}()
 		}

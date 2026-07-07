@@ -9,7 +9,6 @@ import (
 // AuthConfig содержит настройки аутентификации
 type AuthConfig struct {
 	JWTSecret string `yaml:"jwt_secret"`
-	RootCA    string `yaml:"root_ca"`
 }
 
 // IngressConfig настройки входящих QUIC-соединений
@@ -52,12 +51,22 @@ type MetricsConfig struct {
 	ListenAddr string `yaml:"listen_addr"`
 }
 
+// DatabaseConfig - бд
+type DatabaseConfig struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	User     string `yaml:"user"`
+	Password string `yaml:"password"`
+	Database string `yaml:"database"`
+}
+
 // AppConfig общая структура конфигурации
 type AppConfig struct {
-	Auth    AuthConfig              `yaml:"auth"`
-	Bridge  map[string]BridgeConfig `yaml:"bridge"` // ключ — имя моста
-	Mesh    MeshConfig              `yaml:"mesh"`
-	Metrics MetricsConfig           `yaml:"metrics"`
+	Auth     AuthConfig              `yaml:"auth"`
+	Bridge   map[string]BridgeConfig `yaml:"bridge"` // ключ — имя моста
+	Mesh     MeshConfig              `yaml:"mesh"`
+	Database DatabaseConfig          `yaml:"database"`
+	Metrics  MetricsConfig           `yaml:"metrics"`
 }
 
 // LoadAppConfig загружает конфигурацию из YAML-файла

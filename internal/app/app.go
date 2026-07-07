@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"liberator-node-go/internal/appconfig"
+	"liberator-node-go/internal/infra/repos"
 	"liberator-node-go/internal/utils/liberatorjwt"
 	"liberator-node-go/internal/utils/safemap"
 	"liberator-node-go/pkg/bridge"
@@ -19,6 +20,8 @@ type App struct {
 	jwtIss  *liberatorjwt.LiberatorJWT
 	bridges safemap.Safemap[string, *bridge.Bridge]
 	node    *mesh.MeshNode
+
+	repo *repos.DbPool
 }
 
 func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
@@ -28,10 +31,16 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		bridges: safemap.New[string, *bridge.Bridge](),
 		jwtIss:  liberatorjwt.New([]byte(cfg.Auth.JWTSecret)),
 	}
+	var err error
+
+	// Create repos
+	app.repo, err = repos.NewDbPool(cfg.Database)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create database: %v", err)
+	}
 
 	// Create mesh node
-	var err error
-	app.node, err = mesh.New(ctx, &cfg.Mesh)
+	app.node, err = mesh.New(ctx, cfg.Mesh)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mesh node: %v", err)
 	}
@@ -42,7 +51,7 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 			return nil, fmt.Errorf("duplicated bridge name: %s", name)
 		}
 
-		bridge, err := bridge.New(ctx, bconf, app.jwtIss, app.node)
+		bridge, err := bridge.New(ctx, bconf, app.jwtIss, app.node, app.repo)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build bridge %s: %v", name, err)
 		}
