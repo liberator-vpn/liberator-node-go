@@ -111,7 +111,6 @@ func (c *wrappedConnectionImpl) acceptBiStreams(ctx context.Context) {
 func (c *wrappedConnectionImpl) GrpcClient() *grpc.ClientConn {
 	return c.grpcClient
 }
-
 func (c *wrappedConnectionImpl) newGrpcClient() (*grpc.ClientConn, error) {
 	// Настраиваем кастомный диалер для gRPC
 	dialer := func(ctx context.Context, addr string) (net.Conn, error) {

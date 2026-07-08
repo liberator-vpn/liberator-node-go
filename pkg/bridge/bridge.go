@@ -15,6 +15,8 @@ import (
 	"liberator-node-go/pkg/mesh"
 	"log"
 	"net"
+	"sync"
+	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -41,11 +43,12 @@ func New(
 	jwtIss *liberatorjwt.LiberatorJWT,
 	meshNode *mesh.MeshNode,
 	dbPool *repos.DbPool,
+	routingTable routingtable.RoutingTable,
 ) (*Bridge, error) {
 	br := &Bridge{
 		ctx:          ctx,
 		ingresses:    safemap.New[string, *ingress.Ingress](),
-		routingTable: routingtable.New(),
+		routingTable: routingTable,
 		meshNode:     meshNode,
 		dbPool:       dbPool,
 	}
@@ -69,7 +72,6 @@ func New(
 	if err != nil {
 		return nil, fmt.Errorf("failed to reserve ip for gateway: %v", err)
 	}
-	// Launch dns server
 
 	// Build ingresses
 	for name, iconf := range cfg.Ingresses {
@@ -78,7 +80,7 @@ func New(
 			return nil, fmt.Errorf("failed to load cert key pair: %v", err)
 		}
 
-		ing, err := ingress.New(ctx, br.routingTable, br.ipAlloc, iconf.ListenAddr, jwtIss, &certificate, br.dbPool)
+		ing, err := ingress.New(ctx, br.routingTable, br.ipAlloc, iconf.ListenAddr, jwtIss, &certificate, br.dbPool, cfg.DNS, cfg.MTU)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create ingress %s: %w", name, err)
 		}
@@ -88,66 +90,85 @@ func New(
 }
 
 func (br *Bridge) Run() {
-	ing2bridge := make(chan *ingress.DatagramMessage, 10)
+	ing2bridge := make(chan *ingress.DatagramMessage, 500)
 	br.ingresses.Foreach(func(s string, i *ingress.Ingress) {
 		go i.Run(ing2bridge)
 	})
 
 	bridge2egr, egr2bridge := br.egr.Run()
 
+	var wg sync.WaitGroup
+
 	// Egress to ingress
-	go func() {
-		for {
-			select {
-			case <-br.ctx.Done():
-				return
-			case data := <-egr2bridge:
-				if len(data) == 0 {
-					continue
-				}
-				version := data[0] >> 4
-				if version == 6 {
-					// Ip v6 not supported
-					continue
-				}
-				// Extract ip to identify target ip.
-				packet := gopacket.NewPacket(data, layers.LayerTypeIPv4, gopacket.DecodeOptions{
-					Lazy:   true,
-					NoCopy: true,
-				})
-				ipv4Layer := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
-				if ipv4Layer == nil {
-					continue
-				}
-				targetIP := ipv4Layer.DstIP
+	for range 5 {
+		wg.Go(func() {
+			for {
+				select {
+				case <-br.ctx.Done():
+					return
+				case data := <-egr2bridge:
+					if len(data) == 0 {
+						continue
+					}
+					version := data[0] >> 4
+					if version == 6 {
+						// Ip v6 not supported
+						continue
+					}
+					// Extract ip to identify target ip.
+					packet := gopacket.NewPacket(data, layers.LayerTypeIPv4, gopacket.DecodeOptions{
+						Lazy:   true,
+						NoCopy: true,
+					})
+					ipv4Layer := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
+					if ipv4Layer == nil {
+						continue
+					}
+					targetIP := ipv4Layer.DstIP
 
-				target, ex := br.routingTable.GetByVirtualIp(targetIP)
-				if !ex {
-					// TODO: Here we should check mesh routing table and pass there
-					continue
-				}
-				err := target.SendDatagram(data)
-				if err != nil {
-					log.Printf("failed to send datagram %d: %v", len(data), err)
-				}
+					target, ex := br.routingTable.GetByVirtualIp(targetIP)
+					if !ex {
+						// TODO: Here we should check mesh routing table and pass there
+						continue
+					}
+					err := target.SendDatagram(data)
+					if err != nil {
+						log.Printf("failed to send datagram %d: %v", len(data), err)
+					}
 
-			}
-		}
-	}()
-
-	for {
-		select {
-		case <-br.ctx.Done():
-			return
-		case dg := <-ing2bridge:
-			if br.network.Contains(dg.DstIP) && !dg.DstIP.Equal(br.gatewayAddr) {
-				// Ip addr is in our network but not gateway.
-				if !br.routingTable.IsAllowedIps(dg.SrcIP, dg.DstIP) {
-					continue
 				}
 			}
-			bridge2egr <- dg.Data
-		}
+		})
 	}
-
+	for range 5 {
+		wg.Go(func() {
+			for {
+				select {
+				case <-br.ctx.Done():
+					return
+				case dg := <-ing2bridge:
+					if br.network.Contains(dg.DstIP) && !dg.DstIP.Equal(br.gatewayAddr) {
+						// Ip addr is in our network but not gateway.
+						br.routingTable.RuleCheck(routingtable.HoleInfo{
+							SrcIP: dg.SrcIP,
+							DstIP: dg.DstIP,
+						})
+						hi := routingtable.HoleInfo{
+							SrcIP:    dg.SrcIP,
+							DstIP:    dg.DstIP,
+							SrcPort:  dg.SrcPort,
+							DstPort:  dg.DstPort,
+							Protocol: dg.Protocol,
+						}
+						if !br.routingTable.RuleCheck(hi) {
+							continue
+						}
+						br.routingTable.Holepunch(hi, time.Minute)
+					}
+					bridge2egr <- dg.Data
+				}
+			}
+		})
+	}
+	wg.Wait()
 }

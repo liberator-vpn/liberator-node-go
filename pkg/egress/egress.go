@@ -15,21 +15,22 @@ import (
 
 // Egress управляет TUN-интерфейсом и маршрутизацией.
 type Egress struct {
-	ctx      context.Context
-	ifce     *water.Interface
-	ifName   string
+	ctx    context.Context
+	ifce   *water.Interface
+	ifName string
+	mtu    int
+
 	ipNet    *net.IPNet
 	ipt      *iptables.IPTables
 	extIface string // внешний интерфейс для NAT
-	mtu      int
 }
 
 // New создаёт и настраивает TUN-интерфейс.
-func New(ctx context.Context, ifaceName, ipCIDR, externalIface string, mtu int) (*Egress, error) {
+func New(ctx context.Context, ifaceName, ipCIDR, extIface string, mtu int) (*Egress, error) {
 	eg := &Egress{
 		ctx:      ctx,
 		ifName:   ifaceName,
-		extIface: externalIface,
+		extIface: extIface,
 		mtu:      mtu,
 	}
 
@@ -198,8 +199,8 @@ func (eg *Egress) Read(p []byte) (int, error) {
 }
 
 func (eg *Egress) Run() (chan<- []byte, <-chan []byte) {
-	in := make(chan []byte, 10)
-	out := make(chan []byte, 10)
+	in := make(chan []byte, 500)
+	out := make(chan []byte, 500)
 
 	var wg sync.WaitGroup
 

@@ -12,8 +12,10 @@ import (
 	"liberator-node-go/internal/infra/ipapi"
 	"liberator-node-go/internal/utils/cert"
 	"liberator-node-go/internal/utils/quictransport"
+	"liberator-node-go/internal/utils/routingtable"
 	"liberator-node-go/internal/utils/safemap"
-	"liberator-node-go/pkg/mesh/discovery"
+	"liberator-node-go/pkg/mesh/components/discovery"
+	"liberator-node-go/pkg/mesh/components/meshrouting"
 	"log"
 	"maps"
 	"net"
@@ -66,23 +68,14 @@ type MeshNode struct {
 	grpcServer *grpc.Server
 	grpcLis    *quictransport.BiStreamLis
 
-	peerStore *discovery.PeerStore
-	discovery *discovery.DiscoveryService[WrappedConnection]
+	peerStore   *discovery.PeerStore
+	discovery   *discovery.DiscoveryService[WrappedConnection]
+	meshRouting *meshrouting.MeshRoutingService
+
+	routingTable routingtable.RoutingTable
 }
 
-func (n *MeshNode) Discovery() *discovery.DiscoveryService[WrappedConnection] {
-	return n.discovery
-}
-func (n *MeshNode) PeerStore() *discovery.PeerStore {
-	return n.peerStore
-}
-func (n *MeshNode) ConnectionsCount() int {
-	return n.connections.Count()
-}
-func (n *MeshNode) Addr() net.Addr {
-	return n.lis.Addr()
-}
-func New(ctx context.Context, cfg appconfig.MeshConfig) (*MeshNode, error) {
+func New(ctx context.Context, cfg appconfig.MeshConfig, routingTable routingtable.RoutingTable) (*MeshNode, error) {
 	// Load certs
 	rootCa, err := cert.ReadCertificateFromFile(cfg.RootCert)
 	if err != nil {
@@ -108,6 +101,7 @@ func New(ctx context.Context, cfg appconfig.MeshConfig) (*MeshNode, error) {
 		nodeId:       nodeId,
 		peerStore:    discovery.NewPeerStore(),
 		connections:  safemap.New[string, WrappedConnection](),
+		routingTable: routingTable,
 	}
 	n.serverCaPool.AddCert(rootCa)
 
@@ -117,6 +111,10 @@ func New(ctx context.Context, cfg appconfig.MeshConfig) (*MeshNode, error) {
 		log.Printf("failed to load peerStore: %v", err)
 	}
 
+	n.meshRouting, err = meshrouting.New(n.grpcServer, n.routingTable)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create mesh rounting: %v", err)
+	}
 	n.discovery = discovery.New(n.grpcServer, n.peerStore, n.connections)
 	/*
 		n.ipInfo, err = ipapi.GetIpInfo()
@@ -254,6 +252,8 @@ func (n *MeshNode) handleConnection(conn *quic.Conn, isIncoming bool) (WrappedCo
 			original.Close()
 			log.Printf("Incoming Accept won collision against %s. Replacing.", meshConn.ID())
 		}
+	} else {
+		log.Printf("New mesh connection from %s", meshConn.ID())
 	}
 
 	if n.connections.Exists(meshConn.ID()) {
@@ -278,9 +278,7 @@ func (n *MeshNode) handleConnection(conn *quic.Conn, isIncoming bool) (WrappedCo
 func (n *MeshNode) Run() {
 	// Grpc listener
 	go n.grpcServer.Serve(n.grpcLis)
-
 	go n.nodeWorker()
-
 	// Connect to bootstrap nodes
 	go func() {
 		for _, bn := range n.cfg.BootstrapAddrs {
@@ -290,7 +288,6 @@ func (n *MeshNode) Run() {
 			}
 		}
 	}()
-
 	// Save peers store every 30 seconds
 	go func() {
 		t := time.NewTicker(time.Second * 30)
@@ -307,7 +304,6 @@ func (n *MeshNode) Run() {
 			}
 		}
 	}()
-
 	// Accept connections
 	for {
 		select {
@@ -334,10 +330,11 @@ func (n *MeshNode) Run() {
 		}()
 	}
 }
-
 func (n *MeshNode) nodeWorker() {
 	go n.discovery.Run(n.ctx)
 
+	// TODO: Move to discovery
+	// TODO: Move peerstore to MeshNode, pass by reference to discovery
 	go func() {
 		ticker := time.NewTicker(time.Second * 5)
 		for range ticker.C {

@@ -15,10 +15,12 @@ type Libuser struct {
 	Login     string
 }
 
-type UserInterconnection struct {
-	ID        int64
-	CreatedAt pgtype.Timestamp
-	User1ID   *uuid.UUID
-	User2ID   *uuid.UUID
-	Status    string
+type UserPort struct {
+	ID         int64
+	CreatedAt  pgtype.Timestamp
+	User1      *uuid.UUID
+	TargetUser *uuid.UUID
+	Protocol   string
+	PortStart  int32
+	PortEnd    pgtype.Int4
 }

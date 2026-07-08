@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const getUserById = `-- name: GetUserById :one
@@ -22,85 +23,51 @@ func (q *Queries) GetUserById(ctx context.Context, id uuid.UUID) (Libuser, error
 	return i, err
 }
 
-const insertPendingInterconnection = `-- name: InsertPendingInterconnection :exec
-INSERT INTO user_interconnections (user1_id, user2_id, status)
-VALUES (LEAST($1::uuid, $2::uuid), GREATEST($1::uuid, $2::uuid), 'pending')
-ON CONFLICT (user1_id, user2_id) DO NOTHING
+const insertUserPortRule = `-- name: InsertUserPortRule :exec
+insert into user_ports (user1, target_user, protocol, port_start, port_end) values ($1,$2,$3,$4,$5)
 `
 
-type InsertPendingInterconnectionParams struct {
-	Column1 uuid.UUID
-	Column2 uuid.UUID
+type InsertUserPortRuleParams struct {
+	User1      *uuid.UUID
+	TargetUser *uuid.UUID
+	Protocol   string
+	PortStart  int32
+	PortEnd    pgtype.Int4
 }
 
-func (q *Queries) InsertPendingInterconnection(ctx context.Context, arg InsertPendingInterconnectionParams) error {
-	_, err := q.db.Exec(ctx, insertPendingInterconnection, arg.Column1, arg.Column2)
+func (q *Queries) InsertUserPortRule(ctx context.Context, arg InsertUserPortRuleParams) error {
+	_, err := q.db.Exec(ctx, insertUserPortRule,
+		arg.User1,
+		arg.TargetUser,
+		arg.Protocol,
+		arg.PortStart,
+		arg.PortEnd,
+	)
 	return err
 }
 
-const isApprovedInterconnection = `-- name: IsApprovedInterconnection :one
-select 1 from user_interconnections where (user1_id = $1 and user2_id = $2 or user1_id = $2 and user2_id = $1) and status = 'approved' limit 1
+const listUserPortsRules = `-- name: ListUserPortsRules :many
+select id, created_at, user1, target_user, protocol, port_start, port_end from user_ports where user1 = $1
 `
 
-type IsApprovedInterconnectionParams struct {
-	User1ID *uuid.UUID
-	User2ID *uuid.UUID
-}
-
-func (q *Queries) IsApprovedInterconnection(ctx context.Context, arg IsApprovedInterconnectionParams) (int32, error) {
-	row := q.db.QueryRow(ctx, isApprovedInterconnection, arg.User1ID, arg.User2ID)
-	var column_1 int32
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const listUserApprovedInterconnections = `-- name: ListUserApprovedInterconnections :many
-SELECT user1_id, user2_id
-FROM user_interconnections
-WHERE (user1_id = $1 OR user2_id = $1)
-  AND status = 'approved'
-ORDER BY created_at DESC
-`
-
-type ListUserApprovedInterconnectionsRow struct {
-	User1ID *uuid.UUID
-	User2ID *uuid.UUID
-}
-
-func (q *Queries) ListUserApprovedInterconnections(ctx context.Context, user1ID *uuid.UUID) ([]ListUserApprovedInterconnectionsRow, error) {
-	rows, err := q.db.Query(ctx, listUserApprovedInterconnections, user1ID)
+func (q *Queries) ListUserPortsRules(ctx context.Context, user1 *uuid.UUID) ([]UserPort, error) {
+	rows, err := q.db.Query(ctx, listUserPortsRules, user1)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListUserApprovedInterconnectionsRow
+	var items []UserPort
 	for rows.Next() {
-		var i ListUserApprovedInterconnectionsRow
-		if err := rows.Scan(&i.User1ID, &i.User2ID); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listUserRules = `-- name: ListUserRules :many
-select id, created_at, login from libusers where user = $1
-`
-
-func (q *Queries) ListUserRules(ctx context.Context, dollar_1 interface{}) ([]Libuser, error) {
-	rows, err := q.db.Query(ctx, listUserRules, dollar_1)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Libuser
-	for rows.Next() {
-		var i Libuser
-		if err := rows.Scan(&i.ID, &i.CreatedAt, &i.Login); err != nil {
+		var i UserPort
+		if err := rows.Scan(
+			&i.ID,
+			&i.CreatedAt,
+			&i.User1,
+			&i.TargetUser,
+			&i.Protocol,
+			&i.PortStart,
+			&i.PortEnd,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

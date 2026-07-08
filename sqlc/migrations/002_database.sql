@@ -12,24 +12,25 @@ create table libusers
             unique
 );
 
-create table user_interconnections
+create table user_ports
 (
     id              bigint generated always as identity
         constraint account_usage_logs_pk
             primary key,
     created_at timestamp default now(),
 
-    user1_id uuid constraint routing_table_libusers_id1_fk references libusers, 
-    user2_id uuid constraint routing_table_libusers_id2_fk references libusers, 
+    user1 uuid constraint routing_table_libusers_id1_fk references libusers,
+    target_user uuid constraint routing_table_libusers_id2_fk references libusers, -- если NULL то открыт для всех
 
-    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    protocol VARCHAR(10) NOT NULL CHECK (protocol IN ('tcp', 'udp', 'both')),
+    port_start INT NOT NULL CHECK (port_start >= 1 AND port_start <= 65535),
+    port_end INT CHECK (port_end >= port_start AND port_end <= 65535), -- если NULL, то только один порт
 
-    CONSTRAINT unique_pair UNIQUE (user1_id, user2_id)
+    CONSTRAINT unique_pair UNIQUE (user1, target_user)
 );
 
-CREATE INDEX user_interconnections_user1_user2 ON user_interconnections (user1_id, user2_id);
-CREATE INDEX user_interconnections_user2_user1 ON user_interconnections (user2_id, user1_id);
-
+CREATE INDEX user_ports_user1_target_user ON user_ports (user1, target_user);
+CREATE INDEX user_ports_target_user_user1 ON user_ports (target_user, user1);
 
 
 
@@ -38,5 +39,5 @@ CREATE INDEX user_interconnections_user2_user1 ON user_interconnections (user2_i
 -- +goose Down
 -- +goose StatementBegin
 drop table if exists libusers;
-drop table if exists user_interconnections;
+drop table if exists user_ports;
 -- +goose StatementEnd

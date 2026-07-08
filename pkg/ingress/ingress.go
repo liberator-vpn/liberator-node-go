@@ -22,10 +22,16 @@ import (
 )
 
 type DatagramMessage struct {
-	Data  []byte
-	User  uuid.UUID
+	Data []byte
+	User uuid.UUID
+
 	SrcIP net.IP
 	DstIP net.IP
+
+	SrcPort uint16
+	DstPort uint16
+
+	Protocol string
 }
 
 type Ingress struct {
@@ -49,6 +55,10 @@ type Ingress struct {
 	routingTable routingtable.RoutingTable
 
 	dbPool *repos.DbPool
+
+	dnsServer string
+
+	mtu int
 }
 
 func New(
@@ -59,6 +69,8 @@ func New(
 	jwtIss *liberatorjwt.LiberatorJWT,
 	cert *tls.Certificate,
 	dbPool *repos.DbPool,
+	dnsServer string,
+	mtu int,
 ) (*Ingress, error) {
 	ig := &Ingress{
 		ctx:          ctx,
@@ -67,8 +79,9 @@ func New(
 		jwtIss:       jwtIss,
 		ipAlloc:      ipAlloc,
 		dbPool:       dbPool,
-
-		connections: safemap.New[string, *IngressConnection](),
+		dnsServer:    dnsServer,
+		mtu:          mtu,
+		connections:  safemap.New[string, *IngressConnection](),
 	}
 	var err error
 
@@ -94,6 +107,8 @@ func New(
 		MaxIdleTimeout:        120 * time.Second,
 		KeepAlivePeriod:       15 * time.Second,
 		EnableDatagrams:       true,
+		MaxIncomingStreams:    1000,
+		InitialPacketSize:     1400,
 	})
 	if err != nil {
 		return nil, err
@@ -166,20 +181,28 @@ func (ig *Ingress) Authorize(ctx context.Context, source *IngressConnection, rq 
 	source.SetAuthorized()
 
 	// Get user allowed list
-	allowedList, err := ig.dbPool.Query().ListUserApprovedInterconnections(ctx, &userID)
+	portRules, err := ig.dbPool.Query().ListUserPortsRules(ctx, &userID)
 	if err != nil {
-		log.Printf("failed to list user allowed interconnections: %v", err)
+		log.Printf("failed to list user port rules: %v", err)
 		reason := "server error"
 		return &ingressproto.AuthorizeResponse{
 			Ok:     false,
 			Reason: &reason,
 		}, nil
 	}
-	for _, r := range allowedList {
-		if r.User1ID == nil || r.User2ID == nil {
-			continue
+
+	for _, r := range portRules {
+		params := routingtable.PortRule{
+			User:           *r.User1,
+			TargetUser:     r.TargetUser,
+			Protocol:       r.Protocol,
+			PortRangeStart: uint16(r.PortStart),
 		}
-		ig.routingTable.Allow(*r.User1ID, *r.User2ID)
+		if r.PortEnd.Valid {
+			v := uint16(r.PortEnd.Int32)
+			params.PortRangeEnd = &v
+		}
+		ig.routingTable.AddRule(params)
 	}
 
 	// Add connection to routing table
@@ -200,9 +223,9 @@ func (ig *Ingress) Authorize(ctx context.Context, source *IngressConnection, rq 
 		Reason:     nil,
 		AssignedIp: ip.String(),
 		PrefixLen:  16,
-		Mtu:        1400,
+		Mtu:        uint32(ig.mtu),
 		Routes:     []string{"0.0.0.0/0"},
-		Dns:        []string{"8.8.8.8"}, // TODO: Fix this
+		Dns:        []string{ig.dnsServer}, // TODO: Fix this
 	}, nil
 }
 
@@ -263,10 +286,35 @@ func (ig *Ingress) Datagram(ctx context.Context, source *IngressConnection, data
 		data = buffer.Bytes()
 	}
 
+	var protocol string
+	var srcPort, dstPort uint16
+
+	if l := packet.Layer(layers.LayerTypeTCP); l != nil {
+		tcpL := l.(*layers.TCP)
+		protocol = "tcp"
+		srcPort = uint16(tcpL.SrcPort)
+		dstPort = uint16(tcpL.DstPort)
+	} else if l := packet.Layer(layers.LayerTypeUDP); l != nil {
+		udpL := l.(*layers.UDP)
+		protocol = "udp"
+		srcPort = uint16(udpL.SrcPort)
+		dstPort = uint16(udpL.DstPort)
+	} else if l := packet.Layer(layers.LayerTypeICMPv4); l != nil {
+		protocol = "icmp"
+		srcPort = 0
+		dstPort = 0
+	}
+
 	ig.out <- &DatagramMessage{
-		Data:  data,
-		User:  source.GetUserID(),
+		Data: data,
+		User: source.GetUserID(),
+
 		SrcIP: source.GetVirtualIP(),
 		DstIP: ipv4Layer.DstIP,
+
+		SrcPort: srcPort,
+		DstPort: dstPort,
+
+		Protocol: protocol,
 	}
 }

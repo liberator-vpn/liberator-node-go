@@ -6,7 +6,7 @@ import (
 
 	"liberator-node-go/internal/infra/ipapi"
 	"liberator-node-go/internal/utils/safemap"
-	"liberator-node-go/pkg/mesh/discovery/proto"
+	"liberator-node-go/pkg/mesh/components/discovery/proto"
 
 	"log"
 	"time"

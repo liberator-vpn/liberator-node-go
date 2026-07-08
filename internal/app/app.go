@@ -6,6 +6,7 @@ import (
 	"liberator-node-go/internal/appconfig"
 	"liberator-node-go/internal/infra/repos"
 	"liberator-node-go/internal/utils/liberatorjwt"
+	"liberator-node-go/internal/utils/routingtable"
 	"liberator-node-go/internal/utils/safemap"
 	"liberator-node-go/pkg/bridge"
 	"liberator-node-go/pkg/mesh"
@@ -20,14 +21,17 @@ type App struct {
 	node    *mesh.MeshNode
 
 	repo *repos.DbPool
+
+	routingTable routingtable.RoutingTable
 }
 
 func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	app := &App{
-		ctx:     ctx,
-		cfg:     cfg,
-		bridges: safemap.New[string, *bridge.Bridge](),
-		jwtIss:  liberatorjwt.New([]byte(cfg.Auth.JWTSecret)),
+		ctx:          ctx,
+		cfg:          cfg,
+		bridges:      safemap.New[string, *bridge.Bridge](),
+		jwtIss:       liberatorjwt.New([]byte(cfg.Auth.JWTSecret)),
+		routingTable: routingtable.New(),
 	}
 	var err error
 
@@ -38,7 +42,7 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	}
 
 	// Create mesh node
-	app.node, err = mesh.New(ctx, cfg.Mesh)
+	app.node, err = mesh.New(ctx, cfg.Mesh, app.routingTable)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mesh node: %v", err)
 	}
@@ -49,7 +53,7 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 			return nil, fmt.Errorf("duplicated bridge name: %s", name)
 		}
 
-		bridge, err := bridge.New(ctx, bconf, app.jwtIss, app.node, app.repo)
+		bridge, err := bridge.New(ctx, bconf, app.jwtIss, app.node, app.repo, app.routingTable)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build bridge %s: %v", name, err)
 		}

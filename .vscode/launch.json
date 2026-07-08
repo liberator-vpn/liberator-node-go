@@ -16,6 +16,17 @@
             "cwd": ".",
             "args": ["./config.yaml"]
         },
+                {
+            "name": "Launch Package 2",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/node/main.go",
+            "console": "integratedTerminal",
+            "asRoot": true,
+            "cwd": ".",
+            "args": ["./config1.yaml"]
+        },
         {
             "name": "Generate certificates",
             "type": "go",
