@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v7.34.1
-// source: mesh/discovery/proto/discovery.proto
+// source: pkg/mesh/services/discovery/proto/discovery.proto
 
 package proto
 
@@ -27,7 +27,6 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type DiscoveryServiceClient interface {
-	// List all peers known by node.
 	PullKnownPeers(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListKnownPeersResponse, error)
 }
 
@@ -53,7 +52,6 @@ func (c *discoveryServiceClient) PullKnownPeers(ctx context.Context, in *emptypb
 // All implementations must embed UnimplementedDiscoveryServiceServer
 // for forward compatibility.
 type DiscoveryServiceServer interface {
-	// List all peers known by node.
 	PullKnownPeers(context.Context, *emptypb.Empty) (*ListKnownPeersResponse, error)
 	mustEmbedUnimplementedDiscoveryServiceServer()
 }
@@ -120,5 +118,5 @@ var DiscoveryService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "mesh/discovery/proto/discovery.proto",
+	Metadata: "pkg/mesh/services/discovery/proto/discovery.proto",
 }

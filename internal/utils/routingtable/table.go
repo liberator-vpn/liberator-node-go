@@ -10,10 +10,19 @@ import (
 	"github.com/google/uuid"
 )
 
+type RoutingTableRecordDump struct {
+	UserID    string
+	VirtualIP string
+	NodeID    string
+
+	Rules []PortRule
+}
+
 type RoutingObject interface {
+	GetNodeID() string
 	GetUserID() uuid.UUID
 	GetVirtualIP() net.IP
-	SendDatagram(data []byte) error
+	SendDatagram([]byte) error
 }
 
 // Protocol - tcp/udp/both
@@ -24,16 +33,24 @@ type PortRule struct {
 	PortRangeStart uint16
 	PortRangeEnd   *uint16
 }
+type DatagramMessage struct {
+	Data []byte
+
+	HoleInfo HoleInfo
+}
 
 type HoleInfo struct {
+	User  uuid.UUID
 	SrcIP net.IP
 	DstIP net.IP
 
 	SrcPort uint16
 	DstPort uint16
 
-	Protocol string // tcp/udp/icmp
+	Protocol string
 }
+
+type EventHandler = func(added, deleted RoutingObject)
 
 type RoutingTable interface {
 	Add(RoutingObject) error
@@ -45,7 +62,12 @@ type RoutingTable interface {
 	RuleCheck(hi HoleInfo) bool
 	Holepunch(hi HoleInfo, dur time.Duration)
 
+	Dump() []RoutingTableRecordDump
+	DumpRules(uuid.UUID) []PortRule
+
 	AddRule(PortRule)
+
+	AddEventHandler(EventHandler)
 }
 
 type routingTableImpl struct {
@@ -58,6 +80,8 @@ type routingTableImpl struct {
 
 	// Активные дырки (stateful): ключ -> время истечения
 	holes sync.Map // map[string]time.Time
+
+	eventHandlers []EventHandler
 }
 
 func New() RoutingTable {
@@ -80,8 +104,13 @@ func (r *routingTableImpl) Add(obj RoutingObject) error {
 		return fmt.Errorf("failed to add partially existing routing object")
 	}
 
+	if ipEx && idEx {
+		return nil
+	}
+
 	r.byUserID[obj.GetUserID()] = obj
 	r.byVirtualIp[obj.GetVirtualIP().String()] = obj
+	r.fireEvent(obj, nil)
 	return nil
 }
 
@@ -96,10 +125,14 @@ func (r *routingTableImpl) Delete(obj RoutingObject) error {
 	if idEx != ipEx {
 		return fmt.Errorf("failed to add partially existing routing object")
 	}
+	if !idEx && !ipEx {
+		return nil
+	}
 
 	delete(r.byUserID, obj.GetUserID())
 	delete(r.byVirtualIp, obj.GetVirtualIP().String())
 
+	r.fireEvent(nil, obj)
 	return nil
 }
 
@@ -136,40 +169,39 @@ func (r *routingTableImpl) AddRule(rule PortRule) {
 // Иначе проверяет правила пользователя-отправителя.
 // holeInfo должен содержать SrcIP, DstIP, SrcPort, DstPort (как net.IP) и Protocol (string).
 func (r *routingTableImpl) RuleCheck(holeInfo HoleInfo) bool {
-	// 1. Проверяем активную дырку
+	// 1. Проверяем активную дырку (stateful)
 	flowKey := makeFlowKey(holeInfo.SrcIP, holeInfo.DstIP, holeInfo.SrcPort, holeInfo.DstPort, holeInfo.Protocol)
 	if val, ok := r.holes.Load(flowKey); ok {
 		if expire, ok := val.(time.Time); ok && time.Now().Before(expire) {
-			return true // дырка активна
+			return true
 		} else {
-			r.holes.Delete(flowKey) // истекла – удаляем
+			r.holes.Delete(flowKey)
 		}
 	}
 
-	// 2. Находим отправителя и получателя по IP
+	// 2. Находим отправителя и получателя
 	r.updateLock.RLock()
 	srcObj, srcExists := r.byVirtualIp[holeInfo.SrcIP.String()]
 	dstObj, dstExists := r.byVirtualIp[holeInfo.DstIP.String()]
 	r.updateLock.RUnlock()
 	if !srcExists || !dstExists {
-		return false // один из участников не найден
+		return false
 	}
 	srcUserID := srcObj.GetUserID()
 	dstUserID := dstObj.GetUserID()
 
-	// 3. Получаем правила отправителя
+	// 3. Получаем правила ПОЛУЧАТЕЛЯ (dstUserID), а не отправителя
 	r.rulesMu.RLock()
-	rules, ok := r.rules[srcUserID]
+	rules, ok := r.rules[dstUserID] // <-- ИСПРАВЛЕНО
 	r.rulesMu.RUnlock()
 	if !ok || len(rules) == 0 {
-		// Нет правил – запрещаем (можно изменить на true, если нужна политика "всё разрешено")
-		return false
+		return false // если у получателя нет правил – запрещено
 	}
 
-	// 4. Отдельная ветка для ICMP – проверяем только наличие правила по TargetUser
+	// 4. Для ICMP – проверяем только TargetUser
 	if holeInfo.Protocol == "icmp" {
 		for _, rule := range rules {
-			if rule.TargetUser == nil || *rule.TargetUser == dstUserID {
+			if rule.TargetUser == nil || *rule.TargetUser == srcUserID {
 				return true
 			}
 		}
@@ -177,17 +209,17 @@ func (r *routingTableImpl) RuleCheck(holeInfo HoleInfo) bool {
 	}
 
 	// 5. Для TCP/UDP – проверяем порты
-	dstPort := holeInfo.DstPort // уже uint16
+	dstPort := holeInfo.DstPort
 	for _, rule := range rules {
-		// Проверяем получателя
-		if rule.TargetUser != nil && *rule.TargetUser != dstUserID {
+		// Проверяем, что правило разрешает именно этому отправителю (srcUserID)
+		if rule.TargetUser != nil && *rule.TargetUser != srcUserID {
 			continue
 		}
 		// Проверяем протокол
 		if rule.Protocol != "both" && rule.Protocol != holeInfo.Protocol {
 			continue
 		}
-		// Проверяем порт (точное совпадение или диапазон)
+		// Проверяем порт назначения (это порт получателя)
 		if rule.PortRangeEnd == nil {
 			if uint16(rule.PortRangeStart) == dstPort {
 				return true
@@ -326,4 +358,42 @@ func mergeIntervals(rules []PortRule) []PortRule {
 		})
 	}
 	return result
+}
+
+func (r *routingTableImpl) DumpRules(userID uuid.UUID) []PortRule {
+	r.rulesMu.RLock()
+	rules := make([]PortRule, 0)
+	for _, rule := range r.rules[userID] {
+		rules = append(rules, rule)
+	}
+	r.rulesMu.RUnlock()
+	return rules
+}
+func (r *routingTableImpl) Dump() []RoutingTableRecordDump {
+	r.updateLock.Lock()
+	defer r.updateLock.Unlock()
+	dump := make([]RoutingTableRecordDump, 0, len(r.byUserID))
+	for _, v := range r.byUserID {
+		record := RoutingTableRecordDump{
+			UserID:    v.GetUserID().String(),
+			VirtualIP: v.GetVirtualIP().String(),
+			NodeID:    v.GetNodeID(),
+		}
+		// Add rules
+		record.Rules = r.DumpRules(v.GetUserID())
+
+		dump = append(dump, record)
+	}
+	return dump
+}
+
+func (r *routingTableImpl) fireEvent(added, deleted RoutingObject) {
+	for _, h := range r.eventHandlers {
+		if h != nil {
+			go h(added, deleted)
+		}
+	}
+}
+func (r *routingTableImpl) AddEventHandler(h EventHandler) {
+	r.eventHandlers = append(r.eventHandlers, h)
 }

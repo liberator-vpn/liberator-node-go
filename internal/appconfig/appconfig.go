@@ -27,11 +27,12 @@ type EgressConfig struct {
 
 // BridgeConfig описывает один мост (bridge) со своим ingress/egress и сетевой конфигурацией
 type BridgeConfig struct {
-	Ingresses map[string]IngressConfig `yaml:"ingresses"`
-	Egress    EgressConfig             `yaml:"egress"`
-	CIDR      string                   `yaml:"cidr"`
-	MTU       int                      `yaml:"mtu"`
-	DNS       string                   `yaml:"dns"`
+	Ingresses  map[string]IngressConfig `yaml:"ingresses"`
+	Egress     EgressConfig             `yaml:"egress"`
+	GlobalCIRD string                   `yaml:"global_cidr"`
+	CIDR       string                   `yaml:"cidr"`
+	MTU        int                      `yaml:"mtu"`
+	DNS        string                   `yaml:"dns"`
 }
 
 // MeshConfig для кластеризации (обнаружение пиров)

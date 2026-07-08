@@ -1,0 +1,43 @@
+syntax = "proto3";
+package proto;
+option go_package = "./proto";
+
+import "google/protobuf/empty.proto";
+
+//protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative pkg/mesh/services/meshrouting/proto/meshrouting.proto
+
+
+message PortRule {
+	optional string target_user = 1;
+    string protocol = 2;
+    uint32 port_range_start = 3;
+    optional uint32 port_range_end = 4;
+};
+
+message UserConnection {
+  string user_id = 1;
+  string virtual_ip = 2;
+  string node_id = 3;
+  repeated PortRule rules = 4;
+};
+
+enum UpdateType {
+    ADD = 0;
+    REMOVE = 1;
+}
+message UserConnectionUpdate {
+    UpdateType type = 1;
+    UserConnection add = 2;
+    string remove_virtual_ip = 3;
+  
+}
+message UsersConnectionsList {
+    repeated UserConnection connections = 1;
+};
+
+
+service MeshRoutingService {
+    rpc PushConnectionUpdate(UserConnectionUpdate) returns(google.protobuf.Empty);
+    rpc PullFullTable(google.protobuf.Empty) returns(UsersConnectionsList);
+}
+

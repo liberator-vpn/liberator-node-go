@@ -15,7 +15,8 @@ import (
 type IngressConnection struct {
 	ingressproto.IngressServiceServer
 
-	id string
+	id     string
+	nodeID string
 
 	authorized bool
 	userID     uuid.UUID
@@ -30,9 +31,10 @@ type IngressConnection struct {
 	closeFunc func(c *IngressConnection)
 }
 
-func wrapConnetion(conn *quic.Conn, ingress *Ingress, closeFunc func(c *IngressConnection)) (*IngressConnection, error) {
+func wrapConnetion(conn *quic.Conn, nodeID string, ingress *Ingress, closeFunc func(c *IngressConnection)) (*IngressConnection, error) {
 	ic := &IngressConnection{
 		id:      uuid.NewString(),
+		nodeID:  nodeID,
 		conn:    conn,
 		ingress: ingress,
 
@@ -58,7 +60,9 @@ func (ic *IngressConnection) GetAuthorized() bool {
 func (ic *IngressConnection) SetAuthorized() {
 	ic.authorized = true
 }
-
+func (ic *IngressConnection) GetNodeID() string {
+	return ic.nodeID
+}
 func (ic *IngressConnection) GetUserID() uuid.UUID {
 	return ic.userID
 }

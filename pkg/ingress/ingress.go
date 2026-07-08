@@ -17,22 +17,8 @@ import (
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
-	"github.com/google/uuid"
 	"github.com/quic-go/quic-go"
 )
-
-type DatagramMessage struct {
-	Data []byte
-	User uuid.UUID
-
-	SrcIP net.IP
-	DstIP net.IP
-
-	SrcPort uint16
-	DstPort uint16
-
-	Protocol string
-}
 
 type Ingress struct {
 	ctx  context.Context
@@ -48,7 +34,7 @@ type Ingress struct {
 
 	ipAlloc *ipalloc.IPAllocator
 
-	in, out chan *DatagramMessage
+	in, out chan *routingtable.DatagramMessage
 
 	runOnce sync.Once
 
@@ -58,7 +44,8 @@ type Ingress struct {
 
 	dnsServer string
 
-	mtu int
+	mtu    int
+	nodeID string
 }
 
 func New(
@@ -71,6 +58,7 @@ func New(
 	dbPool *repos.DbPool,
 	dnsServer string,
 	mtu int,
+	nodeID string,
 ) (*Ingress, error) {
 	ig := &Ingress{
 		ctx:          ctx,
@@ -82,6 +70,7 @@ func New(
 		dnsServer:    dnsServer,
 		mtu:          mtu,
 		connections:  safemap.New[string, *IngressConnection](),
+		nodeID:       nodeID,
 	}
 	var err error
 
@@ -116,7 +105,7 @@ func New(
 	return ig, nil
 }
 
-func (ig *Ingress) Run(out chan *DatagramMessage) {
+func (ig *Ingress) Run(out chan *routingtable.DatagramMessage) {
 	ig.runOnce.Do(func() {
 		ig.out = out
 
@@ -132,7 +121,7 @@ func (ig *Ingress) Run(out chan *DatagramMessage) {
 				log.Printf("failed to accept ingress connection: %v", err)
 				continue
 			}
-			wc, err := wrapConnetion(conn, ig, func(c *IngressConnection) {
+			wc, err := wrapConnetion(conn, ig.nodeID, ig, func(c *IngressConnection) {
 				ig.connections.Delete(c.ConnectionID())
 				ig.routingTable.Delete(c)
 			})
@@ -305,16 +294,17 @@ func (ig *Ingress) Datagram(ctx context.Context, source *IngressConnection, data
 		dstPort = 0
 	}
 
-	ig.out <- &DatagramMessage{
+	ig.out <- &routingtable.DatagramMessage{
 		Data: data,
-		User: source.GetUserID(),
+		HoleInfo: routingtable.HoleInfo{
+			User:  source.GetUserID(),
+			SrcIP: source.GetVirtualIP(),
+			DstIP: ipv4Layer.DstIP,
 
-		SrcIP: source.GetVirtualIP(),
-		DstIP: ipv4Layer.DstIP,
+			SrcPort: srcPort,
+			DstPort: dstPort,
 
-		SrcPort: srcPort,
-		DstPort: dstPort,
-
-		Protocol: protocol,
+			Protocol: protocol,
+		},
 	}
 }

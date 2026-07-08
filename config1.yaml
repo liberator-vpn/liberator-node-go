@@ -4,6 +4,7 @@ auth:
 
 bridge:
   bridge1:
+    global_cidr: 10.0.0.0/8
     cidr: "10.9.0.1/16" # Addr here corresponds to gateway(vpn server host), dns server launched here
     mtu: 1376
     dns: "1.1.1.1" # Where to proxy dns requests

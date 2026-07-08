@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v7.34.1
-// source: pkg/mesh/meshrouting/proto/meshrouting.proto
+// source: pkg/mesh/services/meshrouting/proto/meshrouting.proto
 
 package proto
 
@@ -20,7 +20,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MeshRoutingService_SendConnectionUpdate_FullMethodName = "/proto.MeshRoutingService/SendConnectionUpdate"
+	MeshRoutingService_PushConnectionUpdate_FullMethodName = "/proto.MeshRoutingService/PushConnectionUpdate"
 	MeshRoutingService_PullFullTable_FullMethodName        = "/proto.MeshRoutingService/PullFullTable"
 )
 
@@ -28,7 +28,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type MeshRoutingServiceClient interface {
-	SendConnectionUpdate(ctx context.Context, in *UserConnectionUpdate, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	PushConnectionUpdate(ctx context.Context, in *UserConnectionUpdate, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	PullFullTable(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*UsersConnectionsList, error)
 }
 
@@ -40,10 +40,10 @@ func NewMeshRoutingServiceClient(cc grpc.ClientConnInterface) MeshRoutingService
 	return &meshRoutingServiceClient{cc}
 }
 
-func (c *meshRoutingServiceClient) SendConnectionUpdate(ctx context.Context, in *UserConnectionUpdate, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *meshRoutingServiceClient) PushConnectionUpdate(ctx context.Context, in *UserConnectionUpdate, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, MeshRoutingService_SendConnectionUpdate_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, MeshRoutingService_PushConnectionUpdate_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +64,7 @@ func (c *meshRoutingServiceClient) PullFullTable(ctx context.Context, in *emptyp
 // All implementations must embed UnimplementedMeshRoutingServiceServer
 // for forward compatibility.
 type MeshRoutingServiceServer interface {
-	SendConnectionUpdate(context.Context, *UserConnectionUpdate) (*emptypb.Empty, error)
+	PushConnectionUpdate(context.Context, *UserConnectionUpdate) (*emptypb.Empty, error)
 	PullFullTable(context.Context, *emptypb.Empty) (*UsersConnectionsList, error)
 	mustEmbedUnimplementedMeshRoutingServiceServer()
 }
@@ -76,8 +76,8 @@ type MeshRoutingServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedMeshRoutingServiceServer struct{}
 
-func (UnimplementedMeshRoutingServiceServer) SendConnectionUpdate(context.Context, *UserConnectionUpdate) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method SendConnectionUpdate not implemented")
+func (UnimplementedMeshRoutingServiceServer) PushConnectionUpdate(context.Context, *UserConnectionUpdate) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method PushConnectionUpdate not implemented")
 }
 func (UnimplementedMeshRoutingServiceServer) PullFullTable(context.Context, *emptypb.Empty) (*UsersConnectionsList, error) {
 	return nil, status.Error(codes.Unimplemented, "method PullFullTable not implemented")
@@ -103,20 +103,20 @@ func RegisterMeshRoutingServiceServer(s grpc.ServiceRegistrar, srv MeshRoutingSe
 	s.RegisterService(&MeshRoutingService_ServiceDesc, srv)
 }
 
-func _MeshRoutingService_SendConnectionUpdate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MeshRoutingService_PushConnectionUpdate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(UserConnectionUpdate)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MeshRoutingServiceServer).SendConnectionUpdate(ctx, in)
+		return srv.(MeshRoutingServiceServer).PushConnectionUpdate(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: MeshRoutingService_SendConnectionUpdate_FullMethodName,
+		FullMethod: MeshRoutingService_PushConnectionUpdate_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MeshRoutingServiceServer).SendConnectionUpdate(ctx, req.(*UserConnectionUpdate))
+		return srv.(MeshRoutingServiceServer).PushConnectionUpdate(ctx, req.(*UserConnectionUpdate))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -147,8 +147,8 @@ var MeshRoutingService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*MeshRoutingServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "SendConnectionUpdate",
-			Handler:    _MeshRoutingService_SendConnectionUpdate_Handler,
+			MethodName: "PushConnectionUpdate",
+			Handler:    _MeshRoutingService_PushConnectionUpdate_Handler,
 		},
 		{
 			MethodName: "PullFullTable",
@@ -156,5 +156,5 @@ var MeshRoutingService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "pkg/mesh/meshrouting/proto/meshrouting.proto",
+	Metadata: "pkg/mesh/services/meshrouting/proto/meshrouting.proto",
 }

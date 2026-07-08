@@ -9,18 +9,17 @@ import (
 	"errors"
 	"fmt"
 	"liberator-node-go/internal/appconfig"
-	"liberator-node-go/internal/infra/ipapi"
 	"liberator-node-go/internal/utils/cert"
+	"liberator-node-go/internal/utils/peerstore"
 	"liberator-node-go/internal/utils/quictransport"
 	"liberator-node-go/internal/utils/routingtable"
-	"liberator-node-go/internal/utils/safemap"
-	"liberator-node-go/pkg/mesh/components/discovery"
-	"liberator-node-go/pkg/mesh/components/meshrouting"
+	"liberator-node-go/pkg/mesh/services/discovery"
+	"liberator-node-go/pkg/mesh/services/meshrouting"
 	"log"
-	"maps"
 	"net"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/quic-go/quic-go"
 	"google.golang.org/grpc"
 )
@@ -48,12 +47,14 @@ func extractPeerId(cert *tls.Certificate) (string, error) {
 }
 
 type MeshNode struct {
-	ctx    context.Context
-	ipInfo *ipapi.IpInfo
-	cfg    appconfig.MeshConfig
+	ctx context.Context
+	cfg appconfig.MeshConfig
+
+	routingTable routingtable.RoutingTable
 
 	cert         *tls.Certificate
 	serverCaPool *x509.CertPool
+	clientTls    *tls.Config
 
 	// This server listener
 	udpBind   *net.UDPConn
@@ -61,18 +62,15 @@ type MeshNode struct {
 	lis       *quic.Listener
 	nodeId    string
 
-	clientTls *tls.Config
-
-	connections safemap.Safemap[string, WrappedConnection]
-
 	grpcServer *grpc.Server
 	grpcLis    *quictransport.BiStreamLis
 
-	peerStore   *discovery.PeerStore
-	discovery   *discovery.DiscoveryService[WrappedConnection]
+	peerStore *peerstore.PeerStore
+
+	discovery   *discovery.DiscoveryService
 	meshRouting *meshrouting.MeshRoutingService
 
-	routingTable routingtable.RoutingTable
+	dgChan chan []byte
 }
 
 func New(ctx context.Context, cfg appconfig.MeshConfig, routingTable routingtable.RoutingTable) (*MeshNode, error) {
@@ -99,9 +97,10 @@ func New(ctx context.Context, cfg appconfig.MeshConfig, routingTable routingtabl
 		serverCaPool: x509.NewCertPool(),
 		grpcServer:   grpc.NewServer(),
 		nodeId:       nodeId,
-		peerStore:    discovery.NewPeerStore(),
-		connections:  safemap.New[string, WrappedConnection](),
+		peerStore:    peerstore.NewPeerStore(),
 		routingTable: routingTable,
+
+		dgChan: make(chan []byte, 500),
 	}
 	n.serverCaPool.AddCert(rootCa)
 
@@ -111,22 +110,21 @@ func New(ctx context.Context, cfg appconfig.MeshConfig, routingTable routingtabl
 		log.Printf("failed to load peerStore: %v", err)
 	}
 
-	n.meshRouting, err = meshrouting.New(n.grpcServer, n.routingTable)
+	n.meshRouting, err = meshrouting.New(n.grpcServer, n.peerStore, n.routingTable, n)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mesh rounting: %v", err)
 	}
-	n.discovery = discovery.New(n.grpcServer, n.peerStore, n.connections)
+	n.discovery = discovery.New(n.grpcServer, n.peerStore)
 	/*
 		n.ipInfo, err = ipapi.GetIpInfo()
 		if err != nil {
 			return nil, err
 		}*/
 	// Add self to nodes
-	n.peerStore.InsertMerge(&discovery.PeerInfo{
-		Id:        n.nodeId,
-		LastSeen:  time.Now(),
-		IpInfo:    n.ipInfo,
-		Addresses: map[string]bool{},
+	n.peerStore.InsertMerge(&peerstore.PeerInfo{
+		Id:       n.nodeId,
+		LastSeen: time.Now(),
+		Address:  "",
 	})
 
 	addr, err := net.ResolveUDPAddr("udp", cfg.ListenAddr)
@@ -203,7 +201,7 @@ func New(ctx context.Context, cfg appconfig.MeshConfig, routingTable routingtabl
 	log.Printf("created node with id: %s", n.nodeId)
 	return n, nil
 }
-func (n *MeshNode) meshConnect(addr string) (WrappedConnection, error) {
+func (n *MeshNode) meshConnect(addr string) (peerstore.WrappedConnection, error) {
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return nil, err
@@ -219,9 +217,9 @@ func (n *MeshNode) meshConnect(addr string) (WrappedConnection, error) {
 	}
 	return n.handleConnection(conn, false)
 }
-func (n *MeshNode) handleConnection(conn *quic.Conn, isIncoming bool) (WrappedConnection, error) {
-	meshConn, err := wrapConnection(conn, n.grpcLis, func(mc WrappedConnection) {
-		n.connections.Delete(mc.ID())
+func (n *MeshNode) handleConnection(conn *quic.Conn, isIncoming bool) (peerstore.WrappedConnection, error) {
+	meshConn, err := wrapConnection(conn, n.dgChan, n.grpcLis, func(mc peerstore.WrappedConnection) {
+		n.peerStore.SetDisconnected(mc.ID())
 	})
 	if err != nil {
 		return nil, err
@@ -232,43 +230,36 @@ func (n *MeshNode) handleConnection(conn *quic.Conn, isIncoming bool) (WrappedCo
 	}
 
 	// Resolve collisions
-	original, ex := n.connections.Get(meshConn.ID())
-	if ex {
+	peer, ex := n.peerStore.Get(meshConn.ID())
+	if ex && peer.Connected() {
 		localID := n.nodeId
 		remoteID := meshConn.ID()
 
 		if localID < remoteID {
 			if isIncoming {
 				meshConn.Close()
-				return original, nil
+				return peer.Connection, nil
 			}
-			original.Close()
+			peer.Connection.Close()
 			log.Printf("Dial won collision against %s. Replacing.", meshConn.ID())
 		} else {
 			if !isIncoming {
 				meshConn.Close()
-				return original, nil
+				return peer.Connection, nil
 			}
-			original.Close()
+			peer.Connected()
 			log.Printf("Incoming Accept won collision against %s. Replacing.", meshConn.ID())
 		}
 	} else {
 		log.Printf("New mesh connection from %s", meshConn.ID())
 	}
 
-	if n.connections.Exists(meshConn.ID()) {
-		log.Println("duplicated")
-	}
-
-	n.connections.Set(meshConn.ID(), meshConn)
 	// Store to peers store
-	pi := &discovery.PeerInfo{
-		Id:       meshConn.ID(),
-		LastSeen: time.Now(),
-		IpInfo:   n.ipInfo,
-		Addresses: map[string]bool{
-			meshConn.RemoteAddr().String(): true,
-		},
+	pi := &peerstore.PeerInfo{
+		Id:         meshConn.ID(),
+		LastSeen:   time.Now(),
+		Address:    meshConn.RemoteAddr().String(),
+		Connection: meshConn,
 	}
 	n.peerStore.InsertMerge(pi)
 	go meshConn.Run()
@@ -278,7 +269,12 @@ func (n *MeshNode) handleConnection(conn *quic.Conn, isIncoming bool) (WrappedCo
 func (n *MeshNode) Run() {
 	// Grpc listener
 	go n.grpcServer.Serve(n.grpcLis)
-	go n.nodeWorker()
+
+	// Services
+	go n.discovery.Run(n.ctx)
+	go n.meshRouting.Run(n.ctx)
+
+	go n.connector()
 	// Connect to bootstrap nodes
 	go func() {
 		for _, bn := range n.cfg.BootstrapAddrs {
@@ -330,34 +326,47 @@ func (n *MeshNode) Run() {
 		}()
 	}
 }
-func (n *MeshNode) nodeWorker() {
-	go n.discovery.Run(n.ctx)
-
-	// TODO: Move to discovery
-	// TODO: Move peerstore to MeshNode, pass by reference to discovery
+func (n *MeshNode) connector() {
+	ticker := time.NewTicker(time.Second * 10)
 	go func() {
-		ticker := time.NewTicker(time.Second * 5)
 		for range ticker.C {
 			go func() {
 				for _, peer := range n.peerStore.List() {
-					if n.connections.Exists(peer.Id) {
+					if n.peerStore.Connected(peer.Id) {
 						continue
 					}
-					peer.AddrMut.Lock()
-					addrClone := maps.Clone(peer.Addresses)
-					peer.AddrMut.Unlock()
-					for a, _ := range addrClone {
-						_, err := n.meshConnect(a)
-						if err == nil {
-							break
-						}
+					_, err := n.meshConnect(peer.Address)
+					if err == nil {
+						break
 					}
 				}
 			}()
 		}
 	}()
 
-	select {
-	case <-n.ctx.Done():
+	<-n.ctx.Done()
+	ticker.Stop()
+}
+
+func (n *MeshNode) NodeID() string {
+	return n.nodeId
+}
+
+func (n *MeshNode) DatagramChan() chan []byte {
+	return n.dgChan
+}
+
+func (n *MeshNode) NewVirtualConnection(nodeID, userID, virtualIP string) (routingtable.RoutingObject, error) {
+	uId, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, err
 	}
+	ip := net.ParseIP(virtualIP)
+
+	return &VirtualConnection{
+		Parent:    n,
+		NodeID:    nodeID,
+		UserID:    uId,
+		VirtualIp: ip,
+	}, nil
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"liberator-node-go/internal/utils/peerstore"
 	"liberator-node-go/internal/utils/quictransport"
 	"net"
 	"sync/atomic"
@@ -14,13 +15,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-type WrappedConnection interface {
-	ID() string
-	RemoteAddr() net.Addr
-	Close()
-	Run()
-	GrpcClient() *grpc.ClientConn
-}
+// static check
 type wrappedConnectionImpl struct {
 	nodeId string
 	conn   *quic.Conn
@@ -30,10 +25,12 @@ type wrappedConnectionImpl struct {
 	grpcLis    *quictransport.BiStreamLis
 	grpcClient *grpc.ClientConn
 
-	closeFunc func(c WrappedConnection)
+	closeFunc func(c peerstore.WrappedConnection)
+
+	dgChan chan []byte
 }
 
-func wrapConnection(conn *quic.Conn, grpcLis *quictransport.BiStreamLis, closeFunc func(c WrappedConnection)) (WrappedConnection, error) {
+func wrapConnection(conn *quic.Conn, dgChan chan []byte, grpcLis *quictransport.BiStreamLis, closeFunc func(c peerstore.WrappedConnection)) (peerstore.WrappedConnection, error) {
 	state := conn.ConnectionState().TLS
 	if len(state.PeerCertificates) == 0 {
 		return nil, fmt.Errorf("peer is not authenticated")
@@ -51,6 +48,7 @@ func wrapConnection(conn *quic.Conn, grpcLis *quictransport.BiStreamLis, closeFu
 		conn:      conn,
 		closeFunc: closeFunc,
 		grpcLis:   grpcLis,
+		dgChan:    dgChan,
 	}
 	var err error
 	c.grpcClient, err = c.newGrpcClient()
@@ -92,7 +90,7 @@ func (c *wrappedConnectionImpl) readDatagrams(ctx context.Context) {
 		if err != nil {
 			return
 		}
-		_ = data
+		c.dgChan <- data
 	}
 }
 
@@ -133,4 +131,8 @@ func (c *wrappedConnectionImpl) newGrpcClient() (*grpc.ClientConn, error) {
 	}
 
 	return grpcConn, nil
+}
+
+func (c *wrappedConnectionImpl) SendDatagram(data []byte) error {
+	return c.conn.SendDatagram(data)
 }
