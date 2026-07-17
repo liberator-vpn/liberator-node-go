@@ -1,7 +1,6 @@
 package mesh
 
 import (
-	"fmt"
 	"net"
 
 	"github.com/google/uuid"
@@ -25,9 +24,5 @@ func (vc *VirtualConnection) GetVirtualIP() net.IP {
 }
 
 func (vc *VirtualConnection) SendDatagram(data []byte) error {
-	peer, ex := vc.Parent.peerStore.Get(vc.NodeID)
-	if !ex {
-		return fmt.Errorf("peer not found")
-	}
-	return peer.Connection.SendDatagram(data)
+	return vc.Parent.peerStore.SendDatagram(vc.NodeID, data)
 }

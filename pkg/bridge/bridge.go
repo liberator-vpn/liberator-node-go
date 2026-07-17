@@ -2,24 +2,24 @@ package bridge
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"liberator-node-go/internal/appconfig"
-	"liberator-node-go/internal/infra/repos"
+	"liberator-node-go/internal/utils/awgconfig"
 	"liberator-node-go/internal/utils/ipalloc"
-	"liberator-node-go/internal/utils/liberatorjwt"
 	"liberator-node-go/internal/utils/routingtable"
 	"liberator-node-go/internal/utils/safemap"
 	"liberator-node-go/pkg/egress"
 	"liberator-node-go/pkg/ingress"
+	"liberator-node-go/pkg/ingress/awg"
+	ingressquic "liberator-node-go/pkg/ingress/quic"
 	"liberator-node-go/pkg/mesh"
 	"log"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
+	"github.com/google/uuid"
 )
 
 type Bridge struct {
@@ -28,34 +28,37 @@ type Bridge struct {
 	routingTable routingtable.RoutingTable
 
 	egr       *egress.Egress
-	ingresses safemap.Safemap[string, *ingress.Ingress]
+	ingresses safemap.Safemap[string, ingress.Ingress]
 	meshNode  *mesh.MeshNode
-
-	dbPool *repos.DbPool
 
 	gatewayAddr   net.IP
 	network       *net.IPNet
 	globalNetwork *net.IPNet
+
+	toEgr, fromEgr chan *routingtable.DatagramMessage
+	fromMesh       chan *routingtable.DatagramMessage
+	fromIng        chan *routingtable.DatagramMessage
 }
 
 func New(
 	ctx context.Context,
 	cfg appconfig.BridgeConfig,
-	jwtIss *liberatorjwt.LiberatorJWT,
 	meshNode *mesh.MeshNode,
-	dbPool *repos.DbPool,
 	routingTable routingtable.RoutingTable,
 ) (*Bridge, error) {
 	br := &Bridge{
 		ctx:          ctx,
-		ingresses:    safemap.New[string, *ingress.Ingress](),
+		ingresses:    safemap.New[string, ingress.Ingress](),
 		routingTable: routingTable,
 		meshNode:     meshNode,
-		dbPool:       dbPool,
+		toEgr:        make(chan *routingtable.DatagramMessage, 500),
+		fromEgr:      make(chan *routingtable.DatagramMessage, 500),
+		fromMesh:     meshNode.DatagramChan(),
+		fromIng:      make(chan *routingtable.DatagramMessage, 500),
 	}
 
 	var err error
-	br.egr, err = egress.New(ctx, cfg.Egress.IfaceInName, cfg.CIDR, cfg.Egress.IfaceOutName, cfg.MTU)
+	br.egr, err = egress.New(ctx, cfg.Egress, cfg.CIDR)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create egress: %w", err)
 	}
@@ -81,182 +84,171 @@ func New(
 
 	// Build ingresses
 	for name, iconf := range cfg.Ingresses {
-		certificate, err := tls.LoadX509KeyPair(iconf.Cert, iconf.Key)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load cert key pair: %v", err)
+		if br.ingresses.Exists(name) {
+			return nil, fmt.Errorf("duplicated ingress name: %s", name)
+		}
+		typ, ex := iconf["type"]
+		if !ex {
+			return nil, fmt.Errorf("type for ingress %s is not provided", name)
 		}
 
-		ing, err := ingress.New(ctx, br.routingTable, br.ipAlloc, iconf.ListenAddr, jwtIss, &certificate, br.dbPool, cfg.DNS, cfg.MTU, meshNode.NodeID())
-		if err != nil {
-			return nil, fmt.Errorf("failed to create ingress %s: %w", name, err)
+		var ing ingress.Ingress
+		switch typ {
+		case "quic":
+			icfg, err := ingressquic.ParseConfig(iconf)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse ingress %s config: %v", name, err)
+			}
+			ing, err = ingressquic.New(ctx, icfg, br.routingTable, br.ipAlloc, meshNode.NodeID())
+			if err != nil {
+				return nil, fmt.Errorf("failed to create ingress %s: %w", name, err)
+			}
+		case "awg":
+			icfg, err := awg.ParseConfig(iconf)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse ingress %s config: %v", name, err)
+			}
+
+			awging, err := awg.New(
+				ctx,
+				icfg,
+				br.routingTable,
+				br.ipAlloc,
+				br.fromIng, // Передаем общий канал входящих пакетов
+				meshNode.NodeID(),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create ingress %s: %w", name, err)
+			}
+			ing = awging
+
+			serverPubKey, err := getServerPubKey(icfg.PrivateKey)
+			if err != nil {
+				log.Fatalf("Failed to calc server pub key: %v", err)
+			}
+			fmt.Printf("Сервер Public Key (HEX): %s\n", serverPubKey)
+
+			clientPrivKey := "58627383123294ebb76f5831ddcf3d40ed31104a9ef1c1accaf007efb4318b73"
+			clientPubKey := "afa89c215becc53d4bc90562b7e1c8667298ec39ff3cff47857052c55a45b402"
+			// Генерируем ключи клиента СРАЗУ В HEX
+			//clientPrivKey, clientPubKey, err := generateKeyPair()
+			//if err != nil {
+			//	log.Fatalf("Failed to generate client keys: %v", err)
+			//}
+
+			userID := uuid.New()
+			clientIp, err := awging.PreparePeer(userID, clientPubKey)
+			if err != nil {
+				log.Fatalf("Failed to prepare peer: %v", err)
+			}
+
+			clientTestConfig, err := awgconfig.GenerateURI(&awgconfig.ClientParams{
+				ServerAddr:    "192.168.68.121",
+				ServerPort:    2200,
+				ServerPubKey:  serverPubKey,
+				ClientPrivKey: clientPrivKey,
+				ClientIP:      clientIp.String() + "/32",
+				DNSServer:     "10.0.0.1",
+
+				// Передаем ОБЯЗАТЕЛЬНО строками!
+				H1:   icfg.H1,
+				H2:   icfg.H2,
+				H3:   icfg.H3,
+				H4:   icfg.H4,
+				Jc:   strconv.Itoa(icfg.Jc),
+				Jmin: strconv.Itoa(icfg.JMin),
+				Jmax: strconv.Itoa(icfg.JMax),
+				S1:   strconv.Itoa(icfg.S1),
+				S2:   strconv.Itoa(icfg.S2),
+			})
+			if err != nil {
+				log.Fatalf("Failed to gen config: %v", err)
+			}
+
+			fmt.Println(clientTestConfig)
+
+		default:
+			return nil, fmt.Errorf("unknown ingress type: %s", typ)
 		}
 		br.ingresses.Set(name, ing)
 	}
+
 	return br, nil
 }
 
-func (br *Bridge) handleTUNPacket(data []byte) {
-	if len(data) == 0 {
-		return
-	}
-	version := data[0] >> 4
-	if version == 6 {
-		// Ip v6 not supported
-		return
-	}
-	// Extract ip to identify target ip.
-	packet := gopacket.NewPacket(data, layers.LayerTypeIPv4, gopacket.DecodeOptions{
-		Lazy:   true,
-		NoCopy: true,
-	})
-	ipv4Layer := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
-	if ipv4Layer == nil {
-		return
-	}
-
-	target, ex := br.routingTable.GetByVirtualIp(ipv4Layer.DstIP)
-	if !ex {
-		// TODO: Probably packet for internet
-		return
-	}
-	err := target.SendDatagram(data)
+func (br *Bridge) handleTUNPacket(data *routingtable.DatagramMessage) {
+	err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, data.Data)
 	if err != nil {
-		log.Printf("failed to send datagram %d: %v", len(data), err)
+		log.Printf("failed to send datagram from tun %d: %v", len(data.Data), err)
 	}
 }
-func (br *Bridge) handleMeshPacket(data []byte) {
-	if len(data) == 0 {
-		return
-	}
-	version := data[0] >> 4
-	if version == 6 {
-		// Ip v6 not supported
-		return
-	}
-	// Extract ip to identify target ip.
-	packet := gopacket.NewPacket(data, layers.LayerTypeIPv4, gopacket.DecodeOptions{
-		Lazy:   true,
-		NoCopy: true,
-	})
-	ipv4Layer := packet.Layer(layers.LayerTypeIPv4)
-	if ipv4Layer == nil {
-		return
-	}
-	ip := ipv4Layer.(*layers.IPv4)
-
-	// Извлекаем информацию для Holepunch
-	var srcPort, dstPort uint16
-	var protocolStr string
-	switch ip.Protocol {
-	case layers.IPProtocolTCP:
-		if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
-			tcp := tcpLayer.(*layers.TCP)
-			srcPort = uint16(tcp.SrcPort)
-			dstPort = uint16(tcp.DstPort)
-			protocolStr = "tcp"
-		}
-	case layers.IPProtocolUDP:
-		if udpLayer := packet.Layer(layers.LayerTypeUDP); udpLayer != nil {
-			udp := udpLayer.(*layers.UDP)
-			srcPort = uint16(udp.SrcPort)
-			dstPort = uint16(udp.DstPort)
-			protocolStr = "udp"
-		}
-	case layers.IPProtocolICMPv4:
-		protocolStr = "icmp"
-		// порты не используются
-	default:
-		// Другие протоколы игнорируем (не создаём дырку)
+func (br *Bridge) handleMeshPacket(data *routingtable.DatagramMessage) {
+	if data.HoleInfo.Protocol != "" {
+		br.routingTable.Holepunch(data.HoleInfo, time.Minute)
 	}
 
-	// Создаём дырку для этого потока, чтобы ответы проходили без проверки правил
-	if protocolStr != "" {
-		hi := routingtable.HoleInfo{
-			SrcIP:    ip.SrcIP,
-			DstIP:    ip.DstIP,
-			SrcPort:  srcPort,
-			DstPort:  dstPort,
-			Protocol: protocolStr,
-		}
-		br.routingTable.Holepunch(hi, time.Minute)
-	}
-
-	target, ex := br.routingTable.GetByVirtualIp(ip.DstIP)
-	if !ex {
-		// TODO: Probably packet for internet
-		return
-	}
-	err := target.SendDatagram(data)
+	err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, data.Data)
 	if err != nil {
-		log.Printf("failed to send datagram %d: %v", len(data), err)
+		log.Printf("failed to send datagram from mesh %d: %v", len(data.Data), err)
 	}
 }
+func (br *Bridge) handleIngressPacket(data *routingtable.DatagramMessage) {
+	if data.HoleInfo.DstIP.Equal(br.gatewayAddr) || !br.globalNetwork.Contains(data.HoleInfo.DstIP) {
+		br.toEgr <- data // TUN
+		return
+	}
+	hi := routingtable.HoleInfo{
+		SrcIP:    data.HoleInfo.SrcIP,
+		DstIP:    data.HoleInfo.DstIP,
+		SrcPort:  data.HoleInfo.SrcPort,
+		DstPort:  data.HoleInfo.DstPort,
+		Protocol: data.HoleInfo.Protocol,
+	}
+	if !br.routingTable.RuleCheck(hi) {
+		return
+	}
+
+	br.routingTable.Holepunch(hi, time.Minute)
+	if br.network.Contains(data.HoleInfo.DstIP) {
+		br.toEgr <- data // TUN
+	} else {
+
+		err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, data.Data)
+		if err != nil {
+			log.Printf("failed to send datagram to mesh: %v", err)
+		}
+	}
+}
+
 func (br *Bridge) Run() {
-
-	mesh2bridge := br.meshNode.DatagramChan()
-
-	ing2bridge := make(chan *routingtable.DatagramMessage, 500)
-	br.ingresses.Foreach(func(s string, i *ingress.Ingress) {
-		go i.Run(ing2bridge)
-	})
-
-	bridge2egr, egr2bridge := br.egr.Run()
-
 	var wg sync.WaitGroup
 
-	for range 5 {
+	// Run ingresses
+	br.ingresses.Foreach(func(s string, i ingress.Ingress) {
 		wg.Go(func() {
-			for {
-				select {
-				case <-br.ctx.Done():
-					return
-				case data := <-egr2bridge:
-					br.handleTUNPacket(data)
-				case data := <-mesh2bridge:
-					br.handleMeshPacket(data)
-				}
-			}
+			i.Run(br.fromIng)
 		})
-	}
-	for range 5 {
-		wg.Go(func() {
-			for {
-				select {
-				case <-br.ctx.Done():
-					return
-				case dg := <-ing2bridge:
-					if dg.HoleInfo.DstIP.Equal(br.gatewayAddr) || !br.globalNetwork.Contains(dg.HoleInfo.DstIP) {
-						bridge2egr <- dg.Data // TUN
-						continue
-					}
+	})
 
-					hi := routingtable.HoleInfo{
-						SrcIP:    dg.HoleInfo.SrcIP,
-						DstIP:    dg.HoleInfo.DstIP,
-						SrcPort:  dg.HoleInfo.SrcPort,
-						DstPort:  dg.HoleInfo.DstPort,
-						Protocol: dg.HoleInfo.Protocol,
-					}
-					if !br.routingTable.RuleCheck(hi) {
-						continue
-					}
-					br.routingTable.Holepunch(hi, time.Minute)
+	// Run egresses
+	wg.Go(func() {
+		br.egr.Run(br.toEgr, br.fromEgr)
+	})
 
-					if br.network.Contains(dg.HoleInfo.DstIP) {
-						bridge2egr <- dg.Data // TUN
-					} else {
-						conn, ex := br.routingTable.GetByVirtualIp(dg.HoleInfo.DstIP)
-						if !ex {
-							continue
-						}
-						err := conn.SendDatagram(dg.Data)
-						if err != nil {
-							fmt.Printf("failed to send datagram to mesh: %v", err)
-						}
-					}
-				}
+	// Messages router
+	wg.Go(func() {
+		for {
+			select {
+			case <-br.ctx.Done():
+				return
+			case data := <-br.fromEgr:
+				br.handleTUNPacket(data)
+			case data := <-br.fromMesh:
+				br.handleMeshPacket(data)
+			case dg := <-br.fromIng:
+				br.handleIngressPacket(dg)
 			}
-		})
-	}
+		}
+	})
 	wg.Wait()
 }

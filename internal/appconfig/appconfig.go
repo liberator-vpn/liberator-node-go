@@ -11,28 +11,19 @@ type AuthConfig struct {
 	JWTSecret string `yaml:"jwt_secret"`
 }
 
-// IngressConfig настройки входящих QUIC-соединений
-type IngressConfig struct {
-	Type       string `yaml:"type"`
-	ListenAddr string `yaml:"listen_addr"`
-	Cert       string `yaml:"cert"`
-	Key        string `yaml:"key"`
-}
-
 // EgressConfig настройки выхода в интернет
 type EgressConfig struct {
 	IfaceInName  string `yaml:"iface_in_name"`
 	IfaceOutName string `yaml:"iface_out_name"`
+	MTU          int    `yaml:"mtu"`
 }
 
 // BridgeConfig описывает один мост (bridge) со своим ingress/egress и сетевой конфигурацией
 type BridgeConfig struct {
-	Ingresses  map[string]IngressConfig `yaml:"ingresses"`
-	Egress     EgressConfig             `yaml:"egress"`
-	GlobalCIRD string                   `yaml:"global_cidr"`
-	CIDR       string                   `yaml:"cidr"`
-	MTU        int                      `yaml:"mtu"`
-	DNS        string                   `yaml:"dns"`
+	Ingresses  map[string]map[string]any `yaml:"ingresses"`
+	Egress     EgressConfig              `yaml:"egress"`
+	GlobalCIRD string                    `yaml:"global_cidr"`
+	CIDR       string                    `yaml:"cidr"`
 }
 
 // MeshConfig для кластеризации (обнаружение пиров)
@@ -63,11 +54,11 @@ type DatabaseConfig struct {
 
 // AppConfig общая структура конфигурации
 type AppConfig struct {
-	Auth     AuthConfig              `yaml:"auth"`
-	Bridge   map[string]BridgeConfig `yaml:"bridge"` // ключ — имя моста
-	Mesh     MeshConfig              `yaml:"mesh"`
-	Database DatabaseConfig          `yaml:"database"`
-	Metrics  MetricsConfig           `yaml:"metrics"`
+	Auth     AuthConfig     `yaml:"auth"`
+	Bridge   BridgeConfig   `yaml:"bridge"` // ключ — имя моста
+	Mesh     MeshConfig     `yaml:"mesh"`
+	Database DatabaseConfig `yaml:"database"`
+	Metrics  MetricsConfig  `yaml:"metrics"`
 }
 
 // LoadAppConfig загружает конфигурацию из YAML-файла

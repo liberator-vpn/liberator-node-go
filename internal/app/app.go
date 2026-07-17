@@ -5,20 +5,21 @@ import (
 	"fmt"
 	"liberator-node-go/internal/appconfig"
 	"liberator-node-go/internal/infra/repos"
-	"liberator-node-go/internal/utils/liberatorjwt"
+
 	"liberator-node-go/internal/utils/routingtable"
-	"liberator-node-go/internal/utils/safemap"
 	"liberator-node-go/pkg/bridge"
 	"liberator-node-go/pkg/mesh"
+	"liberator-node-go/pkg/services/liberatorjwt"
 )
 
 type App struct {
 	ctx context.Context
 	cfg *appconfig.AppConfig
 
-	jwtIss  *liberatorjwt.LiberatorJWT
-	bridges safemap.Safemap[string, *bridge.Bridge]
-	node    *mesh.MeshNode
+	jwtIss *liberatorjwt.LiberatorJWT
+
+	bridge *bridge.Bridge
+	node   *mesh.MeshNode
 
 	repo *repos.DbPool
 
@@ -29,7 +30,6 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	app := &App{
 		ctx:          ctx,
 		cfg:          cfg,
-		bridges:      safemap.New[string, *bridge.Bridge](),
 		jwtIss:       liberatorjwt.New([]byte(cfg.Auth.JWTSecret)),
 		routingTable: routingtable.New(),
 	}
@@ -41,6 +41,8 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		return nil, fmt.Errorf("failed to create database: %v", err)
 	}
 
+	// Create service
+
 	// Create mesh node
 	app.node, err = mesh.New(ctx, cfg.Mesh, app.routingTable)
 	if err != nil {
@@ -48,33 +50,15 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	}
 
 	// Create bridges
-	for name, bconf := range cfg.Bridge {
-		if app.bridges.Exists(name) {
-			return nil, fmt.Errorf("duplicated bridge name: %s", name)
-		}
-
-		bridge, err := bridge.New(ctx, bconf, app.jwtIss, app.node, app.repo, app.routingTable)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build bridge %s: %v", name, err)
-		}
-		app.bridges.Set(name, bridge)
-	}
-
-	users, err := app.repo.Query().ListUsers(ctx)
+	bridge, err := bridge.New(ctx, cfg.Bridge, app.node, app.routingTable)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("failed to build bridge: %v", err)
 	}
-	for _, u := range users {
-		token, _ := app.jwtIss.SignToken(u.ID)
-		fmt.Printf("[%s]: %s\n", u.Login, token)
-	}
-
+	app.bridge = bridge
 	return app, nil
 }
 
 func (app *App) Run() {
-	app.bridges.Foreach(func(s string, b *bridge.Bridge) {
-		go b.Run()
-	})
+	go app.bridge.Run()
 	go app.node.Run()
 }

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"liberator-node-go/internal/utils/peerstore"
 	"liberator-node-go/internal/utils/quictransport"
+	"liberator-node-go/internal/utils/routingtable"
+	"log"
 	"net"
 	"sync/atomic"
 
@@ -27,10 +29,10 @@ type wrappedConnectionImpl struct {
 
 	closeFunc func(c peerstore.WrappedConnection)
 
-	dgChan chan []byte
+	dgChan chan *routingtable.DatagramMessage
 }
 
-func wrapConnection(conn *quic.Conn, dgChan chan []byte, grpcLis *quictransport.BiStreamLis, closeFunc func(c peerstore.WrappedConnection)) (peerstore.WrappedConnection, error) {
+func wrapConnection(conn *quic.Conn, dgChan chan *routingtable.DatagramMessage, grpcLis *quictransport.BiStreamLis, closeFunc func(c peerstore.WrappedConnection)) (peerstore.WrappedConnection, error) {
 	state := conn.ConnectionState().TLS
 	if len(state.PeerCertificates) == 0 {
 		return nil, fmt.Errorf("peer is not authenticated")
@@ -90,7 +92,14 @@ func (c *wrappedConnectionImpl) readDatagrams(ctx context.Context) {
 		if err != nil {
 			return
 		}
-		c.dgChan <- data
+
+		msg, err := routingtable.NewDatagramMessage(data)
+		if err != nil {
+			log.Printf("invalid mesh datagram message: %v", err)
+			continue
+		}
+
+		c.dgChan <- msg
 	}
 }
 

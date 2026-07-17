@@ -70,7 +70,7 @@ type MeshNode struct {
 	discovery   *discovery.DiscoveryService
 	meshRouting *meshrouting.MeshRoutingService
 
-	dgChan chan []byte
+	dgChan chan *routingtable.DatagramMessage
 }
 
 func New(ctx context.Context, cfg appconfig.MeshConfig, routingTable routingtable.RoutingTable) (*MeshNode, error) {
@@ -100,7 +100,7 @@ func New(ctx context.Context, cfg appconfig.MeshConfig, routingTable routingtabl
 		peerStore:    peerstore.NewPeerStore(),
 		routingTable: routingTable,
 
-		dgChan: make(chan []byte, 500),
+		dgChan: make(chan *routingtable.DatagramMessage, 500),
 	}
 	n.serverCaPool.AddCert(rootCa)
 
@@ -352,7 +352,7 @@ func (n *MeshNode) NodeID() string {
 	return n.nodeId
 }
 
-func (n *MeshNode) DatagramChan() chan []byte {
+func (n *MeshNode) DatagramChan() chan *routingtable.DatagramMessage {
 	return n.dgChan
 }
 

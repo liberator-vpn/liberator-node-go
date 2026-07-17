@@ -3,6 +3,8 @@ package egress
 import (
 	"context"
 	"fmt"
+	"liberator-node-go/internal/appconfig"
+	"liberator-node-go/internal/utils/routingtable"
 	"log"
 	"net"
 	"strings"
@@ -15,23 +17,19 @@ import (
 
 // Egress управляет TUN-интерфейсом и маршрутизацией.
 type Egress struct {
-	ctx    context.Context
-	ifce   *water.Interface
-	ifName string
-	mtu    int
+	ctx context.Context
+	cfg appconfig.EgressConfig
 
-	ipNet    *net.IPNet
-	ipt      *iptables.IPTables
-	extIface string // внешний интерфейс для NAT
+	ifce  *water.Interface
+	ipNet *net.IPNet
+	ipt   *iptables.IPTables
 }
 
 // New создаёт и настраивает TUN-интерфейс.
-func New(ctx context.Context, ifaceName, ipCIDR, extIface string, mtu int) (*Egress, error) {
+func New(ctx context.Context, cfg appconfig.EgressConfig, ipCIDR string) (*Egress, error) {
 	eg := &Egress{
-		ctx:      ctx,
-		ifName:   ifaceName,
-		extIface: extIface,
-		mtu:      mtu,
+		ctx: ctx,
+		cfg: cfg,
 	}
 
 	// 1. Создаём TUN-интерфейс
@@ -39,7 +37,7 @@ func New(ctx context.Context, ifaceName, ipCIDR, extIface string, mtu int) (*Egr
 	eg.ifce, err = water.New(water.Config{
 		DeviceType: water.TUN,
 		PlatformSpecificParams: water.PlatformSpecificParams{
-			Name: ifaceName,
+			Name: cfg.IfaceInName,
 		},
 	})
 	if err != nil {
@@ -55,10 +53,10 @@ func New(ctx context.Context, ifaceName, ipCIDR, extIface string, mtu int) (*Egr
 	eg.ipNet = &net.IPNet{IP: ip, Mask: ipNet.Mask}
 
 	// 3. Настраиваем интерфейс через netlink
-	link, err := netlink.LinkByName(ifaceName)
+	link, err := netlink.LinkByName(cfg.IfaceInName)
 	if err != nil {
 		eg.Close()
-		return nil, fmt.Errorf("failed to get iface with name %s: %w", ifaceName, err)
+		return nil, fmt.Errorf("failed to get iface with name %s: %w", cfg.IfaceInName, err)
 	}
 
 	// Добавляем IP-адрес
@@ -69,8 +67,8 @@ func New(ctx context.Context, ifaceName, ipCIDR, extIface string, mtu int) (*Egr
 	}
 
 	// Задаем MTU
-	if mtu > 0 {
-		if err := netlink.LinkSetMTU(link, mtu); err != nil {
+	if cfg.MTU > 0 {
+		if err := netlink.LinkSetMTU(link, cfg.MTU); err != nil {
 			eg.Close()
 			return nil, fmt.Errorf("failed to set MTU: %w", err)
 		}
@@ -101,25 +99,25 @@ func New(ctx context.Context, ifaceName, ipCIDR, extIface string, mtu int) (*Egr
 }
 func (eg *Egress) setupNAT() error {
 	// Если внешний интерфейс не задан, определяем его автоматически
-	if eg.extIface == "" {
+	if eg.cfg.IfaceInName == "" {
 		ext, err := getDefaultInterface()
 		if err != nil {
 			return fmt.Errorf("failed to get default iface: %w", err)
 		}
-		eg.extIface = ext
+		eg.cfg.IfaceInName = ext
 	}
 
 	tunNet := eg.ipNet.String()
 
 	// Маскарадинг (NAT)
-	if err := eg.ipt.Append("nat", "POSTROUTING", "-s", tunNet, "-o", eg.extIface, "-j", "MASQUERADE"); err != nil {
+	if err := eg.ipt.Append("nat", "POSTROUTING", "-s", tunNet, "-o", eg.cfg.IfaceOutName, "-j", "MASQUERADE"); err != nil {
 		return fmt.Errorf("failed to setup NAT: %w", err)
 	}
 
 	// Разрешаем форвардинг для TUN-интерфейса
 	for _, rule := range [][]string{
-		{"-i", eg.ifName, "-j", "ACCEPT"},
-		{"-o", eg.ifName, "-j", "ACCEPT"},
+		{"-i", eg.cfg.IfaceInName, "-j", "ACCEPT"},
+		{"-o", eg.cfg.IfaceInName, "-j", "ACCEPT"},
 	} {
 		if err := eg.ipt.Append("filter", "FORWARD", rule...); err != nil {
 			return fmt.Errorf("failed to setup iface FORWARD: %w", err)
@@ -154,18 +152,18 @@ func (eg *Egress) Close() error {
 	var errs []string
 
 	// Удаляем правила iptables
-	if eg.ipt != nil && eg.ipNet != nil && eg.extIface != "" {
+	if eg.ipt != nil && eg.ipNet != nil && eg.cfg.IfaceOutName != "" {
 		tunNet := eg.ipNet.String()
 
 		// Удаляем NAT
-		if err := eg.ipt.Delete("nat", "POSTROUTING", "-s", tunNet, "-o", eg.extIface, "-j", "MASQUERADE"); err != nil {
+		if err := eg.ipt.Delete("nat", "POSTROUTING", "-s", tunNet, "-o", eg.cfg.IfaceOutName, "-j", "MASQUERADE"); err != nil {
 			errs = append(errs, fmt.Sprintf("failed to remove NAT: %v", err))
 		}
 
 		// Удаляем FORWARD правила
 		for _, rule := range [][]string{
-			{"-i", eg.ifName, "-j", "ACCEPT"},
-			{"-o", eg.ifName, "-j", "ACCEPT"},
+			{"-i", eg.cfg.IfaceInName, "-j", "ACCEPT"},
+			{"-o", eg.cfg.IfaceInName, "-j", "ACCEPT"},
 		} {
 			if err := eg.ipt.Delete("filter", "FORWARD", rule...); err != nil {
 				errs = append(errs, fmt.Sprintf("failed to remove FORWARD: %v", err))
@@ -175,7 +173,7 @@ func (eg *Egress) Close() error {
 
 	// Удаляем интерфейс
 	if eg.ifce != nil {
-		if link, err := netlink.LinkByName(eg.ifName); err == nil {
+		if link, err := netlink.LinkByName(eg.cfg.IfaceInName); err == nil {
 			if err := netlink.LinkDel(link); err != nil {
 				errs = append(errs, fmt.Sprintf("failed to remove iface: %v", err))
 			}
@@ -198,14 +196,10 @@ func (eg *Egress) Read(p []byte) (int, error) {
 	return eg.ifce.Read(p)
 }
 
-func (eg *Egress) Run() (chan<- []byte, <-chan []byte) {
-	in := make(chan []byte, 500)
-	out := make(chan []byte, 500)
-
+func (eg *Egress) Run(toEgr, fromEgr chan *routingtable.DatagramMessage) {
 	var wg sync.WaitGroup
-
 	wg.Go(func() {
-		buf := make([]byte, eg.mtu)
+		buf := make([]byte, eg.cfg.MTU)
 		for {
 			select {
 			case <-eg.ctx.Done():
@@ -224,7 +218,13 @@ func (eg *Egress) Run() (chan<- []byte, <-chan []byte) {
 
 			data := make([]byte, n)
 			copy(data, buf[:n])
-			out <- data
+
+			msg, err := routingtable.NewDatagramMessage(data)
+			if err != nil {
+				log.Printf("invalid egress datagram message: %v", err)
+				continue
+			}
+			fromEgr <- msg
 		}
 	})
 
@@ -233,23 +233,18 @@ func (eg *Egress) Run() (chan<- []byte, <-chan []byte) {
 			select {
 			case <-eg.ctx.Done():
 				return
-			case data := <-in:
-				n, err := eg.Write(data)
+			case msg := <-toEgr:
+				n, err := eg.Write(msg.Data)
 				if err != nil {
 					log.Printf("failed to write to iface: %v", err)
 					continue
 				}
-				if n != len(data) {
+				if n != len(msg.Data) {
 					log.Printf("iface write size missmatch iface: %v", err)
 				}
 			}
 		}
 	})
 
-	go func() {
-		wg.Wait()
-		close(in)
-		close(out)
-	}()
-	return in, out
+	wg.Wait()
 }

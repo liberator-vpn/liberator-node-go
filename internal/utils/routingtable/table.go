@@ -33,14 +33,7 @@ type PortRule struct {
 	PortRangeStart uint16
 	PortRangeEnd   *uint16
 }
-type DatagramMessage struct {
-	Data []byte
-
-	HoleInfo HoleInfo
-}
-
 type HoleInfo struct {
-	User  uuid.UUID
 	SrcIP net.IP
 	DstIP net.IP
 
@@ -59,6 +52,8 @@ type RoutingTable interface {
 	GetByUserID(uuid.UUID) (RoutingObject, bool)
 	GetByVirtualIp(net.IP) (RoutingObject, bool)
 
+	SendDatagram(net.IP, []byte) error
+
 	RuleCheck(hi HoleInfo) bool
 	Holepunch(hi HoleInfo, dur time.Duration)
 
@@ -76,10 +71,9 @@ type routingTableImpl struct {
 	updateLock  sync.RWMutex
 
 	rules   map[uuid.UUID][]PortRule
-	rulesMu sync.RWMutex // можно использовать общий updateLock, но лучше отдельный
+	rulesMu sync.RWMutex
 
-	// Активные дырки (stateful): ключ -> время истечения
-	holes sync.Map // map[string]time.Time
+	holes sync.Map // map[string]time.Time | Активные дырки (stateful): ключ -> время истечения
 
 	eventHandlers []EventHandler
 }
@@ -150,6 +144,16 @@ func (r *routingTableImpl) GetByVirtualIp(ip net.IP) (RoutingObject, bool) {
 	defer r.updateLock.RUnlock()
 	obj, ex := r.byVirtualIp[ip.String()]
 	return obj, ex
+}
+
+func (r *routingTableImpl) SendDatagram(ip net.IP, data []byte) error {
+	r.updateLock.RLock()
+	defer r.updateLock.RUnlock()
+	obj, ex := r.byVirtualIp[ip.String()]
+	if !ex {
+		return fmt.Errorf("not found")
+	}
+	return obj.SendDatagram(data)
 }
 
 // INTERCONNECTIONS

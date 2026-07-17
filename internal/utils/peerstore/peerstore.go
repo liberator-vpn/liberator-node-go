@@ -43,6 +43,17 @@ func NewPeerStore() *PeerStore {
 	}
 }
 
+func (ps *PeerStore) SendDatagram(peerID string, data []byte) error {
+	ps.storeMut.RLock()
+	defer ps.storeMut.RUnlock()
+
+	v, ex := ps.Get(peerID)
+	if !ex {
+		return fmt.Errorf("peer not found")
+	}
+	return v.Connection.SendDatagram(data)
+}
+
 func (ps *PeerStore) List() []*PeerInfo {
 	r := make([]*PeerInfo, 0)
 	ps.storeMut.RLock()
