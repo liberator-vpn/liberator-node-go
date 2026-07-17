@@ -50,6 +50,8 @@ type MeshNode struct {
 	ctx context.Context
 	cfg appconfig.MeshConfig
 
+	packetsPool routingtable.DGMessagePool
+
 	routingTable routingtable.RoutingTable
 
 	cert         *tls.Certificate
@@ -73,7 +75,12 @@ type MeshNode struct {
 	dgChan chan *routingtable.DatagramMessage
 }
 
-func New(ctx context.Context, cfg appconfig.MeshConfig, routingTable routingtable.RoutingTable) (*MeshNode, error) {
+func New(
+	ctx context.Context,
+	cfg appconfig.MeshConfig,
+	packetsPool routingtable.DGMessagePool,
+	routingTable routingtable.RoutingTable,
+) (*MeshNode, error) {
 	// Load certs
 	rootCa, err := cert.ReadCertificateFromFile(cfg.RootCert)
 	if err != nil {
@@ -99,6 +106,7 @@ func New(ctx context.Context, cfg appconfig.MeshConfig, routingTable routingtabl
 		nodeId:       nodeId,
 		peerStore:    peerstore.NewPeerStore(),
 		routingTable: routingTable,
+		packetsPool:  packetsPool,
 
 		dgChan: make(chan *routingtable.DatagramMessage, 500),
 	}
@@ -218,7 +226,7 @@ func (n *MeshNode) meshConnect(addr string) (peerstore.WrappedConnection, error)
 	return n.handleConnection(conn, false)
 }
 func (n *MeshNode) handleConnection(conn *quic.Conn, isIncoming bool) (peerstore.WrappedConnection, error) {
-	meshConn, err := wrapConnection(conn, n.dgChan, n.grpcLis, func(mc peerstore.WrappedConnection) {
+	meshConn, err := wrapConnection(conn, n.packetsPool, n.dgChan, n.grpcLis, func(mc peerstore.WrappedConnection) {
 		n.peerStore.SetDisconnected(mc.ID())
 	})
 	if err != nil {

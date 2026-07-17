@@ -127,7 +127,7 @@ func GenerateURI(p *ClientParams) (string, error) {
 		ClientPubKey:        clientPubB64,
 		Config:              iniStr,
 		HostName:            p.ServerAddr,
-		Mtu:                 "1420",
+		Mtu:                 "1350",
 		PersistentKeepAlive: "25",
 		Port:                fmt.Sprintf("%d", p.ServerPort),
 		PskKey:              p.ServerPSK,

@@ -22,6 +22,8 @@ type wrappedConnectionImpl struct {
 	nodeId string
 	conn   *quic.Conn
 
+	packetsPool routingtable.DGMessagePool
+
 	isRunning uint32
 
 	grpcLis    *quictransport.BiStreamLis
@@ -32,7 +34,7 @@ type wrappedConnectionImpl struct {
 	dgChan chan *routingtable.DatagramMessage
 }
 
-func wrapConnection(conn *quic.Conn, dgChan chan *routingtable.DatagramMessage, grpcLis *quictransport.BiStreamLis, closeFunc func(c peerstore.WrappedConnection)) (peerstore.WrappedConnection, error) {
+func wrapConnection(conn *quic.Conn, packetsPool routingtable.DGMessagePool, dgChan chan *routingtable.DatagramMessage, grpcLis *quictransport.BiStreamLis, closeFunc func(c peerstore.WrappedConnection)) (peerstore.WrappedConnection, error) {
 	state := conn.ConnectionState().TLS
 	if len(state.PeerCertificates) == 0 {
 		return nil, fmt.Errorf("peer is not authenticated")
@@ -46,11 +48,12 @@ func wrapConnection(conn *quic.Conn, dgChan chan *routingtable.DatagramMessage, 
 	nodeId := hex.EncodeToString(hash[:])
 
 	c := &wrappedConnectionImpl{
-		nodeId:    nodeId,
-		conn:      conn,
-		closeFunc: closeFunc,
-		grpcLis:   grpcLis,
-		dgChan:    dgChan,
+		nodeId:      nodeId,
+		packetsPool: packetsPool,
+		conn:        conn,
+		closeFunc:   closeFunc,
+		grpcLis:     grpcLis,
+		dgChan:      dgChan,
 	}
 	var err error
 	c.grpcClient, err = c.newGrpcClient()
@@ -92,14 +95,14 @@ func (c *wrappedConnectionImpl) readDatagrams(ctx context.Context) {
 		if err != nil {
 			return
 		}
-
-		msg, err := routingtable.NewDatagramMessage(data)
+		msg, err := c.packetsPool.NewMessageCopyFrom(data)
 		if err != nil {
 			log.Printf("invalid mesh datagram message: %v", err)
 			continue
 		}
 
 		c.dgChan <- msg
+
 	}
 }
 

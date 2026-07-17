@@ -26,6 +26,7 @@ type Ingress struct {
 	ctx context.Context
 	cfg *IngressConfig
 
+	packetsPool  routingtable.DGMessagePool
 	routingTable routingtable.RoutingTable
 	ipAlloc      *ipalloc.IPAllocator
 	nodeID       string
@@ -43,6 +44,7 @@ type Ingress struct {
 func New(
 	ctx context.Context,
 	cfg *IngressConfig,
+	packetsPool routingtable.DGMessagePool,
 	routingTable routingtable.RoutingTable,
 	ipAlloc *ipalloc.IPAllocator,
 	fromIng chan *routingtable.DatagramMessage, // В AWG мы вынуждены передавать канал в New, т.к. ядро стартует сразу
@@ -51,6 +53,7 @@ func New(
 	ig := &Ingress{
 		ctx:          ctx,
 		cfg:          cfg,
+		packetsPool:  packetsPool,
 		routingTable: routingTable,
 		ipAlloc:      ipAlloc,
 		nodeID:       nodeID,
@@ -60,7 +63,7 @@ func New(
 		peerTimeout:  3 * time.Minute, // Если нет пакетов 3 минуты - пир мертв
 	}
 
-	ig.channelTun = NewChannelTun(ctx, fromIng, ig.in, cfg.MTU)
+	ig.channelTun = NewChannelTun(ctx, fromIng, ig.in, ig.packetsPool, cfg.MTU)
 
 	udpBind := conn.NewDefaultBind()
 	logger := amneziawgdevice.NewLogger(amneziawgdevice.LogLevelVerbose, fmt.Sprintf("(%s-awg) ", nodeID))
@@ -104,7 +107,7 @@ func New(
 }
 
 // Run запускает фоновый процесс очистки мертвых пиров (аналог defer в QUIC)
-func (ig *Ingress) Run(fromIng chan *routingtable.DatagramMessage) {
+func (ig *Ingress) Run() {
 	// fromIng игнорируется, так как он уже привязан к TUN адаптеру в New()
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()

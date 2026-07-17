@@ -5,21 +5,22 @@ import (
 	"liberator-node-go/internal/app"
 	"liberator-node-go/internal/appconfig"
 	"log"
+	"net/http"
+	"runtime"
 
-	// _ "net/http/pprof"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
 )
 
 func main() {
-	/*
-		runtime.SetMutexProfileFraction(1)
-		runtime.SetBlockProfileRate(1)
-		go func() {
-			http.ListenAndServe(":80", nil)
-		}()
-	*/
+
+	runtime.SetMutexProfileFraction(1)
+	runtime.SetBlockProfileRate(1)
+	go func() {
+		http.ListenAndServe(":80", nil)
+	}()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

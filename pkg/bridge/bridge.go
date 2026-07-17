@@ -23,7 +23,9 @@ import (
 )
 
 type Bridge struct {
-	ctx          context.Context
+	ctx context.Context
+
+	packetsPool  routingtable.DGMessagePool
 	ipAlloc      *ipalloc.IPAllocator
 	routingTable routingtable.RoutingTable
 
@@ -43,12 +45,14 @@ type Bridge struct {
 func New(
 	ctx context.Context,
 	cfg appconfig.BridgeConfig,
+	packetsPool routingtable.DGMessagePool,
 	meshNode *mesh.MeshNode,
 	routingTable routingtable.RoutingTable,
 ) (*Bridge, error) {
 	br := &Bridge{
 		ctx:          ctx,
 		ingresses:    safemap.New[string, ingress.Ingress](),
+		packetsPool:  packetsPool,
 		routingTable: routingTable,
 		meshNode:     meshNode,
 		toEgr:        make(chan *routingtable.DatagramMessage, 500),
@@ -58,7 +62,7 @@ func New(
 	}
 
 	var err error
-	br.egr, err = egress.New(ctx, cfg.Egress, cfg.CIDR)
+	br.egr, err = egress.New(ctx, cfg.Egress, br.packetsPool, cfg.CIDR)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create egress: %w", err)
 	}
@@ -99,7 +103,7 @@ func New(
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse ingress %s config: %v", name, err)
 			}
-			ing, err = ingressquic.New(ctx, icfg, br.routingTable, br.ipAlloc, meshNode.NodeID())
+			ing, err = ingressquic.New(ctx, icfg, br.packetsPool, br.routingTable, br.ipAlloc, br.fromIng, meshNode.NodeID())
 			if err != nil {
 				return nil, fmt.Errorf("failed to create ingress %s: %w", name, err)
 			}
@@ -112,6 +116,7 @@ func New(
 			awging, err := awg.New(
 				ctx,
 				icfg,
+				br.packetsPool,
 				br.routingTable,
 				br.ipAlloc,
 				br.fromIng, // Передаем общий канал входящих пакетов
@@ -177,20 +182,22 @@ func New(
 }
 
 func (br *Bridge) handleTUNPacket(data *routingtable.DatagramMessage) {
-	err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, data.Data)
+	err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, *data.Data)
 	if err != nil {
-		log.Printf("failed to send datagram from tun %d: %v", len(data.Data), err)
+		log.Printf("failed to send datagram from tun %d: %v", len(*data.Data), err)
 	}
+	data.Free()
 }
 func (br *Bridge) handleMeshPacket(data *routingtable.DatagramMessage) {
 	if data.HoleInfo.Protocol != "" {
 		br.routingTable.Holepunch(data.HoleInfo, time.Minute)
 	}
 
-	err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, data.Data)
+	err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, *data.Data)
 	if err != nil {
-		log.Printf("failed to send datagram from mesh %d: %v", len(data.Data), err)
+		log.Printf("failed to send datagram from mesh %d: %v", len(*data.Data), err)
 	}
+	data.Free()
 }
 func (br *Bridge) handleIngressPacket(data *routingtable.DatagramMessage) {
 	if data.HoleInfo.DstIP.Equal(br.gatewayAddr) || !br.globalNetwork.Contains(data.HoleInfo.DstIP) {
@@ -213,10 +220,11 @@ func (br *Bridge) handleIngressPacket(data *routingtable.DatagramMessage) {
 		br.toEgr <- data // TUN
 	} else {
 
-		err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, data.Data)
+		err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, *data.Data)
 		if err != nil {
 			log.Printf("failed to send datagram to mesh: %v", err)
 		}
+		data.Free()
 	}
 }
 
@@ -226,7 +234,7 @@ func (br *Bridge) Run() {
 	// Run ingresses
 	br.ingresses.Foreach(func(s string, i ingress.Ingress) {
 		wg.Go(func() {
-			i.Run(br.fromIng)
+			i.Run()
 		})
 	})
 
@@ -242,10 +250,19 @@ func (br *Bridge) Run() {
 			case <-br.ctx.Done():
 				return
 			case data := <-br.fromEgr:
+				if len(br.fromEgr) > 100 {
+					fmt.Println("egr")
+				}
 				br.handleTUNPacket(data)
 			case data := <-br.fromMesh:
+				if len(br.fromMesh) > 100 {
+					fmt.Println("mesh")
+				}
 				br.handleMeshPacket(data)
 			case dg := <-br.fromIng:
+				if len(br.fromIng) > 100 {
+					fmt.Println("ing")
+				}
 				br.handleIngressPacket(dg)
 			}
 		}

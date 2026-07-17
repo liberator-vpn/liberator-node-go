@@ -20,8 +20,9 @@ import (
 var _ ingress.Ingress = (*Ingress)(nil)
 
 type Ingress struct {
-	ctx context.Context
-	cfg *IngressConfig
+	ctx         context.Context
+	cfg         *IngressConfig
+	packetsPool routingtable.DGMessagePool
 
 	routingTable routingtable.RoutingTable
 	ipAlloc      *ipalloc.IPAllocator
@@ -29,6 +30,8 @@ type Ingress struct {
 
 	connectionsById safemap.Safemap[string, *IngressConnection]
 	userIdToConnId  safemap.Safemap[string, string]
+
+	fromIng chan *routingtable.DatagramMessage
 
 	udpBind   *net.UDPConn
 	transport *quic.Transport
@@ -38,16 +41,20 @@ type Ingress struct {
 func New(
 	ctx context.Context,
 	cfg *IngressConfig,
+	packetsPool routingtable.DGMessagePool,
 	routingTable routingtable.RoutingTable,
 	ipAlloc *ipalloc.IPAllocator,
+	fromIng chan *routingtable.DatagramMessage,
 	nodeID string,
 ) (*Ingress, error) {
 	ig := &Ingress{
-		ctx: ctx,
-		cfg: cfg,
+		ctx:         ctx,
+		cfg:         cfg,
+		packetsPool: packetsPool,
 
 		routingTable: routingTable,
 		ipAlloc:      ipAlloc,
+		fromIng:      fromIng,
 		nodeID:       nodeID,
 
 		connectionsById: safemap.New[string, *IngressConnection](),
@@ -91,7 +98,7 @@ func New(
 	return ig, nil
 }
 
-func (ig *Ingress) Run(fromIng chan *routingtable.DatagramMessage) {
+func (ig *Ingress) Run() {
 	for {
 		select {
 		case <-ig.ctx.Done():
@@ -111,7 +118,7 @@ func (ig *Ingress) Run(fromIng chan *routingtable.DatagramMessage) {
 		wc := wrapConnetion(conn, ig.nodeID)
 		ig.connectionsById.Set(wc.id, wc)
 
-		go ig.runConnection(wc, fromIng)
+		go ig.runConnection(wc, ig.fromIng)
 	}
 
 }
@@ -139,31 +146,7 @@ func (ig *Ingress) runConnection(conn *IngressConnection, fromIng chan *routingt
 	// ---------------------------------------------------------
 	// ЭТАП 1: АВТОРИЗАЦИЯ (Тут будет вызов VpnAuthService)
 	// ---------------------------------------------------------
-	/*
-	   Псевдокод того, что тут будет:
-	   stream, err := ic.conn.AcceptStream(ig.ctx)
-	   ticketID := readTicket(stream)
 
-	   validatedTicket, err := ig.deps.AuthSvc.ValidateTicket(ig.ctx, ticketID)
-	   if err != nil {
-	       return // Сработает defer, соединение закроется
-	   }
-
-	   // Выдаем данные в объект
-	   ic.SetUserId(validatedTicket.UserID)
-	   ic.SetVirtualIp(validatedTicket.AssignedIP)
-
-	   // Добавляем в роутинг
-	   if err := ig.deps.RoutingTable.Add(ic); err != nil {
-	       return // Сработает defer, IP вернется в пул
-	   }
-
-	   ig.userToConnID.Set(validatedTicket.UserID.String(), ic.id)
-	*/
-
-	// ---------------------------------------------------------
-	// ЭТАП 2: ПРИЕМ ПАКЕТОВ
-	// ---------------------------------------------------------
 	for {
 		data, err := conn.conn.ReceiveDatagram(ig.ctx)
 		if err != nil {
@@ -174,7 +157,8 @@ func (ig *Ingress) runConnection(conn *IngressConnection, fromIng chan *routingt
 		}
 
 		// Если дошли сюда, значит юзер авторизован (иначе мы бы не дошли до цикла выше)
-		msg, err := routingtable.NewDatagramMessage(data)
+
+		msg, err := ig.packetsPool.NewMessageCopyFrom(data)
 		if err != nil {
 			continue // Дропаем невалидный IP фрейм
 		}

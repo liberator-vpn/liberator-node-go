@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"liberator-node-go/internal/appconfig"
 	"liberator-node-go/internal/infra/repos"
+	"math"
 
 	"liberator-node-go/internal/utils/routingtable"
 	"liberator-node-go/pkg/bridge"
@@ -15,6 +16,8 @@ import (
 type App struct {
 	ctx context.Context
 	cfg *appconfig.AppConfig
+
+	packetsPool routingtable.DGMessagePool
 
 	jwtIss *liberatorjwt.LiberatorJWT
 
@@ -28,8 +31,10 @@ type App struct {
 
 func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	app := &App{
-		ctx:          ctx,
-		cfg:          cfg,
+		ctx:         ctx,
+		cfg:         cfg,
+		packetsPool: routingtable.NewDGMessagePool(math.MaxUint16),
+
 		jwtIss:       liberatorjwt.New([]byte(cfg.Auth.JWTSecret)),
 		routingTable: routingtable.New(),
 	}
@@ -44,13 +49,13 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	// Create service
 
 	// Create mesh node
-	app.node, err = mesh.New(ctx, cfg.Mesh, app.routingTable)
+	app.node, err = mesh.New(ctx, cfg.Mesh, app.packetsPool, app.routingTable)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mesh node: %v", err)
 	}
 
 	// Create bridges
-	bridge, err := bridge.New(ctx, cfg.Bridge, app.node, app.routingTable)
+	bridge, err := bridge.New(ctx, cfg.Bridge, app.packetsPool, app.node, app.routingTable)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build bridge: %v", err)
 	}

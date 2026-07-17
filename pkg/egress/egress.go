@@ -17,8 +17,9 @@ import (
 
 // Egress управляет TUN-интерфейсом и маршрутизацией.
 type Egress struct {
-	ctx context.Context
-	cfg appconfig.EgressConfig
+	ctx         context.Context
+	cfg         appconfig.EgressConfig
+	packetsPool routingtable.DGMessagePool
 
 	ifce  *water.Interface
 	ipNet *net.IPNet
@@ -26,10 +27,11 @@ type Egress struct {
 }
 
 // New создаёт и настраивает TUN-интерфейс.
-func New(ctx context.Context, cfg appconfig.EgressConfig, ipCIDR string) (*Egress, error) {
+func New(ctx context.Context, cfg appconfig.EgressConfig, packetsPool routingtable.DGMessagePool, ipCIDR string) (*Egress, error) {
 	eg := &Egress{
-		ctx: ctx,
-		cfg: cfg,
+		ctx:         ctx,
+		cfg:         cfg,
+		packetsPool: packetsPool,
 	}
 
 	// 1. Создаём TUN-интерфейс
@@ -188,16 +190,9 @@ func (eg *Egress) Close() error {
 	return nil
 }
 
-func (eg *Egress) Write(p []byte) (int, error) {
-	return eg.ifce.Write(p)
-}
-
-func (eg *Egress) Read(p []byte) (int, error) {
-	return eg.ifce.Read(p)
-}
-
 func (eg *Egress) Run(toEgr, fromEgr chan *routingtable.DatagramMessage) {
 	var wg sync.WaitGroup
+
 	wg.Go(func() {
 		buf := make([]byte, eg.cfg.MTU)
 		for {
@@ -207,7 +202,7 @@ func (eg *Egress) Run(toEgr, fromEgr chan *routingtable.DatagramMessage) {
 			default:
 			}
 
-			n, err := eg.Read(buf)
+			n, err := eg.ifce.Read(buf)
 			if err != nil {
 				log.Printf("failed to read from iface: %v", err)
 				continue
@@ -216,10 +211,7 @@ func (eg *Egress) Run(toEgr, fromEgr chan *routingtable.DatagramMessage) {
 				continue
 			}
 
-			data := make([]byte, n)
-			copy(data, buf[:n])
-
-			msg, err := routingtable.NewDatagramMessage(data)
+			msg, err := eg.packetsPool.NewMessageCopyFrom(buf[:n])
 			if err != nil {
 				log.Printf("invalid egress datagram message: %v", err)
 				continue
@@ -234,14 +226,16 @@ func (eg *Egress) Run(toEgr, fromEgr chan *routingtable.DatagramMessage) {
 			case <-eg.ctx.Done():
 				return
 			case msg := <-toEgr:
-				n, err := eg.Write(msg.Data)
+				n, err := eg.ifce.Write(*msg.Data)
 				if err != nil {
+					msg.Free()
 					log.Printf("failed to write to iface: %v", err)
 					continue
 				}
-				if n != len(msg.Data) {
+				if n != len(*msg.Data) {
 					log.Printf("iface write size missmatch iface: %v", err)
 				}
+				msg.Free()
 			}
 		}
 	})
