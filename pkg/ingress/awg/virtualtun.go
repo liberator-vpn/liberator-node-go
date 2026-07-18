@@ -3,7 +3,7 @@ package awg
 import (
 	"context"
 	"fmt"
-	"liberator-node-go/internal/utils/routingtable"
+	"liberator-node-go/internal/utils/dgmessage"
 	"liberator-node-go/internal/utils/safemap"
 	"net/netip"
 	"os"
@@ -19,9 +19,9 @@ import (
 
 type ChannelTun struct {
 	ctx         context.Context
-	out         chan<- *routingtable.DatagramMessage
+	out         chan<- *dgmessage.DatagramMessage
 	in          <-chan []byte
-	packetsPool routingtable.DGMessagePool
+	packetsPool dgmessage.DGMessagePool
 	peers       safemap.Safemap[netip.Addr, *AWGPeer] // IP.String() -> Peer (нужно для обновления lastSeen)
 
 	mtu int
@@ -29,7 +29,7 @@ type ChannelTun struct {
 
 var _ tun.Device = (*ChannelTun)(nil)
 
-func NewChannelTun(ctx context.Context, out chan<- *routingtable.DatagramMessage, in <-chan []byte, packetsPool routingtable.DGMessagePool, mtu int) *ChannelTun {
+func NewChannelTun(ctx context.Context, out chan<- *dgmessage.DatagramMessage, in <-chan []byte, packetsPool dgmessage.DGMessagePool, mtu int) *ChannelTun {
 	return &ChannelTun{
 		ctx:         ctx,
 		out:         out,

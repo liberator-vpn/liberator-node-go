@@ -7,6 +7,7 @@ import (
 	"liberator-node-go/internal/infra/repos"
 	"math"
 
+	"liberator-node-go/internal/utils/dgmessage"
 	"liberator-node-go/internal/utils/routingtable"
 	"liberator-node-go/pkg/bridge"
 	"liberator-node-go/pkg/mesh"
@@ -17,7 +18,7 @@ type App struct {
 	ctx context.Context
 	cfg *appconfig.AppConfig
 
-	packetsPool routingtable.DGMessagePool
+	packetsPool dgmessage.DGMessagePool
 
 	jwtIss *liberatorjwt.LiberatorJWT
 
@@ -33,7 +34,7 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	app := &App{
 		ctx:         ctx,
 		cfg:         cfg,
-		packetsPool: routingtable.NewDGMessagePool(math.MaxUint16),
+		packetsPool: dgmessage.NewDGMessagePool(math.MaxUint16),
 
 		jwtIss:       liberatorjwt.New([]byte(cfg.Auth.JWTSecret)),
 		routingTable: routingtable.New(),

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"liberator-node-go/internal/appconfig"
 	"liberator-node-go/internal/utils/awgconfig"
+	"liberator-node-go/internal/utils/dgmessage"
 	"liberator-node-go/internal/utils/ipalloc"
 	"liberator-node-go/internal/utils/routingtable"
 	"liberator-node-go/internal/utils/safemap"
@@ -24,7 +25,7 @@ import (
 type Bridge struct {
 	ctx context.Context
 
-	packetsPool  routingtable.DGMessagePool
+	packetsPool  dgmessage.DGMessagePool
 	ipAlloc      *ipalloc.IPAllocator
 	routingTable routingtable.RoutingTable
 
@@ -36,15 +37,15 @@ type Bridge struct {
 	network       *net.IPNet
 	globalNetwork *net.IPNet
 
-	toEgr, fromEgr chan *routingtable.DatagramMessage
-	fromMesh       chan *routingtable.DatagramMessage
-	fromIng        chan *routingtable.DatagramMessage
+	toEgr, fromEgr chan *dgmessage.DatagramMessage
+	fromMesh       chan *dgmessage.DatagramMessage
+	fromIng        chan *dgmessage.DatagramMessage
 }
 
 func New(
 	ctx context.Context,
 	cfg appconfig.BridgeConfig,
-	packetsPool routingtable.DGMessagePool,
+	packetsPool dgmessage.DGMessagePool,
 	meshNode *mesh.MeshNode,
 	routingTable routingtable.RoutingTable,
 ) (*Bridge, error) {
@@ -54,10 +55,10 @@ func New(
 		packetsPool:  packetsPool,
 		routingTable: routingTable,
 		meshNode:     meshNode,
-		toEgr:        make(chan *routingtable.DatagramMessage, 500),
-		fromEgr:      make(chan *routingtable.DatagramMessage, 500),
+		toEgr:        make(chan *dgmessage.DatagramMessage, 500),
+		fromEgr:      make(chan *dgmessage.DatagramMessage, 500),
 		fromMesh:     meshNode.DatagramChan(),
-		fromIng:      make(chan *routingtable.DatagramMessage, 500),
+		fromIng:      make(chan *dgmessage.DatagramMessage, 500),
 	}
 
 	var err error
@@ -172,14 +173,14 @@ func New(
 	return br, nil
 }
 
-func (br *Bridge) handleTUNPacket(data *routingtable.DatagramMessage) {
+func (br *Bridge) handleTUNPacket(data *dgmessage.DatagramMessage) {
 	err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, *data.Data)
 	if err != nil {
 		log.Printf("failed to send datagram from tun %d: %v", len(*data.Data), err)
 	}
 	data.Free()
 }
-func (br *Bridge) handleMeshPacket(data *routingtable.DatagramMessage) {
+func (br *Bridge) handleMeshPacket(data *dgmessage.DatagramMessage) {
 	if data.HoleInfo.Protocol != "" {
 		br.routingTable.Holepunch(data.HoleInfo, time.Minute)
 	}
@@ -190,12 +191,12 @@ func (br *Bridge) handleMeshPacket(data *routingtable.DatagramMessage) {
 	}
 	data.Free()
 }
-func (br *Bridge) handleIngressPacket(data *routingtable.DatagramMessage) {
+func (br *Bridge) handleIngressPacket(data *dgmessage.DatagramMessage) {
 	if data.HoleInfo.DstIP.Equal(br.gatewayAddr) || !br.globalNetwork.Contains(data.HoleInfo.DstIP) {
 		br.toEgr <- data // TUN
 		return
 	}
-	hi := routingtable.HoleInfo{
+	hi := dgmessage.HoleInfo{
 		SrcIP:    data.HoleInfo.SrcIP,
 		DstIP:    data.HoleInfo.DstIP,
 		SrcPort:  data.HoleInfo.SrcPort,

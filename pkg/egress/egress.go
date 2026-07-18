@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"liberator-node-go/internal/appconfig"
-	"liberator-node-go/internal/utils/routingtable"
+	"liberator-node-go/internal/utils/dgmessage"
 	"log"
 	"math"
 	"net"
@@ -21,7 +21,7 @@ import (
 type Egress struct {
 	ctx         context.Context
 	cfg         appconfig.EgressConfig
-	packetsPool routingtable.DGMessagePool
+	packetsPool dgmessage.DGMessagePool
 
 	ifce  tun.Device
 	ipNet *net.IPNet
@@ -32,7 +32,7 @@ const tun_iface_offset = 10
 const ringSize = 3
 
 // New создаёт и настраивает TUN-интерфейс.
-func New(ctx context.Context, cfg appconfig.EgressConfig, packetsPool routingtable.DGMessagePool, ipCIDR string) (*Egress, error) {
+func New(ctx context.Context, cfg appconfig.EgressConfig, packetsPool dgmessage.DGMessagePool, ipCIDR string) (*Egress, error) {
 	eg := &Egress{
 		ctx:         ctx,
 		cfg:         cfg,
@@ -191,7 +191,7 @@ func (eg *Egress) Close() error {
 	}
 	return nil
 }
-func (eg *Egress) Run(toEgr, fromEgr chan *routingtable.DatagramMessage) {
+func (eg *Egress) Run(toEgr, fromEgr chan *dgmessage.DatagramMessage) {
 	var wg sync.WaitGroup
 
 	batchSize := eg.ifce.BatchSize()
@@ -207,7 +207,7 @@ func (eg *Egress) Run(toEgr, fromEgr chan *routingtable.DatagramMessage) {
 }
 
 // readLoop – батчевое чтение из TUN
-func (eg *Egress) readLoop(fromEgr chan *routingtable.DatagramMessage, batchSize int) {
+func (eg *Egress) readLoop(fromEgr chan *dgmessage.DatagramMessage, batchSize int) {
 	maxPacketLen := math.MaxUint16 + tun_iface_offset
 
 	locks := make([]sync.Mutex, ringSize)
@@ -278,32 +278,48 @@ func (eg *Egress) readLoop(fromEgr chan *routingtable.DatagramMessage, batchSize
 	}
 }
 
-// writeLoop
-func (eg *Egress) writeLoop(toEgr chan *routingtable.DatagramMessage, batchSize int) {
-	bufs := make([][]byte, batchSize)
-	for i := range bufs {
-		bufs[i] = make([]byte, math.MaxUint16+tun_iface_offset)
+// writeLoop – батчевая запись в TUN с линеаризованной памятью
+func (eg *Egress) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize int) {
+	maxPacketLen := math.MaxUint16 + tun_iface_offset
+
+	flatBuffer := make([]byte, batchSize*maxPacketLen)
+
+	writeProjections := make([][]byte, batchSize)
+	for i := 0; i < batchSize; i++ {
+		start := i * maxPacketLen
+		end := start + maxPacketLen
+		writeProjections[i] = flatBuffer[start:end]
 	}
-	msgs := make([]*routingtable.DatagramMessage, batchSize)
+
+	msgs := make([]*dgmessage.DatagramMessage, batchSize)
 	idx := 0
+
+	defer func() {
+		for i := 0; i < idx; i++ {
+			if msgs[i] != nil {
+				msgs[i].Free()
+			}
+		}
+	}()
 
 	for {
 		select {
 		case <-eg.ctx.Done():
-			for i := 0; i < idx; i++ {
-				msgs[i].Free()
-			}
 			return
 		case msg := <-toEgr:
 			if msg.Data == nil || len(*msg.Data) == 0 || len(*msg.Data) > eg.cfg.MTU {
 				msg.Free()
 				continue
 			}
-			copy(bufs[idx][tun_iface_offset:], *msg.Data)
+
+			flatStart := (idx * maxPacketLen) + tun_iface_offset
+			copy(flatBuffer[flatStart:], *msg.Data)
+
 			msgs[idx] = msg
 			idx++
 		}
 
+		// Пытаемся добрать пачку до batchSize из канала без блокировки
 		for idx < batchSize {
 			select {
 			case msg := <-toEgr:
@@ -311,7 +327,10 @@ func (eg *Egress) writeLoop(toEgr chan *routingtable.DatagramMessage, batchSize 
 					msg.Free()
 					continue
 				}
-				copy(bufs[idx][tun_iface_offset:], *msg.Data)
+
+				flatStart := (idx * maxPacketLen) + tun_iface_offset
+				copy(flatBuffer[flatStart:], *msg.Data)
+
 				msgs[idx] = msg
 				idx++
 			default:
@@ -322,17 +341,21 @@ func (eg *Egress) writeLoop(toEgr chan *routingtable.DatagramMessage, batchSize 
 	send:
 		if idx > 0 {
 			for i := 0; i < idx; i++ {
-				bufs[i] = bufs[i][:tun_iface_offset+len(*msgs[i].Data)]
+				start := i * maxPacketLen
+				end := start + tun_iface_offset + len(*msgs[i].Data)
+				writeProjections[i] = flatBuffer[start:end]
 			}
-			_, err := eg.ifce.Write(bufs[:idx], tun_iface_offset)
+
+			_, err := eg.ifce.Write(writeProjections[:idx], tun_iface_offset)
 			if err != nil {
 				log.Printf("failed to write batch to iface: %v", err)
 			}
+
 			for i := 0; i < idx; i++ {
 				msgs[i].Free()
 				msgs[i] = nil
-				bufs[i] = bufs[i][:cap(bufs[i])]
 			}
+
 			idx = 0
 		}
 	}

@@ -1,4 +1,4 @@
-package routingtable
+package dgmessage
 
 import (
 	"encoding/binary"
@@ -7,6 +7,15 @@ import (
 	"sync"
 )
 
+type HoleInfo struct {
+	SrcIP net.IP
+	DstIP net.IP
+
+	SrcPort uint16
+	DstPort uint16
+
+	Protocol string
+}
 type DGMessagePool interface {
 	Get() *[]byte
 	Put(*[]byte)

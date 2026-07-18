@@ -2,6 +2,7 @@ package routingtable
 
 import (
 	"fmt"
+	"liberator-node-go/internal/utils/dgmessage"
 	"net"
 	"sort"
 	"sync"
@@ -33,15 +34,6 @@ type PortRule struct {
 	PortRangeStart uint16
 	PortRangeEnd   *uint16
 }
-type HoleInfo struct {
-	SrcIP net.IP
-	DstIP net.IP
-
-	SrcPort uint16
-	DstPort uint16
-
-	Protocol string
-}
 
 type EventHandler = func(added, deleted RoutingObject)
 
@@ -54,8 +46,8 @@ type RoutingTable interface {
 
 	SendDatagram(net.IP, []byte) error
 
-	RuleCheck(hi HoleInfo) bool
-	Holepunch(hi HoleInfo, dur time.Duration)
+	RuleCheck(hi dgmessage.HoleInfo) bool
+	Holepunch(hi dgmessage.HoleInfo, dur time.Duration)
 
 	Dump() []RoutingTableRecordDump
 	DumpRules(uuid.UUID) []PortRule
@@ -172,7 +164,7 @@ func (r *routingTableImpl) AddRule(rule PortRule) {
 // Если есть активная дырка для этого потока – возвращает true без проверки правил.
 // Иначе проверяет правила пользователя-отправителя.
 // holeInfo должен содержать SrcIP, DstIP, SrcPort, DstPort (как net.IP) и Protocol (string).
-func (r *routingTableImpl) RuleCheck(holeInfo HoleInfo) bool {
+func (r *routingTableImpl) RuleCheck(holeInfo dgmessage.HoleInfo) bool {
 	// 1. Проверяем активную дырку (stateful)
 	flowKey := makeFlowKey(holeInfo.SrcIP, holeInfo.DstIP, holeInfo.SrcPort, holeInfo.DstPort, holeInfo.Protocol)
 	if val, ok := r.holes.Load(flowKey); ok {
@@ -239,7 +231,7 @@ func (r *routingTableImpl) RuleCheck(holeInfo HoleInfo) bool {
 
 // Holepunch создаёт (или обновляет) дырку для данного потока на заданное время.
 // Вызывается после успешной проверки правил для первого пакета.
-func (r *routingTableImpl) Holepunch(holeInfo HoleInfo, duration time.Duration) {
+func (r *routingTableImpl) Holepunch(holeInfo dgmessage.HoleInfo, duration time.Duration) {
 	flowKey := makeFlowKey(holeInfo.SrcIP, holeInfo.DstIP, holeInfo.SrcPort, holeInfo.DstPort, holeInfo.Protocol)
 	expire := time.Now().Add(duration)
 	r.holes.Store(flowKey, expire)

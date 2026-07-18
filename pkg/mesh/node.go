@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"liberator-node-go/internal/appconfig"
 	"liberator-node-go/internal/utils/cert"
+	"liberator-node-go/internal/utils/dgmessage"
 	"liberator-node-go/internal/utils/peerstore"
 	"liberator-node-go/internal/utils/quictransport"
 	"liberator-node-go/internal/utils/routingtable"
@@ -50,7 +51,7 @@ type MeshNode struct {
 	ctx context.Context
 	cfg appconfig.MeshConfig
 
-	packetsPool routingtable.DGMessagePool
+	packetsPool dgmessage.DGMessagePool
 
 	routingTable routingtable.RoutingTable
 
@@ -72,13 +73,13 @@ type MeshNode struct {
 	discovery   *discovery.DiscoveryService
 	meshRouting *meshrouting.MeshRoutingService
 
-	dgChan chan *routingtable.DatagramMessage
+	dgChan chan *dgmessage.DatagramMessage
 }
 
 func New(
 	ctx context.Context,
 	cfg appconfig.MeshConfig,
-	packetsPool routingtable.DGMessagePool,
+	packetsPool dgmessage.DGMessagePool,
 	routingTable routingtable.RoutingTable,
 ) (*MeshNode, error) {
 	// Load certs
@@ -108,7 +109,7 @@ func New(
 		routingTable: routingTable,
 		packetsPool:  packetsPool,
 
-		dgChan: make(chan *routingtable.DatagramMessage, 500),
+		dgChan: make(chan *dgmessage.DatagramMessage, 500),
 	}
 	n.serverCaPool.AddCert(rootCa)
 
@@ -360,7 +361,7 @@ func (n *MeshNode) NodeID() string {
 	return n.nodeId
 }
 
-func (n *MeshNode) DatagramChan() chan *routingtable.DatagramMessage {
+func (n *MeshNode) DatagramChan() chan *dgmessage.DatagramMessage {
 	return n.dgChan
 }
 

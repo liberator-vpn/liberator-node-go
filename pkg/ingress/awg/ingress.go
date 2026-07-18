@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"time"
 
+	"liberator-node-go/internal/utils/dgmessage"
 	"liberator-node-go/internal/utils/ipalloc"
 	"liberator-node-go/internal/utils/routingtable"
 	"liberator-node-go/internal/utils/safemap"
@@ -27,7 +28,7 @@ type Ingress struct {
 	ctx context.Context
 	cfg *IngressConfig
 
-	packetsPool  routingtable.DGMessagePool
+	packetsPool  dgmessage.DGMessagePool
 	routingTable routingtable.RoutingTable
 	ipAlloc      *ipalloc.IPAllocator
 	nodeID       string
@@ -45,10 +46,10 @@ type Ingress struct {
 func New(
 	ctx context.Context,
 	cfg *IngressConfig,
-	packetsPool routingtable.DGMessagePool,
+	packetsPool dgmessage.DGMessagePool,
 	routingTable routingtable.RoutingTable,
 	ipAlloc *ipalloc.IPAllocator,
-	fromIng chan *routingtable.DatagramMessage,
+	fromIng chan *dgmessage.DatagramMessage,
 	nodeID string,
 ) (*Ingress, error) {
 	ig := &Ingress{

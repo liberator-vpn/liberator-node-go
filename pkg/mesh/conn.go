@@ -5,9 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"liberator-node-go/internal/utils/dgmessage"
 	"liberator-node-go/internal/utils/peerstore"
 	"liberator-node-go/internal/utils/quictransport"
-	"liberator-node-go/internal/utils/routingtable"
 	"log"
 	"net"
 	"sync/atomic"
@@ -22,7 +22,7 @@ type wrappedConnectionImpl struct {
 	nodeId string
 	conn   *quic.Conn
 
-	packetsPool routingtable.DGMessagePool
+	packetsPool dgmessage.DGMessagePool
 
 	isRunning uint32
 
@@ -31,10 +31,10 @@ type wrappedConnectionImpl struct {
 
 	closeFunc func(c peerstore.WrappedConnection)
 
-	dgChan chan *routingtable.DatagramMessage
+	dgChan chan *dgmessage.DatagramMessage
 }
 
-func wrapConnection(conn *quic.Conn, packetsPool routingtable.DGMessagePool, dgChan chan *routingtable.DatagramMessage, grpcLis *quictransport.BiStreamLis, closeFunc func(c peerstore.WrappedConnection)) (peerstore.WrappedConnection, error) {
+func wrapConnection(conn *quic.Conn, packetsPool dgmessage.DGMessagePool, dgChan chan *dgmessage.DatagramMessage, grpcLis *quictransport.BiStreamLis, closeFunc func(c peerstore.WrappedConnection)) (peerstore.WrappedConnection, error) {
 	state := conn.ConnectionState().TLS
 	if len(state.PeerCertificates) == 0 {
 		return nil, fmt.Errorf("peer is not authenticated")
