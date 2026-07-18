@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"net"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -307,29 +308,32 @@ func (eg *Egress) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize int
 		case <-eg.ctx.Done():
 			return
 		case msg := <-toEgr:
-			if msg.Data == nil || len(*msg.Data) == 0 || len(*msg.Data) > eg.cfg.MTU {
+			if len(msg.Data) == 0 || len(msg.Data) > eg.cfg.MTU {
 				msg.Free()
 				continue
 			}
 
 			flatStart := (idx * maxPacketLen) + tun_iface_offset
-			copy(flatBuffer[flatStart:], *msg.Data)
+			copy(flatBuffer[flatStart:], msg.Data)
 
 			msgs[idx] = msg
 			idx++
 		}
 
 		// Пытаемся добрать пачку до batchSize из канала без блокировки
+		if idx < 4 {
+			runtime.Gosched()
+		}
 		for idx < batchSize {
 			select {
 			case msg := <-toEgr:
-				if msg.Data == nil || len(*msg.Data) == 0 || len(*msg.Data) > eg.cfg.MTU {
+				if len(msg.Data) == 0 || len(msg.Data) > eg.cfg.MTU {
 					msg.Free()
 					continue
 				}
 
 				flatStart := (idx * maxPacketLen) + tun_iface_offset
-				copy(flatBuffer[flatStart:], *msg.Data)
+				copy(flatBuffer[flatStart:], msg.Data)
 
 				msgs[idx] = msg
 				idx++
@@ -342,7 +346,7 @@ func (eg *Egress) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize int
 		if idx > 0 {
 			for i := 0; i < idx; i++ {
 				start := i * maxPacketLen
-				end := start + tun_iface_offset + len(*msgs[i].Data)
+				end := start + tun_iface_offset + len(msgs[i].Data)
 				writeProjections[i] = flatBuffer[start:end]
 			}
 

@@ -56,7 +56,7 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	}
 
 	// Create bridges
-	bridge, err := bridge.New(ctx, cfg.Bridge, app.packetsPool, app.node, app.routingTable)
+	bridge, err := bridge.New(ctx, cfg.Bridge, app.packetsPool, app.node, app.routingTable, 8)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build bridge: %v", err)
 	}

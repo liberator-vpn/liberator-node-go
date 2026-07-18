@@ -22,6 +22,19 @@ import (
 	"github.com/google/uuid"
 )
 
+type fromType = int
+
+const (
+	fromIngress fromType = 0
+	fromTun     fromType = 1
+	fromMesh    fromType = 2
+)
+
+type datagramMessageInfo struct {
+	Msg  *dgmessage.DatagramMessage
+	From fromType
+}
+
 type Bridge struct {
 	ctx context.Context
 
@@ -40,6 +53,8 @@ type Bridge struct {
 	toEgr, fromEgr chan *dgmessage.DatagramMessage
 	fromMesh       chan *dgmessage.DatagramMessage
 	fromIng        chan *dgmessage.DatagramMessage
+
+	workerChans []chan datagramMessageInfo
 }
 
 func New(
@@ -48,6 +63,7 @@ func New(
 	packetsPool dgmessage.DGMessagePool,
 	meshNode *mesh.MeshNode,
 	routingTable routingtable.RoutingTable,
+	numWorkers int,
 ) (*Bridge, error) {
 	br := &Bridge{
 		ctx:          ctx,
@@ -55,10 +71,15 @@ func New(
 		packetsPool:  packetsPool,
 		routingTable: routingTable,
 		meshNode:     meshNode,
-		toEgr:        make(chan *dgmessage.DatagramMessage, 500),
-		fromEgr:      make(chan *dgmessage.DatagramMessage, 500),
+		toEgr:        make(chan *dgmessage.DatagramMessage, 1024),
+		fromEgr:      make(chan *dgmessage.DatagramMessage, 1024),
 		fromMesh:     meshNode.DatagramChan(),
-		fromIng:      make(chan *dgmessage.DatagramMessage, 500),
+		fromIng:      make(chan *dgmessage.DatagramMessage, 1024),
+		workerChans:  make([]chan datagramMessageInfo, numWorkers),
+	}
+
+	for i := 0; i < numWorkers; i++ {
+		br.workerChans[i] = make(chan datagramMessageInfo, 1024)
 	}
 
 	var err error
@@ -174,9 +195,9 @@ func New(
 }
 
 func (br *Bridge) handleTUNPacket(data *dgmessage.DatagramMessage) {
-	err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, *data.Data)
+	err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, data.Data)
 	if err != nil {
-		log.Printf("failed to send datagram from tun %d: %v", len(*data.Data), err)
+		log.Printf("failed to send datagram from tun %d: %v", len(data.Data), err)
 	}
 	data.Free()
 }
@@ -185,9 +206,9 @@ func (br *Bridge) handleMeshPacket(data *dgmessage.DatagramMessage) {
 		br.routingTable.Holepunch(data.HoleInfo, time.Minute)
 	}
 
-	err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, *data.Data)
+	err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, data.Data)
 	if err != nil {
-		log.Printf("failed to send datagram from mesh %d: %v", len(*data.Data), err)
+		log.Printf("failed to send datagram from mesh %d: %v", len(data.Data), err)
 	}
 	data.Free()
 }
@@ -212,7 +233,7 @@ func (br *Bridge) handleIngressPacket(data *dgmessage.DatagramMessage) {
 		br.toEgr <- data // TUN
 	} else {
 
-		err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, *data.Data)
+		err := br.routingTable.SendDatagram(data.HoleInfo.DstIP, data.Data)
 		if err != nil {
 			log.Printf("failed to send datagram to mesh: %v", err)
 		}
@@ -222,18 +243,38 @@ func (br *Bridge) handleIngressPacket(data *dgmessage.DatagramMessage) {
 
 func (br *Bridge) Run() {
 	var wg sync.WaitGroup
-
 	// Run ingresses
 	br.ingresses.Foreach(func(s string, i ingress.Ingress) {
 		wg.Go(func() {
 			i.Run()
 		})
 	})
-
 	// Run egresses
 	wg.Go(func() {
 		br.egr.Run(br.toEgr, br.fromEgr)
 	})
+
+	// Run parallel workers
+	for i := 0; i < len(br.workerChans); i++ {
+		workerID := i
+		wg.Go(func() {
+			for {
+				select {
+				case <-br.ctx.Done():
+					return
+				case data := <-br.workerChans[workerID]:
+					switch data.From {
+					case fromTun:
+						br.handleTUNPacket(data.Msg)
+					case fromMesh:
+						br.handleMeshPacket(data.Msg)
+					case fromIngress:
+						br.handleIngressPacket(data.Msg)
+					}
+				}
+			}
+		})
+	}
 
 	// Messages router
 	wg.Go(func() {
@@ -242,22 +283,33 @@ func (br *Bridge) Run() {
 			case <-br.ctx.Done():
 				return
 			case data := <-br.fromEgr:
-				if len(br.fromEgr) > 100 {
-					fmt.Printf("egr %d\n", len(br.fromEgr))
+				// Пакет пришел из TUN, шардируем по DstIP (куда летит)
+				br.getWorker(data.HoleInfo.DstIP) <- datagramMessageInfo{
+					Msg:  data,
+					From: fromTun,
 				}
-				br.handleTUNPacket(data)
 			case data := <-br.fromMesh:
-				if len(br.fromMesh) > 100 {
-					fmt.Println("mesh")
+				// Пакет из Mesh, шардируем по SrcIP (кто прислал)
+				br.getWorker(data.HoleInfo.SrcIP) <- datagramMessageInfo{
+					Msg:  data,
+					From: fromMesh,
 				}
-				br.handleMeshPacket(data)
-			case dg := <-br.fromIng:
-				if len(br.fromIng) > 100 {
-					fmt.Println("ing")
+			case data := <-br.fromIng:
+				// Пакет от клиента (Ингресс). Шардируем строго по SrcIP клиента
+				br.getWorker(data.HoleInfo.SrcIP) <- datagramMessageInfo{
+					Msg:  data,
+					From: fromIngress,
 				}
-				br.handleIngressPacket(dg)
 			}
 		}
 	})
 	wg.Wait()
+}
+
+func (br *Bridge) getWorker(ip net.IP) chan datagramMessageInfo {
+	// Берём последние 4 байта (работает и для IPv4, и для IPv4-mapped IPv6)
+	v4 := ip[len(ip)-4:]
+	// Суммируем байты и берем остаток от деления на количество воркеров
+	hash := uint32(v4[0]) + uint32(v4[1]) + uint32(v4[2]) + uint32(v4[3])
+	return br.workerChans[hash%uint32(len(br.workerChans))]
 }
