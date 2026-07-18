@@ -18,6 +18,7 @@ func main() {
 
 	runtime.SetMutexProfileFraction(1)
 	runtime.SetBlockProfileRate(1)
+	runtime.SetCPUProfileRate(1000)
 	go func() {
 		http.ListenAndServe(":80", nil)
 	}()

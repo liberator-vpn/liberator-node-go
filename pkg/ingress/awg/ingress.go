@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/netip"
 	"time"
 
 	"liberator-node-go/internal/utils/ipalloc"
@@ -66,6 +67,7 @@ func New(
 	ig.channelTun = NewChannelTun(ctx, fromIng, ig.in, ig.packetsPool, cfg.MTU)
 
 	udpBind := conn.NewDefaultBind()
+
 	logger := amneziawgdevice.NewLogger(amneziawgdevice.LogLevelVerbose, fmt.Sprintf("(%s-awg) ", nodeID))
 	ig.awgDevice = amneziawgdevice.NewDevice(ig.channelTun, udpBind, logger)
 
@@ -149,7 +151,13 @@ func (ig *Ingress) PreparePeer(userID uuid.UUID, publicKeyHex string) (net.IP, e
 	// Добавляем в наши карты и в таблицу маршрутизации
 	ig.peersById.Set(peer.id, peer)
 	ig.userIdToPeer.Set(userID.String(), peer)
-	ig.channelTun.peers.Set(ipNet.String(), peer)
+
+	addr, ok := netip.AddrFromSlice(peer.virtualIP)
+	if !ok {
+		return nil, fmt.Errorf("invalid virtual ip")
+	}
+
+	ig.channelTun.peers.Set(addr, peer)
 
 	if err := ig.routingTable.Add(peer); err != nil {
 		// Если не смогли добавить в роутинг, откатываем всё
@@ -186,7 +194,10 @@ func (ig *Ingress) removePeerInternal(peer *AWGPeer) {
 	ig.peersById.Delete(peer.id)
 	ig.userIdToPeer.Delete(peer.userID.String())
 	if peer.virtualIP != nil {
-		ig.channelTun.peers.Delete(peer.virtualIP.String())
+		addr, ok := netip.AddrFromSlice(peer.virtualIP)
+		if ok {
+			ig.channelTun.peers.Delete(addr)
+		}
 	}
 
 	// 4. Удаляем из ядра AmneziaWG

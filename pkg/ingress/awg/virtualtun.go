@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"liberator-node-go/internal/utils/routingtable"
 	"liberator-node-go/internal/utils/safemap"
+	"net/netip"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/amnezia-vpn/amneziawg-go/tun"
@@ -20,7 +22,7 @@ type ChannelTun struct {
 	out         chan<- *routingtable.DatagramMessage
 	in          <-chan []byte
 	packetsPool routingtable.DGMessagePool
-	peers       safemap.Safemap[string, *AWGPeer] // IP.String() -> Peer (нужно для обновления lastSeen)
+	peers       safemap.Safemap[netip.Addr, *AWGPeer] // IP.String() -> Peer (нужно для обновления lastSeen)
 
 	mtu int
 }
@@ -33,7 +35,7 @@ func NewChannelTun(ctx context.Context, out chan<- *routingtable.DatagramMessage
 		out:         out,
 		in:          in,
 		packetsPool: packetsPool,
-		peers:       safemap.New[string, *AWGPeer](),
+		peers:       safemap.New[netip.Addr, *AWGPeer](),
 		mtu:         mtu,
 	}
 }
@@ -41,7 +43,7 @@ func NewChannelTun(ctx context.Context, out chan<- *routingtable.DatagramMessage
 func (t *ChannelTun) File() *os.File        { return nil }
 func (t *ChannelTun) Name() (string, error) { return "liberator-awg-channel", nil }
 func (t *ChannelTun) Close() error          { return nil }
-func (t *ChannelTun) BatchSize() int        { return 16 }
+func (t *ChannelTun) BatchSize() int        { return 128 }
 
 func (t *ChannelTun) Events() <-chan tun.Event {
 	ch := make(chan tun.Event, 1)
@@ -54,6 +56,9 @@ func (t *ChannelTun) Write(bufs [][]byte, offset int) (int, error) {
 	if len(bufs) == 0 {
 		return 0, nil
 	}
+
+	now := time.Now()
+
 	c := int(0)
 	for _, buf := range bufs {
 		pkt := buf[offset:]
@@ -63,13 +68,18 @@ func (t *ChannelTun) Write(bufs [][]byte, offset int) (int, error) {
 			continue
 		}
 		// ОБНОВЛЯЕМ lastSeen (Критически важно для Watchdog)
-		if peer, ok := t.peers.Get(msg.HoleInfo.SrcIP.String()); ok {
-			peer.lastSeen = time.Now()
+		if addr, ok := netip.AddrFromSlice(msg.HoleInfo.SrcIP); ok {
+			if peer, ok := t.peers.Get(addr); ok {
+				if now.Sub(peer.lastSeen) > time.Second {
+					peer.lastSeen = now
+				}
+			}
 		}
 		select {
 		case t.out <- msg:
 			c++
 		case <-t.ctx.Done():
+			msg.Free()
 			return c, os.ErrClosed
 		}
 	}
@@ -105,7 +115,25 @@ func (t *ChannelTun) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 				sizes[i] = len(pkt2)
 				n++
 			default:
-				// Больше пакетов нет – возвращаем то, что накопили
+				// Если набрали мало пакетов, уступаем квант времени CPU (разрешаем батчинг)
+				if n < 4 {
+					runtime.Gosched()
+					// Делаем еще одну быструю попытку вычитать из канала
+					select {
+					case pkt2, ok2 := <-t.in:
+						if !ok2 || len(pkt2) == 0 {
+							return n, nil
+						}
+						if len(pkt2) > len(bufs[n])-offset {
+							return n, nil
+						}
+						copy(bufs[n][offset:], pkt2)
+						sizes[n] = len(pkt2)
+						n++
+						continue
+					default:
+					}
+				}
 				return n, nil
 			}
 		}

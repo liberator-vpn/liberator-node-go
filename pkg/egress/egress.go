@@ -2,17 +2,20 @@ package egress
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"liberator-node-go/internal/appconfig"
 	"liberator-node-go/internal/utils/routingtable"
 	"log"
+	"math"
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coreos/go-iptables/iptables"
-	"github.com/songgao/water"
 	"github.com/vishvananda/netlink"
+	"golang.zx2c4.com/wireguard/tun"
 )
 
 // Egress управляет TUN-интерфейсом и маршрутизацией.
@@ -21,10 +24,12 @@ type Egress struct {
 	cfg         appconfig.EgressConfig
 	packetsPool routingtable.DGMessagePool
 
-	ifce  *water.Interface
+	ifce  tun.Device
 	ipNet *net.IPNet
 	ipt   *iptables.IPTables
 }
+
+const tun_iface_offset = 10
 
 // New создаёт и настраивает TUN-интерфейс.
 func New(ctx context.Context, cfg appconfig.EgressConfig, packetsPool routingtable.DGMessagePool, ipCIDR string) (*Egress, error) {
@@ -36,12 +41,7 @@ func New(ctx context.Context, cfg appconfig.EgressConfig, packetsPool routingtab
 
 	// 1. Создаём TUN-интерфейс
 	var err error
-	eg.ifce, err = water.New(water.Config{
-		DeviceType: water.TUN,
-		PlatformSpecificParams: water.PlatformSpecificParams{
-			Name: cfg.IfaceInName,
-		},
-	})
+	eg.ifce, err = tun.CreateTUN(cfg.IfaceInName, cfg.MTU)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create TUn: %w", err)
 	}
@@ -101,12 +101,12 @@ func New(ctx context.Context, cfg appconfig.EgressConfig, packetsPool routingtab
 }
 func (eg *Egress) setupNAT() error {
 	// Если внешний интерфейс не задан, определяем его автоматически
-	if eg.cfg.IfaceInName == "" {
+	if eg.cfg.IfaceOutName == "" {
 		ext, err := getDefaultInterface()
 		if err != nil {
 			return fmt.Errorf("failed to get default iface: %w", err)
 		}
-		eg.cfg.IfaceInName = ext
+		eg.cfg.IfaceOutName = ext
 	}
 
 	tunNet := eg.ipNet.String()
@@ -153,6 +153,8 @@ func getDefaultInterface() (string, error) {
 func (eg *Egress) Close() error {
 	var errs []string
 
+	eg.ifce.Close()
+
 	// Удаляем правила iptables
 	if eg.ipt != nil && eg.ipNet != nil && eg.cfg.IfaceOutName != "" {
 		tunNet := eg.ipNet.String()
@@ -189,56 +191,126 @@ func (eg *Egress) Close() error {
 	}
 	return nil
 }
-
 func (eg *Egress) Run(toEgr, fromEgr chan *routingtable.DatagramMessage) {
 	var wg sync.WaitGroup
+	const batchSize = 16 // подберите под нагрузку
 
 	wg.Go(func() {
-		buf := make([]byte, eg.cfg.MTU)
-		for {
-			select {
-			case <-eg.ctx.Done():
-				return
-			default:
-			}
+		eg.readLoop(fromEgr, batchSize)
+	})
+	wg.Go(func() {
+		eg.writeLoop(toEgr, batchSize)
+	})
+	wg.Wait()
+}
 
-			n, err := eg.ifce.Read(buf)
-			if err != nil {
+// readLoop – батчевое чтение из TUN
+func (eg *Egress) readLoop(fromEgr chan *routingtable.DatagramMessage, batchSize int) {
+	bufs := make([][]byte, batchSize)
+	for i := range bufs {
+		bufs[i] = make([]byte, math.MaxUint16+tun_iface_offset)
+	}
+	sizes := make([]int, batchSize)
+
+	for {
+		select {
+		case <-eg.ctx.Done():
+			return
+		default:
+		}
+
+		n, err := eg.ifce.Read(bufs, sizes, tun_iface_offset)
+		if err != nil {
+			if !errors.Is(err, tun.ErrTooManySegments) {
 				log.Printf("failed to read from iface: %v", err)
+				time.Sleep(time.Millisecond * 2)
 				continue
 			}
-			if n == 0 {
-				continue
-			}
+		}
+		if n == 0 {
+			continue
+		}
 
-			msg, err := eg.packetsPool.NewMessageCopyFrom(buf[:n])
+		for i := 0; i < n; i++ {
+			if sizes[i] <= 0 {
+				continue
+			}
+			// Вырезаем полезные данные с правильным смещением
+			packetStart := tun_iface_offset
+			packetEnd := tun_iface_offset + sizes[i]
+
+			msg, err := eg.packetsPool.NewMessageCopyFrom(bufs[i][packetStart:packetEnd])
 			if err != nil {
 				log.Printf("invalid egress datagram message: %v", err)
 				continue
 			}
-			fromEgr <- msg
-		}
-	})
 
-	wg.Go(func() {
-		for {
 			select {
+			case fromEgr <- msg:
 			case <-eg.ctx.Done():
-				return
-			case msg := <-toEgr:
-				n, err := eg.ifce.Write(*msg.Data)
-				if err != nil {
-					msg.Free()
-					log.Printf("failed to write to iface: %v", err)
-					continue
-				}
-				if n != len(*msg.Data) {
-					log.Printf("iface write size missmatch iface: %v", err)
-				}
 				msg.Free()
+				return
 			}
 		}
-	})
+	}
+}
 
-	wg.Wait()
+// writeLoop
+func (eg *Egress) writeLoop(toEgr chan *routingtable.DatagramMessage, batchSize int) {
+	bufs := make([][]byte, batchSize)
+	for i := range bufs {
+		bufs[i] = make([]byte, math.MaxUint16+tun_iface_offset)
+	}
+	msgs := make([]*routingtable.DatagramMessage, batchSize)
+	idx := 0
+
+	for {
+		select {
+		case <-eg.ctx.Done():
+			for i := 0; i < idx; i++ {
+				msgs[i].Free()
+			}
+			return
+		case msg := <-toEgr:
+			if msg.Data == nil || len(*msg.Data) == 0 || len(*msg.Data) > eg.cfg.MTU {
+				msg.Free()
+				continue
+			}
+			copy(bufs[idx][tun_iface_offset:], *msg.Data)
+			msgs[idx] = msg
+			idx++
+		}
+
+		for idx < batchSize {
+			select {
+			case msg := <-toEgr:
+				if msg.Data == nil || len(*msg.Data) == 0 || len(*msg.Data) > eg.cfg.MTU {
+					msg.Free()
+					continue
+				}
+				copy(bufs[idx][tun_iface_offset:], *msg.Data)
+				msgs[idx] = msg
+				idx++
+			default:
+				goto send
+			}
+		}
+
+	send:
+		if idx > 0 {
+			for i := 0; i < idx; i++ {
+				bufs[i] = bufs[i][:tun_iface_offset+len(*msgs[i].Data)]
+			}
+			_, err := eg.ifce.Write(bufs[:idx], tun_iface_offset)
+			if err != nil {
+				log.Printf("failed to write batch to iface: %v", err)
+			}
+			for i := 0; i < idx; i++ {
+				msgs[i].Free()
+				msgs[i] = nil
+				bufs[i] = bufs[i][:cap(bufs[i])]
+			}
+			idx = 0
+		}
+	}
 }

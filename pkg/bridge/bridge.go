@@ -11,7 +11,6 @@ import (
 	"liberator-node-go/pkg/egress"
 	"liberator-node-go/pkg/ingress"
 	"liberator-node-go/pkg/ingress/awg"
-	ingressquic "liberator-node-go/pkg/ingress/quic"
 	"liberator-node-go/pkg/mesh"
 	"log"
 	"net"
@@ -98,15 +97,6 @@ func New(
 
 		var ing ingress.Ingress
 		switch typ {
-		case "quic":
-			icfg, err := ingressquic.ParseConfig(iconf)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse ingress %s config: %v", name, err)
-			}
-			ing, err = ingressquic.New(ctx, icfg, br.packetsPool, br.routingTable, br.ipAlloc, br.fromIng, meshNode.NodeID())
-			if err != nil {
-				return nil, fmt.Errorf("failed to create ingress %s: %w", name, err)
-			}
 		case "awg":
 			icfg, err := awg.ParseConfig(iconf)
 			if err != nil {
