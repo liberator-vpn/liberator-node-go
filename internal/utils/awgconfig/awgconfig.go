@@ -98,7 +98,7 @@ type lastConfigInner struct {
 }
 
 // GenerateURI собирает ссылку vpn:// в формате Amnezia v2
-func GenerateURI(p *ClientParams) (string, error) {
+func GenerateURI(p *ClientParams) (string, string, error) {
 	// 1. Генерируем обычный INI текст (как фоллбэк для клиента)
 	iniStr := buildINIString(p)
 
@@ -137,7 +137,7 @@ func GenerateURI(p *ClientParams) (string, error) {
 	// Сериализуем last_config в JSON СТРОКУ (ключевой момент!)
 	lastCfgBytes, err := json.Marshal(lastCfg)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	// 4. Формируем основной JSON объект
@@ -168,7 +168,7 @@ func GenerateURI(p *ClientParams) (string, error) {
 	// Сериализуем весь корень в JSON
 	rootJsonBytes, err := json.Marshal(root)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	// 5. Сжимаем Zlib
@@ -191,7 +191,7 @@ func GenerateURI(p *ClientParams) (string, error) {
 	finalBytes := append(header, compressedBytes...)
 	encodedStr := base64.RawURLEncoding.EncodeToString(finalBytes)
 
-	return "vpn://" + encodedStr, nil
+	return "vpn://" + encodedStr, iniStr, nil
 }
 
 // Вспомогательная функция генерации INI текста (для поля Config внутри last_config)

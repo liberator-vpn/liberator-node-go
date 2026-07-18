@@ -1,12 +1,17 @@
 package awg
 
-import "gopkg.in/yaml.v3"
+import (
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
 
 // IngressConfig настройки входящих AmneziaWG-соединений
 type IngressConfig struct {
-	MTU        int    `yaml:"mtu"`
-	ListenAddr string `yaml:"listen_addr"`
-	PrivateKey string `yaml:"private_key"`
+	MTU              int           `yaml:"mtu"`
+	ListenAddr       string        `yaml:"listen_addr"`
+	PrivateKey       string        `yaml:"private_key"`
+	WatchdogInterval time.Duration `yaml:"watchdog_interval"`
 
 	// Принимаем именно строки диапазонов!
 	H1 string `yaml:"h1"`

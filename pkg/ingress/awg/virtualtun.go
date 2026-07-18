@@ -69,7 +69,7 @@ func (t *ChannelTun) Write(bufs [][]byte, offset int) (int, error) {
 		}
 		// ОБНОВЛЯЕМ lastSeen (Критически важно для Watchdog)
 		if addr, ok := netip.AddrFromSlice(msg.HoleInfo.SrcIP); ok {
-			if peer, ok := t.peers.Get(addr); ok {
+			if peer, ok := t.peers.Get(addr.Unmap()); ok {
 				if now.Sub(peer.lastSeen) > time.Second {
 					peer.lastSeen = now
 				}

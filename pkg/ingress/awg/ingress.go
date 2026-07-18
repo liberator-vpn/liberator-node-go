@@ -48,7 +48,7 @@ func New(
 	packetsPool routingtable.DGMessagePool,
 	routingTable routingtable.RoutingTable,
 	ipAlloc *ipalloc.IPAllocator,
-	fromIng chan *routingtable.DatagramMessage, // В AWG мы вынуждены передавать канал в New, т.к. ядро стартует сразу
+	fromIng chan *routingtable.DatagramMessage,
 	nodeID string,
 ) (*Ingress, error) {
 	ig := &Ingress{
@@ -83,20 +83,32 @@ func New(
 		return nil, fmt.Errorf("failed to set base AWG config: %w", err)
 	}
 
-	if cfg.H1 != "" {
-		if err := ig.awgDevice.IpcSet(fmt.Sprintf(
-			"h1=%s\nh2=%s\nh3=%s\nh4=%s\njc=%d\njmin=%d\njmax=%d\ns1=%d\ns2=%d\n",
-			cfg.H1,
-			cfg.H2,
-			cfg.H3,
-			cfg.H4,
-			cfg.Jc,
-			cfg.JMin,
-			cfg.JMax,
-			cfg.S1,
-			cfg.S2,
-		)); err != nil {
-			return nil, fmt.Errorf("failed to set AWG obfuscation config: %w", err)
+	if err := ig.awgDevice.IpcSet(fmt.Sprintf(
+		"h1=%s\nh2=%s\nh3=%s\nh4=%s\ns1=%d\ns2=%d\n",
+		cfg.H1,
+		cfg.H2,
+		cfg.H3,
+		cfg.H4,
+		cfg.S1,
+		cfg.S2,
+	)); err != nil {
+		return nil, fmt.Errorf("failed to set AWG H[1-4] and S[1-2] obfuscation config: %w", err)
+	}
+
+	if cfg.Jc > 0 {
+		if err := ig.awgDevice.IpcSet(fmt.Sprintf("jc=%d\n", cfg.Jc)); err != nil {
+			return nil, fmt.Errorf("failed to set AWG jc obfuscation config: %w", err)
+		}
+	}
+
+	if cfg.JMin > 0 {
+		if err := ig.awgDevice.IpcSet(fmt.Sprintf("jmin=%d\n", cfg.Jc)); err != nil {
+			return nil, fmt.Errorf("failed to set AWG jmin obfuscation config: %w", err)
+		}
+	}
+	if cfg.JMax > 0 {
+		if err := ig.awgDevice.IpcSet(fmt.Sprintf("jmax=%d\n", cfg.Jc)); err != nil {
+			return nil, fmt.Errorf("failed to set AWG jmax obfuscation config: %w", err)
 		}
 	}
 
@@ -157,7 +169,7 @@ func (ig *Ingress) PreparePeer(userID uuid.UUID, publicKeyHex string) (net.IP, e
 		return nil, fmt.Errorf("invalid virtual ip")
 	}
 
-	ig.channelTun.peers.Set(addr, peer)
+	ig.channelTun.peers.Set(addr.Unmap(), peer)
 
 	if err := ig.routingTable.Add(peer); err != nil {
 		// Если не смогли добавить в роутинг, откатываем всё
@@ -196,7 +208,7 @@ func (ig *Ingress) removePeerInternal(peer *AWGPeer) {
 	if peer.virtualIP != nil {
 		addr, ok := netip.AddrFromSlice(peer.virtualIP)
 		if ok {
-			ig.channelTun.peers.Delete(addr)
+			ig.channelTun.peers.Delete(addr.Unmap())
 		}
 	}
 

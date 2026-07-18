@@ -137,7 +137,7 @@ func New(
 				log.Fatalf("Failed to prepare peer: %v", err)
 			}
 
-			clientTestConfig, err := awgconfig.GenerateURI(&awgconfig.ClientParams{
+			clientTestConfig, iniString, err := awgconfig.GenerateURI(&awgconfig.ClientParams{
 				ServerAddr:    "192.168.68.121",
 				ServerPort:    2200,
 				ServerPubKey:  serverPubKey,
@@ -161,6 +161,7 @@ func New(
 			}
 
 			fmt.Println(clientTestConfig)
+			fmt.Println(iniString)
 
 		default:
 			return nil, fmt.Errorf("unknown ingress type: %s", typ)
@@ -241,7 +242,7 @@ func (br *Bridge) Run() {
 				return
 			case data := <-br.fromEgr:
 				if len(br.fromEgr) > 100 {
-					fmt.Println("egr")
+					fmt.Printf("egr %d\n", len(br.fromEgr))
 				}
 				br.handleTUNPacket(data)
 			case data := <-br.fromMesh:

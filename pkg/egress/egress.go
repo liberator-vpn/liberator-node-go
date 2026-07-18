@@ -2,7 +2,6 @@ package egress
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"liberator-node-go/internal/appconfig"
 	"liberator-node-go/internal/utils/routingtable"
@@ -193,11 +192,13 @@ func (eg *Egress) Close() error {
 }
 func (eg *Egress) Run(toEgr, fromEgr chan *routingtable.DatagramMessage) {
 	var wg sync.WaitGroup
-	const batchSize = 16 // подберите под нагрузку
+
+	batchSize := eg.ifce.BatchSize()
 
 	wg.Go(func() {
 		eg.readLoop(fromEgr, batchSize)
 	})
+
 	wg.Go(func() {
 		eg.writeLoop(toEgr, batchSize)
 	})
@@ -221,17 +222,17 @@ func (eg *Egress) readLoop(fromEgr chan *routingtable.DatagramMessage, batchSize
 
 		n, err := eg.ifce.Read(bufs, sizes, tun_iface_offset)
 		if err != nil {
-			if !errors.Is(err, tun.ErrTooManySegments) {
-				log.Printf("failed to read from iface: %v", err)
-				time.Sleep(time.Millisecond * 2)
-				continue
-			}
+			log.Printf("failed to read from iface: %v", err)
+			time.Sleep(time.Millisecond * 2)
+			continue
 		}
 		if n == 0 {
 			continue
 		}
 
+		//eg.debug_read[n] = eg.debug_read[n] + 1
 		for i := 0; i < n; i++ {
+
 			if sizes[i] <= 0 {
 				continue
 			}
