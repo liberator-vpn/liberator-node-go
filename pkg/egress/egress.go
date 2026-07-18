@@ -29,6 +29,7 @@ type Egress struct {
 }
 
 const tun_iface_offset = 10
+const ringSize = 3
 
 // New создаёт и настраивает TUN-интерфейс.
 func New(ctx context.Context, cfg appconfig.EgressConfig, packetsPool routingtable.DGMessagePool, ipCIDR string) (*Egress, error) {
@@ -207,11 +208,27 @@ func (eg *Egress) Run(toEgr, fromEgr chan *routingtable.DatagramMessage) {
 
 // readLoop – батчевое чтение из TUN
 func (eg *Egress) readLoop(fromEgr chan *routingtable.DatagramMessage, batchSize int) {
-	bufs := make([][]byte, batchSize)
-	for i := range bufs {
-		bufs[i] = make([]byte, math.MaxUint16+tun_iface_offset)
+	maxPacketLen := math.MaxUint16 + tun_iface_offset
+
+	locks := make([]sync.Mutex, ringSize)
+	ringSizes := make([][]int, ringSize)
+	for i := 0; i < ringSize; i++ {
+		ringSizes[i] = make([]int, batchSize)
 	}
-	sizes := make([]int, batchSize)
+
+	flatBuffer := make([]byte, ringSize*batchSize*maxPacketLen)
+	readProjections := make([][][]byte, ringSize)
+	for r := 0; r < ringSize; r++ {
+		readProjections[r] = make([][]byte, batchSize)
+		for i := 0; i < batchSize; i++ {
+			// Нарезаем плоский буфер на правильные сегменты по формуле смещения
+			start := (r * batchSize * maxPacketLen) + (i * maxPacketLen)
+			end := start + maxPacketLen
+			readProjections[r][i] = flatBuffer[start:end]
+		}
+	}
+
+	bufferIndex := 0
 
 	for {
 		select {
@@ -220,39 +237,44 @@ func (eg *Egress) readLoop(fromEgr chan *routingtable.DatagramMessage, batchSize
 		default:
 		}
 
-		n, err := eg.ifce.Read(bufs, sizes, tun_iface_offset)
+		locks[bufferIndex].Lock()
+
+		n, err := eg.ifce.Read(readProjections[bufferIndex], ringSizes[bufferIndex], tun_iface_offset)
 		if err != nil {
+			locks[bufferIndex].Unlock()
 			log.Printf("failed to read from iface: %v", err)
 			time.Sleep(time.Millisecond * 2)
 			continue
 		}
 		if n == 0 {
+			locks[bufferIndex].Unlock()
 			continue
 		}
 
-		//eg.debug_read[n] = eg.debug_read[n] + 1
-		for i := 0; i < n; i++ {
+		go func(idx int, count int, sizes []int) {
+			defer locks[idx].Unlock()
+			for i := 0; i < n; i++ {
+				if sizes[i] <= 0 {
+					continue
+				}
 
-			if sizes[i] <= 0 {
-				continue
-			}
-			// Вырезаем полезные данные с правильным смещением
-			packetStart := tun_iface_offset
-			packetEnd := tun_iface_offset + sizes[i]
+				flatStart := (idx * batchSize * maxPacketLen) + (i * maxPacketLen) + tun_iface_offset
+				flatEnd := flatStart + sizes[i] + tun_iface_offset
 
-			msg, err := eg.packetsPool.NewMessageCopyFrom(bufs[i][packetStart:packetEnd])
-			if err != nil {
-				log.Printf("invalid egress datagram message: %v", err)
-				continue
-			}
+				msg, err := eg.packetsPool.NewMessageCopyFrom(flatBuffer[flatStart:flatEnd])
+				if err != nil {
+					log.Printf("invalid egress datagram message: %v", err)
+					continue
+				}
 
-			select {
-			case fromEgr <- msg:
-			case <-eg.ctx.Done():
-				msg.Free()
-				return
+				select {
+				case fromEgr <- msg:
+				case <-eg.ctx.Done():
+					msg.Free()
+					return
+				}
 			}
-		}
+		}(bufferIndex, n, ringSizes[bufferIndex])
 	}
 }
 
