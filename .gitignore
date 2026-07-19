@@ -1,2 +1,4 @@
 certs/
 dev/
+
+__debug_bin*

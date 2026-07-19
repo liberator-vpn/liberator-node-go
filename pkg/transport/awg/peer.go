@@ -1,10 +1,7 @@
 package awg
 
 import (
-	"net"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // ---------------------------------------------------------
@@ -12,32 +9,29 @@ import (
 // ---------------------------------------------------------
 
 type AWGPeer struct {
-	id        string
 	nodeID    string
-	userID    uuid.UUID
-	virtualIP net.IP
+	virtualIP uint32
 	pubKey    string
 	lastSeen  time.Time
-	ingress   *Ingress
+	ingress   *AWGTransport
+	timeout   time.Duration
 }
 
-func NewAWGPeer(nodeID string, userID uuid.UUID, ip net.IP, pubKey string, ingress *Ingress) *AWGPeer {
+func NewAWGPeer(nodeID string, ip uint32, pubKey string, ingress *AWGTransport, timeout time.Duration) *AWGPeer {
 	return &AWGPeer{
-		id:        uuid.NewString(),
 		nodeID:    nodeID,
-		userID:    userID,
 		virtualIP: ip,
 		pubKey:    pubKey,
 		lastSeen:  time.Now(),
 		ingress:   ingress,
+		timeout:   timeout,
 	}
 }
 
 // --- Реализация интерфейса routingtable.RoutingObject ---
 
 func (p *AWGPeer) GetNodeID() string    { return p.nodeID }
-func (p *AWGPeer) GetUserID() uuid.UUID { return p.userID }
-func (p *AWGPeer) GetVirtualIP() net.IP { return p.virtualIP }
+func (p *AWGPeer) GetVirtualIP() uint32 { return p.virtualIP }
 
 func (p *AWGPeer) SendDatagram(data []byte) error {
 	return p.ingress.writePacket(data)

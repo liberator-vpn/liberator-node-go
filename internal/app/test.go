@@ -1,4 +1,4 @@
-package bridge
+package app
 
 import (
 	"crypto/rand"

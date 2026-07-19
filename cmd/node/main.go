@@ -42,6 +42,4 @@ func main() {
 	}
 
 	application.Run()
-
-	<-ctx.Done()
 }

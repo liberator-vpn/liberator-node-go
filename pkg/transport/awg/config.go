@@ -6,8 +6,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// IngressConfig настройки входящих AmneziaWG-соединений
-type IngressConfig struct {
+// TransportConfig настройки входящих AmneziaWG-соединений
+type TransportConfig struct {
 	MTU              int           `yaml:"mtu"`
 	ListenAddr       string        `yaml:"listen_addr"`
 	PrivateKey       string        `yaml:"private_key"`
@@ -26,8 +26,8 @@ type IngressConfig struct {
 	S2   int `yaml:"s2"`
 }
 
-func ParseConfig(config any) (*IngressConfig, error) {
-	var ing IngressConfig
+func ParseConfig(config any) (*TransportConfig, error) {
+	var ing TransportConfig
 	data, err := yaml.Marshal(config)
 	if err != nil {
 		return nil, err

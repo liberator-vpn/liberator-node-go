@@ -3,9 +3,8 @@ package awg
 import (
 	"context"
 	"fmt"
-	"liberator-node-go/internal/utils/dgmessage"
 	"liberator-node-go/internal/utils/safemap"
-	"net/netip"
+	"liberator-node-go/pkg/transport"
 	"os"
 	"runtime"
 	"time"
@@ -18,25 +17,23 @@ import (
 // ---------------------------------------------------------
 
 type ChannelTun struct {
-	ctx         context.Context
-	out         chan<- *dgmessage.DatagramMessage
-	in          <-chan []byte
-	packetsPool dgmessage.DGMessagePool
-	peers       safemap.Safemap[netip.Addr, *AWGPeer] // IP.String() -> Peer (нужно для обновления lastSeen)
+	ctx    context.Context
+	in     <-chan []byte
+	router transport.Router
+	mtu    int
 
-	mtu int
+	peers safemap.Safemap[uint32, *AWGPeer] // IP -> Peer (нужно для обновления lastSeen)
 }
 
 var _ tun.Device = (*ChannelTun)(nil)
 
-func NewChannelTun(ctx context.Context, out chan<- *dgmessage.DatagramMessage, in <-chan []byte, packetsPool dgmessage.DGMessagePool, mtu int) *ChannelTun {
+func NewChannelTun(ctx context.Context, in <-chan []byte, router transport.Router, mtu int) *ChannelTun {
 	return &ChannelTun{
-		ctx:         ctx,
-		out:         out,
-		in:          in,
-		packetsPool: packetsPool,
-		peers:       safemap.New[netip.Addr, *AWGPeer](),
-		mtu:         mtu,
+		ctx:    ctx,
+		in:     in,
+		router: router,
+		peers:  safemap.New[uint32, *AWGPeer](),
+		mtu:    mtu,
 	}
 }
 
@@ -63,25 +60,18 @@ func (t *ChannelTun) Write(bufs [][]byte, offset int) (int, error) {
 	for _, buf := range bufs {
 		pkt := buf[offset:]
 
-		msg, err := t.packetsPool.NewMessageCopyFrom(pkt)
+		msg, err := t.router.NewMessageCopyFrom(pkt)
 		if err != nil {
 			continue
 		}
 		// ОБНОВЛЯЕМ lastSeen (Критически важно для Watchdog)
-		if addr, ok := netip.AddrFromSlice(msg.HoleInfo.SrcIP); ok {
-			if peer, ok := t.peers.Get(addr.Unmap()); ok {
-				if now.Sub(peer.lastSeen) > time.Second {
-					peer.lastSeen = now
-				}
+		if peer, ok := t.peers.Get(msg.HoleInfo.SrcIP); ok {
+			if now.Sub(peer.lastSeen) > time.Second {
+				peer.lastSeen = now
 			}
 		}
-		select {
-		case t.out <- msg:
-			c++
-		case <-t.ctx.Done():
-			msg.Free()
-			return c, os.ErrClosed
-		}
+
+		t.router.HandleTransportPacket(msg)
 	}
 	return c, nil
 }

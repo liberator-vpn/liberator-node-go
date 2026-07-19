@@ -10,17 +10,15 @@ import (
 	"fmt"
 	"liberator-node-go/internal/appconfig"
 	"liberator-node-go/internal/utils/cert"
-	"liberator-node-go/internal/utils/dgmessage"
 	"liberator-node-go/internal/utils/peerstore"
 	"liberator-node-go/internal/utils/quictransport"
-	"liberator-node-go/internal/utils/routingtable"
+
 	"liberator-node-go/pkg/mesh/services/discovery"
-	"liberator-node-go/pkg/mesh/services/meshrouting"
+	"liberator-node-go/pkg/routingtable"
 	"log"
 	"net"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/quic-go/quic-go"
 	"google.golang.org/grpc"
 )
@@ -51,9 +49,7 @@ type MeshNode struct {
 	ctx context.Context
 	cfg appconfig.MeshConfig
 
-	packetsPool dgmessage.DGMessagePool
-
-	routingTable routingtable.RoutingTable
+	router Router
 
 	cert         *tls.Certificate
 	serverCaPool *x509.CertPool
@@ -70,17 +66,14 @@ type MeshNode struct {
 
 	peerStore *peerstore.PeerStore
 
-	discovery   *discovery.DiscoveryService
-	meshRouting *meshrouting.MeshRoutingService
-
-	dgChan chan *dgmessage.DatagramMessage
+	discovery *discovery.DiscoveryService
+	//meshRouting *meshrouting.MeshRoutingService
 }
 
 func New(
 	ctx context.Context,
 	cfg appconfig.MeshConfig,
-	packetsPool dgmessage.DGMessagePool,
-	routingTable routingtable.RoutingTable,
+	router Router,
 ) (*MeshNode, error) {
 	// Load certs
 	rootCa, err := cert.ReadCertificateFromFile(cfg.RootCert)
@@ -106,10 +99,7 @@ func New(
 		grpcServer:   grpc.NewServer(),
 		nodeId:       nodeId,
 		peerStore:    peerstore.NewPeerStore(),
-		routingTable: routingTable,
-		packetsPool:  packetsPool,
-
-		dgChan: make(chan *dgmessage.DatagramMessage, 500),
+		router:       router,
 	}
 	n.serverCaPool.AddCert(rootCa)
 
@@ -119,10 +109,10 @@ func New(
 		log.Printf("failed to load peerStore: %v", err)
 	}
 
-	n.meshRouting, err = meshrouting.New(n.grpcServer, n.peerStore, n.routingTable, n)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create mesh rounting: %v", err)
-	}
+	//n.meshRouting, err = meshrouting.New(n.grpcServer, n.peerStore, nil, n)
+	//if err != nil {
+	//	return nil, fmt.Errorf("failed to create mesh rounting: %v", err)
+	//}
 	n.discovery = discovery.New(n.grpcServer, n.peerStore)
 	/*
 		n.ipInfo, err = ipapi.GetIpInfo()
@@ -227,9 +217,7 @@ func (n *MeshNode) meshConnect(addr string) (peerstore.WrappedConnection, error)
 	return n.handleConnection(conn, false)
 }
 func (n *MeshNode) handleConnection(conn *quic.Conn, isIncoming bool) (peerstore.WrappedConnection, error) {
-	meshConn, err := wrapConnection(conn, n.packetsPool, n.dgChan, n.grpcLis, func(mc peerstore.WrappedConnection) {
-		n.peerStore.SetDisconnected(mc.ID())
-	})
+	meshConn, err := wrapConnection(conn)
 	if err != nil {
 		return nil, err
 	}
@@ -271,17 +259,64 @@ func (n *MeshNode) handleConnection(conn *quic.Conn, isIncoming bool) (peerstore
 		Connection: meshConn,
 	}
 	n.peerStore.InsertMerge(pi)
-	go meshConn.Run()
+
+	// Run connection
+	go n.runConnection(meshConn)
 
 	return meshConn, nil
 }
+
+func (n *MeshNode) runConnection(wconn *wrappedConnection) {
+	ctx, cancel := context.WithCancel(wconn.conn.Context())
+	defer cancel()
+
+	// Link node context to this derived cancellation loop
+	go func() {
+		select {
+		case <-n.ctx.Done():
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	for {
+		data, err := wconn.conn.ReceiveDatagram(ctx)
+		if err != nil {
+			select {
+			case <-n.ctx.Done():
+				// Expected shutdown: App/Node is shutting down
+				return
+			case <-wconn.conn.Context().Done():
+				// Expected disconnection: Peer disconnected, timed out, or connection failed
+				return
+			default:
+				// Unexpected QUIC protocol or frame reading error
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+				fmt.Printf("QUIC datagram receive error: %v\n", err)
+				return
+			}
+		}
+		if len(data) == 0 {
+			continue
+		}
+		// Create message
+
+		msg, err := n.router.NewMessageCopyFrom(data)
+		if err != nil {
+			continue
+		}
+		n.router.HandleMeshPacket(msg)
+	}
+}
+
 func (n *MeshNode) Run() {
 	// Grpc listener
 	go n.grpcServer.Serve(n.grpcLis)
 
 	// Services
 	go n.discovery.Run(n.ctx)
-	go n.meshRouting.Run(n.ctx)
+	//go n.meshRouting.Run(n.ctx)
 
 	go n.connector()
 	// Connect to bootstrap nodes
@@ -361,21 +396,11 @@ func (n *MeshNode) NodeID() string {
 	return n.nodeId
 }
 
-func (n *MeshNode) DatagramChan() chan *dgmessage.DatagramMessage {
-	return n.dgChan
-}
-
-func (n *MeshNode) NewVirtualConnection(nodeID, userID, virtualIP string) (routingtable.RoutingObject, error) {
-	uId, err := uuid.Parse(userID)
-	if err != nil {
-		return nil, err
-	}
-	ip := net.ParseIP(virtualIP)
+func (n *MeshNode) NewVirtualConnection(nodeID string, virtualIP uint32) (routingtable.RoutingObject, error) {
 
 	return &VirtualConnection{
 		Parent:    n,
 		NodeID:    nodeID,
-		UserID:    uId,
-		VirtualIp: ip,
+		VirtualIp: virtualIP,
 	}, nil
 }

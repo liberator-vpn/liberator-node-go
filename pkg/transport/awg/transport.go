@@ -5,67 +5,48 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/netip"
 	"time"
 
-	"liberator-node-go/internal/utils/dgmessage"
-	"liberator-node-go/internal/utils/ipalloc"
-	"liberator-node-go/internal/utils/routingtable"
+	"liberator-node-go/internal/utils/netutils"
 	"liberator-node-go/internal/utils/safemap"
-	"liberator-node-go/pkg/ingress"
+	"liberator-node-go/pkg/transport"
 
 	"github.com/amnezia-vpn/amneziawg-go/conn"
 	amneziawgdevice "github.com/amnezia-vpn/amneziawg-go/device"
-	"github.com/google/uuid"
 )
 
-// ---------------------------------------------------------
-// 3. Ингресс
-// ---------------------------------------------------------
-var _ ingress.Ingress = (*Ingress)(nil)
+var _ transport.Transport = (*AWGTransport)(nil)
 
-type Ingress struct {
+type AWGTransport struct {
 	ctx context.Context
-	cfg *IngressConfig
+	cfg *TransportConfig
 
-	packetsPool  dgmessage.DGMessagePool
-	routingTable routingtable.RoutingTable
-	ipAlloc      *ipalloc.IPAllocator
-	nodeID       string
+	router transport.Router
+	nodeID string
 
 	awgDevice  *amneziawgdevice.Device
 	channelTun *ChannelTun
 	in         chan []byte
 
-	peersById    safemap.Safemap[string, *AWGPeer]
-	userIdToPeer safemap.Safemap[string, *AWGPeer] // userID.String() -> Peer
-
-	peerTimeout time.Duration
+	peersByIP safemap.Safemap[uint32, *AWGPeer]
 }
 
 func New(
 	ctx context.Context,
-	cfg *IngressConfig,
-	packetsPool dgmessage.DGMessagePool,
-	routingTable routingtable.RoutingTable,
-	ipAlloc *ipalloc.IPAllocator,
-	fromIng chan *dgmessage.DatagramMessage,
+	cfg *TransportConfig,
+	router transport.Router,
 	nodeID string,
-) (*Ingress, error) {
-	ig := &Ingress{
-		ctx:          ctx,
-		cfg:          cfg,
-		packetsPool:  packetsPool,
-		routingTable: routingTable,
-		ipAlloc:      ipAlloc,
-		nodeID:       nodeID,
-		in:           make(chan []byte, 1000),
-		peersById:    safemap.New[string, *AWGPeer](),
-		userIdToPeer: safemap.New[string, *AWGPeer](),
-		peerTimeout:  3 * time.Minute, // Если нет пакетов 3 минуты - пир мертв
+) (*AWGTransport, error) {
+	ig := &AWGTransport{
+		ctx:       ctx,
+		cfg:       cfg,
+		router:    router,
+		nodeID:    nodeID,
+		in:        make(chan []byte, 1000),
+		peersByIP: safemap.New[uint32, *AWGPeer](),
 	}
 
-	ig.channelTun = NewChannelTun(ctx, fromIng, ig.in, ig.packetsPool, cfg.MTU)
+	ig.channelTun = NewChannelTun(ctx, ig.in, ig.router, cfg.MTU)
 
 	udpBind := conn.NewDefaultBind()
 
@@ -122,7 +103,7 @@ func New(
 }
 
 // Run запускает фоновый процесс очистки мертвых пиров (аналог defer в QUIC)
-func (ig *Ingress) Run() {
+func (ig *AWGTransport) Run() {
 	// fromIng игнорируется, так как он уже привязан к TUN адаптеру в New()
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -142,49 +123,35 @@ func (ig *Ingress) Run() {
 
 // PreparePeer вызывается из VpnAuthService ДО подключения клиента.
 // Добавляет ключ в ядро AWG и выделяет маршрутизируемый объект.
-func (ig *Ingress) PreparePeer(userID uuid.UUID, publicKeyHex string) (net.IP, error) {
+func (ig *AWGTransport) PreparePeer(ip uint32, publicKeyHex string, timeout time.Duration) error {
 	// Если юзер уже подключен, удаляем его старую сессию
-	ig.KickUser(ig.ctx, userID.String())
+	ig.KickUser(ip)
 
-	ipNet, err := ig.ipAlloc.Get()
-	if err != nil {
-		return nil, fmt.Errorf("failed to allocate IP: %w", err)
-	}
-
-	peer := NewAWGPeer(ig.nodeID, userID, ipNet, publicKeyHex, ig)
+	peer := NewAWGPeer(ig.nodeID, ip, publicKeyHex, ig, timeout)
 
 	// Добавляем в ядро AWG
-	peerCmd := fmt.Sprintf("public_key=%s\nallowed_ip=%s/32\n", publicKeyHex, ipNet.String())
-
+	peerCmd := fmt.Sprintf("public_key=%s\nallowed_ip=%s/32\n", publicKeyHex, netutils.Uint32ToIPString(ip))
 	if err := ig.awgDevice.IpcSet(peerCmd); err != nil {
-		ig.ipAlloc.Free(ipNet)
-		return nil, fmt.Errorf("failed to add AWG peer to kernel: %w", err)
+		return fmt.Errorf("failed to add AWG peer to kernel: %w", err)
 	}
 
 	// Добавляем в наши карты и в таблицу маршрутизации
-	ig.peersById.Set(peer.id, peer)
-	ig.userIdToPeer.Set(userID.String(), peer)
+	ig.peersByIP.Set(peer.virtualIP, peer)
 
-	addr, ok := netip.AddrFromSlice(peer.virtualIP)
-	if !ok {
-		return nil, fmt.Errorf("invalid virtual ip")
-	}
+	ig.channelTun.peers.Set(peer.virtualIP, peer)
 
-	ig.channelTun.peers.Set(addr.Unmap(), peer)
-
-	if err := ig.routingTable.Add(peer); err != nil {
+	if err := ig.router.AddRoutingObject(peer); err != nil {
 		// Если не смогли добавить в роутинг, откатываем всё
 		ig.removePeerInternal(peer)
-		return nil, fmt.Errorf("failed to add peer to routing table: %w", err)
+		return fmt.Errorf("failed to add peer to routing table: %w", err)
 	}
 
-	log.Printf("AWG: Prepared peer %s (User: %s, IP: %s)", publicKeyHex[:8], userID, ipNet.String())
-	return ipNet, nil
+	return nil
 }
 
 // KickUser реализует интерфейс для IngressManager
-func (ig *Ingress) KickUser(ctx context.Context, userID string) bool {
-	peer, exists := ig.userIdToPeer.Get(userID)
+func (ig *AWGTransport) KickUser(userIP uint32) bool {
+	peer, exists := ig.peersByIP.Get(userIP)
 	if !exists {
 		return false
 	}
@@ -194,51 +161,40 @@ func (ig *Ingress) KickUser(ctx context.Context, userID string) bool {
 
 // removePeerInternal ЭКВИВАЛЕНТ DEFER ИЗ QUIC ИНГРЕССА
 // Вызывается при таймауте (Watchdog) или принудительном кике.
-func (ig *Ingress) removePeerInternal(peer *AWGPeer) {
+func (ig *AWGTransport) removePeerInternal(peer *AWGPeer) {
 	// 1. Удаляем из таблицы маршрутизации
-	ig.routingTable.Delete(peer)
-
-	// 2. Освобождаем IP
-	if peer.virtualIP != nil {
-		ig.ipAlloc.Free(peer.virtualIP)
-	}
+	ig.router.DeleteRoutingObject(peer)
 
 	// 3. Чистим свои карты
-	ig.peersById.Delete(peer.id)
-	ig.userIdToPeer.Delete(peer.userID.String())
-	if peer.virtualIP != nil {
-		addr, ok := netip.AddrFromSlice(peer.virtualIP)
-		if ok {
-			ig.channelTun.peers.Delete(addr.Unmap())
-		}
-	}
+	ig.peersByIP.Delete(peer.virtualIP)
+	ig.channelTun.peers.Delete(peer.virtualIP)
 
 	// 4. Удаляем из ядра AmneziaWG
 	removeCmd := fmt.Sprintf("public_key=%s\nremove=true\n", peer.pubKey)
 	_ = ig.awgDevice.IpcSet(removeCmd)
 
-	log.Printf("AWG: Removed peer User: %s, Released IP: %s", peer.userID, peer.virtualIP)
 }
 
 // cleanupDeadPeers Watchdog (Сторожевой таймер)
-func (ig *Ingress) cleanupDeadPeers() {
+func (ig *AWGTransport) cleanupDeadPeers() {
 	now := time.Now()
 	var toDelete []*AWGPeer
 
-	ig.peersById.Foreach(func(_ string, peer *AWGPeer) {
-		if now.Sub(peer.lastSeen) > ig.peerTimeout {
-			toDelete = append(toDelete, peer)
+	ig.peersByIP.Foreach(func(_ uint32, peer *AWGPeer) {
+		if peer.timeout != 0 {
+			if now.Sub(peer.lastSeen) > peer.timeout {
+				toDelete = append(toDelete, peer)
+			}
 		}
 	})
 
 	for _, peer := range toDelete {
-		log.Printf("AWG: Peer %s timed out (no packets for %v)", peer.userID, ig.peerTimeout)
 		ig.removePeerInternal(peer)
 	}
 }
 
 // writePacket вызывается абстракцией AWGPeer.SendDatagram для отправки данных клиенту
-func (ig *Ingress) writePacket(data []byte) error {
+func (ig *AWGTransport) writePacket(data []byte) error {
 	select {
 	case ig.in <- data:
 		return nil

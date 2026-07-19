@@ -3,8 +3,8 @@ package meshrouting
 import (
 	"context"
 	"liberator-node-go/internal/utils/peerstore"
-	"liberator-node-go/internal/utils/routingtable"
 	"liberator-node-go/pkg/mesh/services/meshrouting/proto"
+	"liberator-node-go/pkg/routingtable"
 	"log"
 	"net"
 	"time"
@@ -28,7 +28,7 @@ type MeshRoutingService struct {
 	proto.MeshRoutingServiceServer
 }
 
-func New(grpcServer *grpc.Server, peerStore *peerstore.PeerStore, routingTable routingtable.RoutingTable, dgRouter DatagramMeshRouter) (*MeshRoutingService, error) {
+func New(grpcServer *grpc.Server, peerStore *peerstore.PeerStore, dgRouter DatagramMeshRouter) (*MeshRoutingService, error) {
 	mr := &MeshRoutingService{
 		routingTable: routingTable,
 		peerStore:    peerStore,

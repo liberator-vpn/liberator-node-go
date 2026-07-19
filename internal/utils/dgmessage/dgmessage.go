@@ -3,13 +3,13 @@ package dgmessage
 import (
 	"encoding/binary"
 	"fmt"
-	"net"
 	"sync"
+	"time"
 )
 
 type HoleInfo struct {
-	SrcIP    net.IP
-	DstIP    net.IP
+	SrcIP    uint32
+	DstIP    uint32
 	SrcPort  uint16
 	DstPort  uint16
 	Protocol string
@@ -20,7 +20,8 @@ type DatagramMessage struct {
 	IPVersion int
 	HoleInfo  HoleInfo
 
-	pool *dgMessagePoolImpl
+	pool       *dgMessagePoolImpl
+	createTime time.Time
 }
 
 type DGMessagePool interface {
@@ -41,8 +42,8 @@ func NewDGMessagePool(maxSize int) DGMessagePool {
 					Data:      make([]byte, 0, maxSize),
 					IPVersion: 4,
 				}
-				msg.HoleInfo.SrcIP = make(net.IP, 4)
-				msg.HoleInfo.DstIP = make(net.IP, 4)
+				msg.HoleInfo.SrcIP = 0
+				msg.HoleInfo.DstIP = 0
 				return msg
 			},
 		},
@@ -96,11 +97,13 @@ func (dgpool *dgMessagePoolImpl) NewMessageCopyFrom(copyFrom []byte) (*DatagramM
 	copy(msg.Data, copyFrom)
 
 	// Заполняем превыделенные IP и порты
-	copy(msg.HoleInfo.SrcIP, copyFrom[12:16])
-	copy(msg.HoleInfo.DstIP, copyFrom[16:20])
+	msg.HoleInfo.SrcIP = binary.BigEndian.Uint32(copyFrom[12:16])
+	msg.HoleInfo.DstIP = binary.BigEndian.Uint32(copyFrom[16:20])
 	msg.HoleInfo.SrcPort = srcPort
 	msg.HoleInfo.DstPort = dstPort
 	msg.HoleInfo.Protocol = protocol
+
+	msg.createTime = time.Now()
 
 	return msg, nil
 }
@@ -113,6 +116,11 @@ func (msg *DatagramMessage) Free() {
 	// СБРОС: возвращаем длину в 0, но СОХРАНЯЕМ емкость (cap) для следующего пакета
 	msg.Data = msg.Data[:0]
 	msg.HoleInfo.Protocol = ""
+
+	delay := time.Since(msg.createTime)
+	if delay > time.Millisecond {
+		fmt.Printf("Packet destroyed after: %v", delay)
+	}
 
 	msg.pool.pool.Put(msg)
 }

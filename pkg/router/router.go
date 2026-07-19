@@ -1,0 +1,170 @@
+package router
+
+import (
+	"context"
+	"fmt"
+	"liberator-node-go/internal/appconfig"
+	"liberator-node-go/internal/utils/dgmessage"
+	"liberator-node-go/internal/utils/netutils"
+	"liberator-node-go/pkg/firewall"
+	"liberator-node-go/pkg/routingtable"
+	"log"
+	"math"
+	"runtime"
+	"strconv"
+	"sync"
+	"time"
+)
+
+type Router struct {
+	ctx         context.Context
+	packetsPool dgmessage.DGMessagePool
+
+	routingTable routingtable.RoutingTable
+	firewall     firewall.FirewallEngine
+
+	toIface chan *dgmessage.DatagramMessage
+
+	gatewayAddr   uint32
+	network       netutils.NativeIPNet
+	globalNetwork netutils.NativeIPNet
+
+	shardedWorkers []chan datagramMessageInfo
+}
+
+func New(
+	ctx context.Context,
+	cfg appconfig.RouterConfig,
+	routingTable routingtable.RoutingTable,
+	firewall firewall.FirewallEngine,
+) (*Router, error) {
+
+	gatewayAddr, network, err := netutils.NewNativeIPNet(cfg.CIDR)
+	if err != nil {
+		return nil, fmt.Errorf("invalid CIDR: %w", err)
+	}
+
+	_, globalNetwork, err := netutils.NewNativeIPNet(cfg.GlobalCIRD)
+	if err != nil {
+		return nil, fmt.Errorf("invalid global CIDR: %w", err)
+	}
+
+	workersNum := runtime.GOMAXPROCS(0)
+	workers := make([]chan datagramMessageInfo, workersNum)
+	for i := range workers {
+		workers[i] = make(chan datagramMessageInfo, 1000)
+	}
+
+	br := &Router{
+		ctx:         ctx,
+		packetsPool: dgmessage.NewDGMessagePool(math.MaxUint16),
+
+		routingTable: routingTable,
+		firewall:     firewall,
+		toIface:      make(chan *dgmessage.DatagramMessage, 1000),
+
+		gatewayAddr:   gatewayAddr,
+		network:       network,
+		globalNetwork: globalNetwork,
+
+		shardedWorkers: workers,
+	}
+	return br, nil
+}
+
+// sudo sysctl -w net.core.default_qdisc=fq                                                                                                                                                                                                             ✔
+// sudo sysctl -w net.ipv4.tcp_congestion_control=bbr
+func (r *Router) Run() {
+	// Launch sharded workers
+	var wg sync.WaitGroup
+
+	for _, shardChan := range r.shardedWorkers {
+		wg.Go(func() {
+			for packet := range shardChan {
+				switch packet.From {
+				case fromTun:
+					r.handleTunPacketInternal(packet.Msg)
+				case fromMesh:
+					r.HandleMeshPacketInternal(packet.Msg)
+				case fromTransport:
+					r.HandleTransportPacketInternal(packet.Msg)
+				}
+			}
+		})
+	}
+
+	go func() {
+		t := time.NewTicker(time.Millisecond * 50)
+
+		for range t.C {
+			text := ""
+			for _, w := range r.shardedWorkers {
+				text += " " + strconv.FormatInt(int64(len(w)), 10)
+			}
+			fmt.Println(text)
+		}
+	}()
+
+	wg.Wait()
+}
+
+// Packets handling methods
+func (r *Router) handleTunPacketInternal(packet *dgmessage.DatagramMessage) {
+	peer, ex := r.routingTable.GetByIP(packet.HoleInfo.DstIP)
+	if !ex {
+		return
+	}
+	err := peer.SendDatagram(packet.Data)
+	if err != nil {
+		log.Printf("failed to send datagram from tun %d: %v", len(packet.Data), err)
+	}
+	packet.Free()
+}
+func (r *Router) HandleMeshPacketInternal(packet *dgmessage.DatagramMessage) {
+	if packet.HoleInfo.Protocol != "" {
+		r.firewall.Holepunch(packet.HoleInfo, time.Minute)
+	}
+
+	peer, ex := r.routingTable.GetByIP(packet.HoleInfo.DstIP)
+	if !ex {
+		return
+	}
+
+	err := peer.SendDatagram(packet.Data)
+	if err != nil {
+		log.Printf("failed to send datagram from mesh %d: %v", len(packet.Data), err)
+	}
+	packet.Free()
+}
+func (r *Router) HandleTransportPacketInternal(packet *dgmessage.DatagramMessage) {
+
+	if packet.HoleInfo.DstIP == r.gatewayAddr || !r.globalNetwork.Contains(packet.HoleInfo.DstIP) {
+		r.toIface <- packet // TUN
+		return
+	}
+	hi := dgmessage.HoleInfo{
+		SrcIP:    packet.HoleInfo.SrcIP,
+		DstIP:    packet.HoleInfo.DstIP,
+		SrcPort:  packet.HoleInfo.SrcPort,
+		DstPort:  packet.HoleInfo.DstPort,
+		Protocol: packet.HoleInfo.Protocol,
+	}
+	if !r.firewall.RuleCheck(hi) {
+		return
+	}
+	r.firewall.Holepunch(hi, time.Minute)
+
+	if r.network.Contains(packet.HoleInfo.DstIP) {
+		r.toIface <- packet // TUN
+	} else {
+		peer, ex := r.routingTable.GetByIP(packet.HoleInfo.DstIP)
+		if !ex {
+			return
+		}
+		err := peer.SendDatagram(packet.Data)
+		if err != nil {
+			log.Printf("failed to send datagram to mesh: %v", err)
+		}
+		packet.Free()
+	}
+}

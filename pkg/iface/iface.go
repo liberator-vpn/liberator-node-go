@@ -1,4 +1,4 @@
-package egress
+package iface
 
 import (
 	"context"
@@ -18,11 +18,18 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 )
 
-// Egress управляет TUN-интерфейсом и маршрутизацией.
-type Egress struct {
-	ctx         context.Context
-	cfg         appconfig.EgressConfig
-	packetsPool dgmessage.DGMessagePool
+type Router interface {
+	HandleTunPacket(packet *dgmessage.DatagramMessage)
+	NewMessageCopyFrom(data []byte) (*dgmessage.DatagramMessage, error)
+	ToTUNChannel() chan *dgmessage.DatagramMessage
+}
+
+// TUNIface управляет TUN-интерфейсом и маршрутизацией.
+type TUNIface struct {
+	ctx context.Context
+	cfg appconfig.TUNConfig
+
+	router Router
 
 	ifce  tun.Device
 	ipNet *net.IPNet
@@ -32,12 +39,18 @@ type Egress struct {
 const tun_iface_offset = 10
 const ringSize = 3
 
-// New создаёт и настраивает TUN-интерфейс.
-func New(ctx context.Context, cfg appconfig.EgressConfig, packetsPool dgmessage.DGMessagePool, ipCIDR string) (*Egress, error) {
-	eg := &Egress{
-		ctx:         ctx,
-		cfg:         cfg,
-		packetsPool: packetsPool,
+// NewTUN создаёт и настраивает TUN-интерфейс.
+func NewTUN(
+	ctx context.Context,
+	cfg appconfig.TUNConfig,
+
+	router Router,
+	ipCIDR string,
+) (*TUNIface, error) {
+	eg := &TUNIface{
+		ctx:    ctx,
+		cfg:    cfg,
+		router: router,
 	}
 
 	// 1. Создаём TUN-интерфейс
@@ -100,7 +113,9 @@ func New(ctx context.Context, cfg appconfig.EgressConfig, packetsPool dgmessage.
 
 	return eg, nil
 }
-func (eg *Egress) setupNAT() error {
+
+// sudo iptables -t nat -I POSTROUTING 1 -s 10.8.0.0/16 -o amn0 -j MASQUERADE
+func (eg *TUNIface) setupNAT() error {
 	// Если внешний интерфейс не задан, определяем его автоматически
 	if eg.cfg.IfaceOutName == "" {
 		ext, err := getDefaultInterface()
@@ -110,9 +125,14 @@ func (eg *Egress) setupNAT() error {
 		eg.cfg.IfaceOutName = ext
 	}
 
-	tunNet := eg.ipNet.String()
+	network := &net.IPNet{
+		IP:   eg.ipNet.IP.Mask(eg.ipNet.Mask),
+		Mask: eg.ipNet.Mask,
+	}
+	tunNet := network.String()
 
 	// Маскарадинг (NAT)
+	fmt.Println("nat ", "POSTROUTING ", "-s ", tunNet, " -o ", eg.cfg.IfaceOutName, " -j ", "MASQUERADE")
 	if err := eg.ipt.Append("nat", "POSTROUTING", "-s", tunNet, "-o", eg.cfg.IfaceOutName, "-j", "MASQUERADE"); err != nil {
 		return fmt.Errorf("failed to setup NAT: %w", err)
 	}
@@ -151,7 +171,7 @@ func getDefaultInterface() (string, error) {
 }
 
 // Close удаляет интерфейс и очищает правила iptables.
-func (eg *Egress) Close() error {
+func (eg *TUNIface) Close() error {
 	var errs []string
 
 	eg.ifce.Close()
@@ -192,23 +212,24 @@ func (eg *Egress) Close() error {
 	}
 	return nil
 }
-func (eg *Egress) Run(toEgr, fromEgr chan *dgmessage.DatagramMessage) {
+func (eg *TUNIface) Run() {
 	var wg sync.WaitGroup
 
 	batchSize := eg.ifce.BatchSize()
 
 	wg.Go(func() {
-		eg.readLoop(fromEgr, batchSize)
+		eg.readLoop(batchSize)
 	})
 
+	toIfaceChan := eg.router.ToTUNChannel()
 	wg.Go(func() {
-		eg.writeLoop(toEgr, batchSize)
+		eg.writeLoop(toIfaceChan, batchSize)
 	})
 	wg.Wait()
 }
 
 // readLoop – батчевое чтение из TUN
-func (eg *Egress) readLoop(fromEgr chan *dgmessage.DatagramMessage, batchSize int) {
+func (eg *TUNIface) readLoop(batchSize int) {
 	maxPacketLen := math.MaxUint16 + tun_iface_offset
 
 	locks := make([]sync.Mutex, ringSize)
@@ -262,25 +283,20 @@ func (eg *Egress) readLoop(fromEgr chan *dgmessage.DatagramMessage, batchSize in
 				flatStart := (idx * batchSize * maxPacketLen) + (i * maxPacketLen) + tun_iface_offset
 				flatEnd := flatStart + sizes[i] + tun_iface_offset
 
-				msg, err := eg.packetsPool.NewMessageCopyFrom(flatBuffer[flatStart:flatEnd])
+				msg, err := eg.router.NewMessageCopyFrom(flatBuffer[flatStart:flatEnd])
 				if err != nil {
 					log.Printf("invalid egress datagram message: %v", err)
 					continue
 				}
 
-				select {
-				case fromEgr <- msg:
-				case <-eg.ctx.Done():
-					msg.Free()
-					return
-				}
+				eg.router.HandleTunPacket(msg)
 			}
 		}(bufferIndex, n, ringSizes[bufferIndex])
 	}
 }
 
 // writeLoop – батчевая запись в TUN с линеаризованной памятью
-func (eg *Egress) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize int) {
+func (eg *TUNIface) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize int) {
 	maxPacketLen := math.MaxUint16 + tun_iface_offset
 
 	flatBuffer := make([]byte, batchSize*maxPacketLen)

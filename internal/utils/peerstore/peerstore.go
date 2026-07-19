@@ -16,7 +16,6 @@ type WrappedConnection interface {
 	ID() string
 	RemoteAddr() net.Addr
 	Close()
-	Run()
 	GrpcClient() *grpc.ClientConn
 	SendDatagram([]byte) error
 }

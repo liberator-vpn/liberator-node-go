@@ -5,12 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"liberator-node-go/internal/utils/dgmessage"
-	"liberator-node-go/internal/utils/peerstore"
 	"liberator-node-go/internal/utils/quictransport"
-	"log"
 	"net"
-	"sync/atomic"
 
 	"github.com/quic-go/quic-go"
 	"google.golang.org/grpc"
@@ -18,23 +14,13 @@ import (
 )
 
 // static check
-type wrappedConnectionImpl struct {
-	nodeId string
-	conn   *quic.Conn
-
-	packetsPool dgmessage.DGMessagePool
-
-	isRunning uint32
-
-	grpcLis    *quictransport.BiStreamLis
+type wrappedConnection struct {
+	nodeId     string
+	conn       *quic.Conn
 	grpcClient *grpc.ClientConn
-
-	closeFunc func(c peerstore.WrappedConnection)
-
-	dgChan chan *dgmessage.DatagramMessage
 }
 
-func wrapConnection(conn *quic.Conn, packetsPool dgmessage.DGMessagePool, dgChan chan *dgmessage.DatagramMessage, grpcLis *quictransport.BiStreamLis, closeFunc func(c peerstore.WrappedConnection)) (peerstore.WrappedConnection, error) {
+func wrapConnection(conn *quic.Conn) (*wrappedConnection, error) {
 	state := conn.ConnectionState().TLS
 	if len(state.PeerCertificates) == 0 {
 		return nil, fmt.Errorf("peer is not authenticated")
@@ -47,81 +33,33 @@ func wrapConnection(conn *quic.Conn, packetsPool dgmessage.DGMessagePool, dgChan
 	hash := sha256.Sum256(peerCert.RawSubjectPublicKeyInfo)
 	nodeId := hex.EncodeToString(hash[:])
 
-	c := &wrappedConnectionImpl{
-		nodeId:      nodeId,
-		packetsPool: packetsPool,
-		conn:        conn,
-		closeFunc:   closeFunc,
-		grpcLis:     grpcLis,
-		dgChan:      dgChan,
+	c := &wrappedConnection{
+		nodeId: nodeId,
+		conn:   conn,
 	}
 	var err error
 	c.grpcClient, err = c.newGrpcClient()
 	if err != nil {
 		return nil, err
 	}
-	//c.meshService = meshproto.NewMeshServiceClient(c.defaultClient)
-
 	return c, nil
 }
 
-func (c *wrappedConnectionImpl) ID() string {
+func (c *wrappedConnection) ID() string {
 	return c.nodeId
 }
-func (c *wrappedConnectionImpl) RemoteAddr() net.Addr {
+func (c *wrappedConnection) RemoteAddr() net.Addr {
 	return c.conn.RemoteAddr()
 }
 
-func (c *wrappedConnectionImpl) Close() {
+func (c *wrappedConnection) Close() {
 	_ = c.conn.CloseWithError(quic.ApplicationErrorCode(quic.NoError), "closed")
 }
 
-func (c *wrappedConnectionImpl) Run() {
-	if !atomic.CompareAndSwapUint32(&c.isRunning, 0, 1) {
-		return
-	}
-
-	ctx, cancel := context.WithCancel(c.conn.Context())
-	defer cancel()
-
-	go c.readDatagrams(ctx)
-	c.acceptBiStreams(ctx)
-	c.closeFunc(c)
-}
-
-func (c *wrappedConnectionImpl) readDatagrams(ctx context.Context) {
-	for {
-		data, err := c.conn.ReceiveDatagram(ctx)
-		if err != nil {
-			return
-		}
-		msg, err := c.packetsPool.NewMessageCopyFrom(data)
-		if err != nil {
-			log.Printf("invalid mesh datagram message: %v", err)
-			continue
-		}
-
-		c.dgChan <- msg
-
-	}
-}
-
-func (c *wrappedConnectionImpl) acceptBiStreams(ctx context.Context) {
-	for {
-		stream, err := c.conn.AcceptStream(ctx)
-		if err != nil {
-			return
-		}
-
-		netConn := quictransport.NewBiStreamConn(stream, c.conn.LocalAddr(), c.conn.RemoteAddr())
-		c.grpcLis.PushConnection(netConn)
-	}
-}
-
-func (c *wrappedConnectionImpl) GrpcClient() *grpc.ClientConn {
+func (c *wrappedConnection) GrpcClient() *grpc.ClientConn {
 	return c.grpcClient
 }
-func (c *wrappedConnectionImpl) newGrpcClient() (*grpc.ClientConn, error) {
+func (c *wrappedConnection) newGrpcClient() (*grpc.ClientConn, error) {
 	// Настраиваем кастомный диалер для gRPC
 	dialer := func(ctx context.Context, addr string) (net.Conn, error) {
 		stream, err := c.conn.OpenStreamSync(ctx)
@@ -145,6 +83,6 @@ func (c *wrappedConnectionImpl) newGrpcClient() (*grpc.ClientConn, error) {
 	return grpcConn, nil
 }
 
-func (c *wrappedConnectionImpl) SendDatagram(data []byte) error {
+func (c *wrappedConnection) SendDatagram(data []byte) error {
 	return c.conn.SendDatagram(data)
 }

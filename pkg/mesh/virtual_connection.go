@@ -1,25 +1,15 @@
 package mesh
 
-import (
-	"net"
-
-	"github.com/google/uuid"
-)
-
 type VirtualConnection struct {
 	Parent    *MeshNode
 	NodeID    string
-	UserID    uuid.UUID
-	VirtualIp net.IP
+	VirtualIp uint32
 }
 
 func (vc *VirtualConnection) GetNodeID() string {
 	return vc.NodeID
 }
-func (vc *VirtualConnection) GetUserID() uuid.UUID {
-	return vc.UserID
-}
-func (vc *VirtualConnection) GetVirtualIP() net.IP {
+func (vc *VirtualConnection) GetVirtualIP() uint32 {
 	return vc.VirtualIp
 }
 

@@ -11,17 +11,16 @@ type AuthConfig struct {
 	JWTSecret string `yaml:"jwt_secret"`
 }
 
-// EgressConfig настройки выхода в интернет
-type EgressConfig struct {
+// TUNConfig настройки выхода в интернет
+type TUNConfig struct {
 	IfaceInName  string `yaml:"iface_in_name"`
 	IfaceOutName string `yaml:"iface_out_name"`
 	MTU          int    `yaml:"mtu"`
 }
 
-// BridgeConfig описывает один мост (bridge) со своим ingress/egress и сетевой конфигурацией
-type BridgeConfig struct {
-	Ingresses  map[string]map[string]any `yaml:"ingresses"`
-	Egress     EgressConfig              `yaml:"egress"`
+// RouterConfig описывает один мост (bridge) со своим ingress/egress и сетевой конфигурацией
+type RouterConfig struct {
+	Transports map[string]map[string]any `yaml:"transports"`
 	GlobalCIRD string                    `yaml:"global_cidr"`
 	CIDR       string                    `yaml:"cidr"`
 }
@@ -54,11 +53,12 @@ type DatabaseConfig struct {
 
 // AppConfig общая структура конфигурации
 type AppConfig struct {
-	Auth     AuthConfig     `yaml:"auth"`
-	Bridge   BridgeConfig   `yaml:"bridge"` // ключ — имя моста
-	Mesh     MeshConfig     `yaml:"mesh"`
-	Database DatabaseConfig `yaml:"database"`
-	Metrics  MetricsConfig  `yaml:"metrics"`
+	Auth      AuthConfig     `yaml:"auth"`
+	TunConfig TUNConfig      `yaml:"tun"`
+	Router    RouterConfig   `yaml:"router"`
+	Mesh      MeshConfig     `yaml:"mesh"`
+	Database  DatabaseConfig `yaml:"database"`
+	Metrics   MetricsConfig  `yaml:"metrics"`
 }
 
 // LoadAppConfig загружает конфигурацию из YAML-файла
