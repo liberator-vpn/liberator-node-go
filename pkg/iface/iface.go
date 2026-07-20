@@ -266,6 +266,7 @@ func (eg *TUNIface) Run() {
 		eg.writeLoop(toIfaceChan, batchSize)
 	})
 	wg.Wait()
+	eg.Close()
 }
 
 // readLoop – батчевое чтение из TUN

@@ -146,17 +146,20 @@ func (app *App) Run() error {
 	wg.Go(app.router.Run)
 	wg.Go(app.node.Run)
 	wg.Go(app.tunIface.Run)
+
 	app.transports.Foreach(func(_ string, t transport.Transport) {
 		wg.Go(t.Run)
 	})
 
-	wg.Go(func() {
+	go func() {
 		if err := app.grpcServer.Serve(app.grpcLis); err != nil {
 			log.Fatalf("failed to start grpc server: %v", err)
 		}
-	})
+	}()
 
 	wg.Wait()
+	app.grpcServer.Stop()
+	app.grpcLis.Close()
 
 	return nil
 }
