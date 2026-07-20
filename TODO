@@ -58,3 +58,7 @@ IngressPeerManager через RegisterIngress().
 	wgTransport := ingress.NewWireguardTransport("wg-main", udpConn, router)
 	
 	peersManager.RegisterIngress(ingressB)
+
+
+
+	Уведомления, Метрики, циклы очистки экспайреных токенов.

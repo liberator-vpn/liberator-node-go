@@ -9,6 +9,7 @@ import (
 
 	"liberator-node-go/internal/utils/netutils"
 	"liberator-node-go/internal/utils/safemap"
+	"liberator-node-go/pkg/model"
 	"liberator-node-go/pkg/transport"
 
 	"github.com/amnezia-vpn/amneziawg-go/conn"
@@ -123,14 +124,14 @@ func (ig *AWGTransport) Run() {
 
 // PreparePeer вызывается из VpnAuthService ДО подключения клиента.
 // Добавляет ключ в ядро AWG и выделяет маршрутизируемый объект.
-func (ig *AWGTransport) PreparePeer(ip uint32, publicKeyHex string, timeout time.Duration) error {
+func (ig *AWGTransport) PreparePeer(peerInfo *model.Peer) error {
 	// Если юзер уже подключен, удаляем его старую сессию
-	ig.KickUser(ip)
+	ig.KickUser(peerInfo.VirtualIP)
 
-	peer := NewAWGPeer(ig.nodeID, ip, publicKeyHex, ig, timeout)
+	peer := NewAWGPeer(ig.nodeID, peerInfo.VirtualIP, peerInfo.AwgPublicKey, ig, peerInfo.ExpirationDate)
 
 	// Добавляем в ядро AWG
-	peerCmd := fmt.Sprintf("public_key=%s\nallowed_ip=%s/32\n", publicKeyHex, netutils.Uint32ToIPString(ip))
+	peerCmd := fmt.Sprintf("public_key=%s\nallowed_ip=%s/32\n", peerInfo.AwgPublicKey, netutils.Uint32ToIPString(peerInfo.VirtualIP))
 	if err := ig.awgDevice.IpcSet(peerCmd); err != nil {
 		return fmt.Errorf("failed to add AWG peer to kernel: %w", err)
 	}
@@ -181,8 +182,8 @@ func (ig *AWGTransport) cleanupDeadPeers() {
 	var toDelete []*AWGPeer
 
 	ig.peersByIP.Foreach(func(_ uint32, peer *AWGPeer) {
-		if peer.timeout != 0 {
-			if now.Sub(peer.lastSeen) > peer.timeout {
+		if peer.expiration != nil {
+			if peer.expiration.After(now) {
 				toDelete = append(toDelete, peer)
 			}
 		}

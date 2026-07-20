@@ -7,19 +7,24 @@ sql:
       go:
         package: "repos"
         out: "../internal/infra/repos"
-        sql_package: "pgx/v5"
+        sql_package: "database/sql"
         overrides:
-
-          - column: "accounts.steam_id"
+          - column: "peers_rules.target_ip"
             nullable: true
             go_type:
-              type: "int64"
+              type: "uint32"
               pointer: true
-          - column: "accounts.level"
-            nullable: false
+          - column: "peers_rules.port_range_end"
+            nullable: true
             go_type:
-              type: "int32"
-
+              type: "uint16"
+              pointer: true
+          - column: "peers.expiration_date"
+            nullable: true
+            go_type:
+              type: "time.Time"
+              pointer: true
+              
           # UUID
           - db_type: "uuid"
             nullable: false

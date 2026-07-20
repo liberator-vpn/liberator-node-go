@@ -5,22 +5,26 @@
 package repos
 
 import (
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
+	"time"
 )
 
-type Libuser struct {
-	ID        uuid.UUID
-	CreatedAt pgtype.Timestamp
-	Login     string
+type Peer struct {
+	ID             int64
+	Type           string
+	VirtualIp      int64
+	LastSeen       time.Time
+	ExpirationDate *time.Time
+	FromPeerTotal  int64
+	ToPeerTotal    int64
+	AwgPrivateKey  string
+	AwgPublicKey   string
 }
 
-type UserPort struct {
-	ID         int64
-	CreatedAt  pgtype.Timestamp
-	User1      *uuid.UUID
-	TargetUser *uuid.UUID
-	Protocol   string
-	PortStart  int32
-	PortEnd    pgtype.Int4
+type PeersRule struct {
+	ID             int64
+	PeerID         int64
+	TargetIp       *uint32
+	Protocol       string
+	PortRangeStart int64
+	PortRangeEnd   *uint16
 }

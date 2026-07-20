@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sync"
-	"time"
 )
 
 type HoleInfo struct {
@@ -20,8 +19,7 @@ type DatagramMessage struct {
 	IPVersion int
 	HoleInfo  HoleInfo
 
-	pool       *dgMessagePoolImpl
-	createTime time.Time
+	pool *dgMessagePoolImpl
 }
 
 type DGMessagePool interface {
@@ -103,8 +101,6 @@ func (dgpool *dgMessagePoolImpl) NewMessageCopyFrom(copyFrom []byte) (*DatagramM
 	msg.HoleInfo.DstPort = dstPort
 	msg.HoleInfo.Protocol = protocol
 
-	msg.createTime = time.Now()
-
 	return msg, nil
 }
 
@@ -116,11 +112,6 @@ func (msg *DatagramMessage) Free() {
 	// СБРОС: возвращаем длину в 0, но СОХРАНЯЕМ емкость (cap) для следующего пакета
 	msg.Data = msg.Data[:0]
 	msg.HoleInfo.Protocol = ""
-
-	delay := time.Since(msg.createTime)
-	if delay > time.Millisecond {
-		fmt.Printf("Packet destroyed after: %v", delay)
-	}
 
 	msg.pool.pool.Put(msg)
 }

@@ -11,7 +11,6 @@ import (
 	"log"
 	"math"
 	"runtime"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -92,18 +91,6 @@ func (r *Router) Run() {
 			}
 		})
 	}
-
-	go func() {
-		t := time.NewTicker(time.Millisecond * 50)
-
-		for range t.C {
-			text := ""
-			for _, w := range r.shardedWorkers {
-				text += " " + strconv.FormatInt(int64(len(w)), 10)
-			}
-			fmt.Println(text)
-		}
-	}()
 
 	wg.Wait()
 }

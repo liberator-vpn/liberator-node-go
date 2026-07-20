@@ -2,15 +2,15 @@ package transport
 
 import (
 	"liberator-node-go/internal/utils/dgmessage"
+	"liberator-node-go/pkg/model"
 	"liberator-node-go/pkg/routingtable"
-	"time"
 )
 
 type Transport interface {
 	Run()
 
 	KickUser(ip uint32) bool
-	PreparePeer(ip uint32, publicKeyHex string, timeout time.Duration) error
+	PreparePeer(peerInfo *model.Peer) error
 }
 
 type Router interface {

@@ -9,22 +9,22 @@ import (
 // ---------------------------------------------------------
 
 type AWGPeer struct {
-	nodeID    string
-	virtualIP uint32
-	pubKey    string
-	lastSeen  time.Time
-	ingress   *AWGTransport
-	timeout   time.Duration
+	nodeID     string
+	virtualIP  uint32
+	pubKey     string
+	lastSeen   time.Time
+	ingress    *AWGTransport
+	expiration *time.Time
 }
 
-func NewAWGPeer(nodeID string, ip uint32, pubKey string, ingress *AWGTransport, timeout time.Duration) *AWGPeer {
+func NewAWGPeer(nodeID string, ip uint32, pubKey string, ingress *AWGTransport, expiration *time.Time) *AWGPeer {
 	return &AWGPeer{
-		nodeID:    nodeID,
-		virtualIP: ip,
-		pubKey:    pubKey,
-		lastSeen:  time.Now(),
-		ingress:   ingress,
-		timeout:   timeout,
+		nodeID:     nodeID,
+		virtualIP:  ip,
+		pubKey:     pubKey,
+		lastSeen:   time.Now(),
+		ingress:    ingress,
+		expiration: expiration,
 	}
 }
 

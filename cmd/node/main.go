@@ -41,5 +41,8 @@ func main() {
 		log.Panicf("failed to create application: %v", err)
 	}
 
-	application.Run()
+	err = application.Run()
+	if err != nil {
+		log.Fatalf("failed to run app: %v", err)
+	}
 }

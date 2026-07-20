@@ -44,11 +44,7 @@ type MetricsConfig struct {
 
 // DatabaseConfig - бд
 type DatabaseConfig struct {
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	Database string `yaml:"database"`
+	File string `yaml:"file"`
 }
 
 // AppConfig общая структура конфигурации
