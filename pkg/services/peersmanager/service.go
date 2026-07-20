@@ -52,13 +52,6 @@ func (pm *PeersManager) Start(ctx context.Context) error {
 			log.Printf("failed to prepare peer: %v", err)
 			continue
 		}
-
-		key, err := transport.GenerateClientKey(peer, "192.168.68.121", "Sraka")
-		if err != nil {
-			log.Printf("failed to gen client key")
-			continue
-		}
-		fmt.Println(key)
 	}
 	return nil
 }
@@ -74,6 +67,14 @@ func (pm *PeersManager) CreatePeerAutoID(ctx context.Context, peer *model.Peer) 
 	if err != nil {
 		return 0, fmt.Errorf("create peer: %w", err)
 	}
+	transport, ex := pm.transports.Get(peer.Type)
+	if ex {
+		err = transport.PreparePeer(peer)
+		if err != nil {
+			return 0, fmt.Errorf("failed to prepare peer: %v", err)
+		}
+	}
+
 	return uint64(row.ID), nil
 }
 func (pm *PeersManager) CreatePeerExplicit(ctx context.Context, peer *model.Peer) (uint64, error) {
@@ -87,6 +88,13 @@ func (pm *PeersManager) CreatePeerExplicit(ctx context.Context, peer *model.Peer
 	})
 	if err != nil {
 		return 0, fmt.Errorf("create peer: %w", err)
+	}
+	transport, ex := pm.transports.Get(peer.Type)
+	if ex {
+		err = transport.PreparePeer(peer)
+		if err != nil {
+			return 0, fmt.Errorf("failed to prepare peer: %v", err)
+		}
 	}
 	return uint64(row.ID), nil
 }
@@ -104,8 +112,17 @@ func (pm *PeersManager) DeletePeer(ctx context.Context, peerId uint64) error {
 		return fmt.Errorf("delete peer rules from DB: %w", err)
 	}
 
+	peer, err := pm.db.GetPeerByID(ctx, int64(peerId))
+	if err != nil {
+		return fmt.Errorf("failed to get peer: %w", err)
+	}
 	if err := pm.db.DeletePeer(ctx, int64(peerId)); err != nil {
 		return fmt.Errorf("delete peer from DB: %w", err)
+	}
+
+	transport, ex := pm.transports.Get(peer.Type)
+	if ex {
+		transport.KickUser(uint32(peer.VirtualIp))
 	}
 	return nil
 }
