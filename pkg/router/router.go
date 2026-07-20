@@ -80,14 +80,19 @@ func (r *Router) Run() {
 
 	for _, shardChan := range r.shardedWorkers {
 		wg.Go(func() {
-			for packet := range shardChan {
-				switch packet.From {
-				case fromTun:
-					r.handleTunPacketInternal(packet.Msg)
-				case fromMesh:
-					r.HandleMeshPacketInternal(packet.Msg)
-				case fromTransport:
-					r.HandleTransportPacketInternal(packet.Msg)
+			for {
+				select {
+				case <-r.ctx.Done():
+					return
+				case packet := <-shardChan:
+					switch packet.From {
+					case fromTun:
+						r.handleTunPacketInternal(packet.Msg)
+					case fromMesh:
+						r.HandleMeshPacketInternal(packet.Msg)
+					case fromTransport:
+						r.HandleTransportPacketInternal(packet.Msg)
+					}
 				}
 			}
 		})

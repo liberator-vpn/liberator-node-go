@@ -59,18 +59,18 @@ type awgConfig struct {
 	H2              string `json:"H2"`
 	H3              string `json:"H3"`
 	H4              string `json:"H4"`
-	I1              string `json:"I1,omitempty"`
-	I2              string `json:"I2,omitempty"`
-	I3              string `json:"I3,omitempty"`
-	I4              string `json:"I4,omitempty"`
-	I5              string `json:"I5,omitempty"`
+	I1              string `json:"I1"`
+	I2              string `json:"I2"`
+	I3              string `json:"I3"`
+	I4              string `json:"I4"`
+	I5              string `json:"I5"`
 	Jc              string `json:"Jc"`
 	Jmax            string `json:"Jmax"`
 	Jmin            string `json:"Jmin"`
 	S1              string `json:"S1"`
 	S2              string `json:"S2"`
-	S3              string `json:"S3,omitempty"`
-	S4              string `json:"S4,omitempty"`
+	S3              string `json:"S3"`
+	S4              string `json:"S4"`
 	LastConfig      string `json:"last_config"` // ЗДЕСЬ ЛЕЖИТ СТРОКА С ВЛОЖЕННЫМ JSON!
 	Port            string `json:"port"`
 	ProtocolVersion string `json:"protocol_version"`
@@ -84,6 +84,11 @@ type lastConfigInner struct {
 	H2                  string   `json:"H2"`
 	H3                  string   `json:"H3"`
 	H4                  string   `json:"H4"`
+	I1                  string   `json:"I1"`
+	I2                  string   `json:"I2"`
+	I3                  string   `json:"I3"`
+	I4                  string   `json:"I4"`
+	I5                  string   `json:"I5"`
 	Jc                  string   `json:"Jc"`
 	Jmin                string   `json:"Jmin"`
 	Jmax                string   `json:"Jmax"`
@@ -100,7 +105,7 @@ type lastConfigInner struct {
 	HostName            string   `json:"hostName"`
 	Mtu                 string   `json:"mtu"`
 	PersistentKeepAlive string   `json:"persistent_keep_alive"`
-	Port                string   `json:"port"`
+	Port                int      `json:"port"`
 	PskKey              string   `json:"psk_key,omitempty"`
 	ServerPubKey        string   `json:"server_pub_key"`
 }
@@ -135,9 +140,9 @@ func generateURI(p *ClientParams) (string, error) {
 		ClientPubKey:        clientPubB64,
 		Config:              iniStr,
 		HostName:            p.ServerAddr,
-		Mtu:                 "1372",
+		Mtu:                 "1280",
 		PersistentKeepAlive: "25",
-		Port:                fmt.Sprintf("%d", p.ServerPort),
+		Port:                p.ServerPort,
 		PskKey:              p.ServerPSK,
 		ServerPubKey:        serverPubB64,
 	}
@@ -224,27 +229,15 @@ func buildINIString(p *ClientParams) string {
 	sb.WriteString(fmt.Sprintf("H3 = %s\n", p.H3))
 	sb.WriteString(fmt.Sprintf("H4 = %s\n", p.H4))
 
-	if p.I1 != "" {
-		sb.WriteString(fmt.Sprintf("I1 = %s\n", p.I1))
-	}
-	if p.I2 != "" {
-		sb.WriteString(fmt.Sprintf("I2 = %s\n", p.I2))
-	}
-	if p.I3 != "" {
-		sb.WriteString(fmt.Sprintf("I3 = %s\n", p.I3))
-	}
-	if p.I4 != "" {
-		sb.WriteString(fmt.Sprintf("I4 = %s\n", p.I4))
-	}
-	if p.I5 != "" {
-		sb.WriteString(fmt.Sprintf("I5 = %s\n", p.I5))
-	}
+	sb.WriteString(fmt.Sprintf("I1 = %s\n", p.I1))
+	sb.WriteString(fmt.Sprintf("I2 = %s\n", p.I2))
+	sb.WriteString(fmt.Sprintf("I3 = %s\n", p.I3))
+	sb.WriteString(fmt.Sprintf("I4 = %s\n", p.I4))
+	sb.WriteString(fmt.Sprintf("I5 = %s\n", p.I5))
 
 	sb.WriteString("\n[Peer]\n")
 	sb.WriteString(fmt.Sprintf("PublicKey = %s\n", p.ServerPubKey))
-	if p.ServerPSK != "" {
-		sb.WriteString(fmt.Sprintf("PresharedKey = %s\n", p.ServerPSK))
-	}
+	sb.WriteString(fmt.Sprintf("PresharedKey = %s\n", p.ServerPSK))
 	sb.WriteString("AllowedIPs = 0.0.0.0/0, ::/0\n")
 	sb.WriteString(fmt.Sprintf("Endpoint = %s:%d\n", p.ServerAddr, p.ServerPort))
 	sb.WriteString("PersistentKeepalive = 25\n")
