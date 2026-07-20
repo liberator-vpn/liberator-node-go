@@ -147,17 +147,14 @@ func (r *Router) HandleTransportPacketInternal(packet *dgmessage.DatagramMessage
 	}
 	r.firewall.Holepunch(hi, time.Minute)
 
-	if r.network.Contains(packet.HoleInfo.DstIP) {
-		r.toIface <- packet // TUN
-	} else {
-		peer, ex := r.routingTable.GetByIP(packet.HoleInfo.DstIP)
-		if !ex {
-			return
-		}
-		err := peer.SendDatagram(packet.Data)
-		if err != nil {
-			log.Printf("failed to send datagram to mesh: %v", err)
-		}
-		packet.Free()
+	peer, ex := r.routingTable.GetByIP(packet.HoleInfo.DstIP)
+	if !ex {
+		return
 	}
+	err := peer.SendDatagram(packet.Data)
+	if err != nil {
+		log.Printf("failed to send datagram to mesh: %v", err)
+	}
+	packet.Free()
+
 }

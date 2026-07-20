@@ -9,7 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	pb "github.com/TexHik620953/liberator-node-go/pkg/api/grpc" // Наш сгенерированный gRPC пакет
-	"github.com/TexHik620953/liberator-node-go/pkg/firewall"
+	"github.com/TexHik620953/liberator-node-go/pkg/model"
 	"github.com/TexHik620953/liberator-node-go/pkg/services/firewallmanager"
 )
 
@@ -31,12 +31,10 @@ func (h *FirewallHandler) AddRule(ctx context.Context, req *pb.AddRuleRequest) (
 	// Благодаря `optional` в .proto, поля TargetAddress и PortRangeEnd
 	// в структуре req.Rule автоматически стали указателями (*uint32)!
 	// Если клиент их не передал, они придут как nil, что идеально для нашей БД.
-	domainRule := firewall.PortRule{
-		Address:        req.Rule.Address,
+	domainRule := model.PortRule{
 		TargetAddress:  req.Rule.TargetAddress, // Прямой маппинг *uint32 -> *uint32
 		Protocol:       req.Rule.Protocol,
 		PortRangeStart: uint16(req.Rule.PortRangeStart),
-		PortRangeEnd:   nil,
 	}
 
 	// Приведение типов для PortRangeEnd из *uint32 в *uint16, если он передан
@@ -46,7 +44,7 @@ func (h *FirewallHandler) AddRule(ctx context.Context, req *pb.AddRuleRequest) (
 	}
 
 	// Вызов Control Plane бизнес-логики
-	err := h.manager.AddRule(ctx, req.PeerId, domainRule)
+	err := h.manager.AddRule(ctx, req.PeerId, &domainRule)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to add rule: %v", err)
 	}

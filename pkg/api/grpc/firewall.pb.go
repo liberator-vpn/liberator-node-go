@@ -24,12 +24,10 @@ const (
 
 type PortRule struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	Id             uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Address        uint32                 `protobuf:"varint,2,opt,name=address,proto3" json:"address,omitempty"`
-	TargetAddress  *uint32                `protobuf:"varint,3,opt,name=target_address,json=targetAddress,proto3,oneof" json:"target_address,omitempty"`
-	Protocol       string                 `protobuf:"bytes,4,opt,name=protocol,proto3" json:"protocol,omitempty"`
-	PortRangeStart uint32                 `protobuf:"varint,5,opt,name=port_range_start,json=portRangeStart,proto3" json:"port_range_start,omitempty"`
-	PortRangeEnd   *uint32                `protobuf:"varint,6,opt,name=port_range_end,json=portRangeEnd,proto3,oneof" json:"port_range_end,omitempty"`
+	TargetAddress  *uint32                `protobuf:"varint,1,opt,name=target_address,json=targetAddress,proto3,oneof" json:"target_address,omitempty"`
+	Protocol       string                 `protobuf:"bytes,2,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	PortRangeStart uint32                 `protobuf:"varint,3,opt,name=port_range_start,json=portRangeStart,proto3" json:"port_range_start,omitempty"`
+	PortRangeEnd   *uint32                `protobuf:"varint,4,opt,name=port_range_end,json=portRangeEnd,proto3,oneof" json:"port_range_end,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -62,20 +60,6 @@ func (x *PortRule) ProtoReflect() protoreflect.Message {
 // Deprecated: Use PortRule.ProtoReflect.Descriptor instead.
 func (*PortRule) Descriptor() ([]byte, []int) {
 	return file_firewall_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *PortRule) GetId() uint64 {
-	if x != nil {
-		return x.Id
-	}
-	return 0
-}
-
-func (x *PortRule) GetAddress() uint32 {
-	if x != nil {
-		return x.Address
-	}
-	return 0
 }
 
 func (x *PortRule) GetTargetAddress() uint32 {
@@ -294,14 +278,12 @@ var File_firewall_proto protoreflect.FileDescriptor
 
 const file_firewall_proto_rawDesc = "" +
 	"\n" +
-	"\x0efirewall.proto\x12\x04grpc\x1a\x1bgoogle/protobuf/empty.proto\"\xf7\x01\n" +
-	"\bPortRule\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x18\n" +
-	"\aaddress\x18\x02 \x01(\rR\aaddress\x12*\n" +
-	"\x0etarget_address\x18\x03 \x01(\rH\x00R\rtargetAddress\x88\x01\x01\x12\x1a\n" +
-	"\bprotocol\x18\x04 \x01(\tR\bprotocol\x12(\n" +
-	"\x10port_range_start\x18\x05 \x01(\rR\x0eportRangeStart\x12)\n" +
-	"\x0eport_range_end\x18\x06 \x01(\rH\x01R\fportRangeEnd\x88\x01\x01B\x11\n" +
+	"\x0efirewall.proto\x12\x04grpc\x1a\x1bgoogle/protobuf/empty.proto\"\xcd\x01\n" +
+	"\bPortRule\x12*\n" +
+	"\x0etarget_address\x18\x01 \x01(\rH\x00R\rtargetAddress\x88\x01\x01\x12\x1a\n" +
+	"\bprotocol\x18\x02 \x01(\tR\bprotocol\x12(\n" +
+	"\x10port_range_start\x18\x03 \x01(\rR\x0eportRangeStart\x12)\n" +
+	"\x0eport_range_end\x18\x04 \x01(\rH\x01R\fportRangeEnd\x88\x01\x01B\x11\n" +
 	"\x0f_target_addressB\x11\n" +
 	"\x0f_port_range_end\"M\n" +
 	"\x0eAddRuleRequest\x12\x17\n" +

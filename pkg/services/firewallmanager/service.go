@@ -6,6 +6,7 @@ import (
 
 	"github.com/TexHik620953/liberator-node-go/internal/infra/repos"
 	"github.com/TexHik620953/liberator-node-go/pkg/firewall"
+	"github.com/TexHik620953/liberator-node-go/pkg/model"
 )
 
 type Firewallmanager struct {
@@ -44,7 +45,7 @@ func (fm *Firewallmanager) Start(ctx context.Context) error {
 	return nil
 }
 
-func (fm *Firewallmanager) AddRule(ctx context.Context, peerID uint64, rule firewall.PortRule) error {
+func (fm *Firewallmanager) AddRule(ctx context.Context, peerID uint64, rule *model.PortRule) error {
 	// Вставляем в БД (авто ID)
 	dbRuleID, err := fm.db.InsertPeerRule(ctx, repos.InsertPeerRuleParams{
 		PeerID:         int64(peerID),
@@ -56,10 +57,21 @@ func (fm *Firewallmanager) AddRule(ctx context.Context, peerID uint64, rule fire
 	if err != nil {
 		return fmt.Errorf("insert rule into DB: %w", err)
 	}
+	peer, err := fm.db.GetPeerByID(ctx, int64(peerID))
+	if err != nil {
+		return fmt.Errorf("insert rule into DB: get peer: %w", err)
+	}
 
 	// Присваиваем сгенерированный ID и добавляем в firewall
 	rule.ID = uint64(dbRuleID)
-	fm.firewall.AddRule(rule)
+	fm.firewall.AddRule(firewall.PortRule{
+		ID:             uint64(dbRuleID),
+		Address:        uint32(peer.VirtualIp),
+		TargetAddress:  rule.TargetAddress,
+		Protocol:       rule.Protocol,
+		PortRangeStart: rule.PortRangeStart,
+		PortRangeEnd:   rule.PortRangeEnd,
+	})
 	return nil
 }
 
