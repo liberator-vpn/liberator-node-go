@@ -137,7 +137,6 @@ func (ig *AWGTransport) Run() {
 		case <-ig.ctx.Done():
 			log.Printf("[%s] Shutting down AWG Ingress...", ig.nodeID)
 			ig.awgDevice.Close()
-			close(ig.in)
 			fmt.Println("transport exit")
 			return
 		case <-ticker.C:
