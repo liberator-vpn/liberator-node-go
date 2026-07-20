@@ -25,7 +25,7 @@ func RegisterPeerService(server *grpc.Server, manager *peersmanager.PeersManager
 	pb.RegisterPeerServiceServer(server, handler)
 }
 
-func (h *PeersHandler) CreatePeer(ctx context.Context, req *pb.CreatePeerRequest) (*pb.CreatePeerResponse, error) {
+func (h *PeersHandler) CreatePeerAutoID(ctx context.Context, req *pb.CreatePeerAutoIDRequest) (*pb.CreatePeerResponse, error) {
 	domainPeer := &model.Peer{
 		Type:          req.Type,
 		VirtualIP:     req.VirtualIp,
@@ -39,7 +39,29 @@ func (h *PeersHandler) CreatePeer(ctx context.Context, req *pb.CreatePeerRequest
 		domainPeer.ExpirationDate = &expTime
 	}
 
-	id, err := h.manager.CreatePeer(ctx, domainPeer)
+	id, err := h.manager.CreatePeerAutoID(ctx, domainPeer)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to create peer: %v", err)
+	}
+
+	return &pb.CreatePeerResponse{Id: id}, nil
+}
+func (h *PeersHandler) CreatePeerExplicit(ctx context.Context, req *pb.CreatePeerExplicitRequest) (*pb.CreatePeerResponse, error) {
+	domainPeer := &model.Peer{
+		ID:            req.Id,
+		Type:          req.Type,
+		VirtualIP:     req.VirtualIp,
+		AwgPrivateKey: req.AwgPrivateKey,
+		AwgPublicKey:  req.AwgPublicKey,
+	}
+
+	// Обрабатываем nullable/optional дату окончания действия
+	if req.ExpirationDate != nil {
+		expTime := req.ExpirationDate.AsTime()
+		domainPeer.ExpirationDate = &expTime
+	}
+
+	id, err := h.manager.CreatePeerExplicit(ctx, domainPeer)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create peer: %v", err)
 	}

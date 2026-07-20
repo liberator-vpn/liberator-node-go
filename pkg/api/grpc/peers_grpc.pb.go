@@ -20,18 +20,20 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PeerService_CreatePeer_FullMethodName        = "/grpc.PeerService/CreatePeer"
-	PeerService_GetPeer_FullMethodName           = "/grpc.PeerService/GetPeer"
-	PeerService_ListPeers_FullMethodName         = "/grpc.PeerService/ListPeers"
-	PeerService_DeletePeer_FullMethodName        = "/grpc.PeerService/DeletePeer"
-	PeerService_GenerateClientKey_FullMethodName = "/grpc.PeerService/GenerateClientKey"
+	PeerService_CreatePeerExplicit_FullMethodName = "/grpc.PeerService/CreatePeerExplicit"
+	PeerService_CreatePeerAutoID_FullMethodName   = "/grpc.PeerService/CreatePeerAutoID"
+	PeerService_GetPeer_FullMethodName            = "/grpc.PeerService/GetPeer"
+	PeerService_ListPeers_FullMethodName          = "/grpc.PeerService/ListPeers"
+	PeerService_DeletePeer_FullMethodName         = "/grpc.PeerService/DeletePeer"
+	PeerService_GenerateClientKey_FullMethodName  = "/grpc.PeerService/GenerateClientKey"
 )
 
 // PeerServiceClient is the client API for PeerService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type PeerServiceClient interface {
-	CreatePeer(ctx context.Context, in *CreatePeerRequest, opts ...grpc.CallOption) (*CreatePeerResponse, error)
+	CreatePeerExplicit(ctx context.Context, in *CreatePeerExplicitRequest, opts ...grpc.CallOption) (*CreatePeerResponse, error)
+	CreatePeerAutoID(ctx context.Context, in *CreatePeerAutoIDRequest, opts ...grpc.CallOption) (*CreatePeerResponse, error)
 	GetPeer(ctx context.Context, in *GetPeerRequest, opts ...grpc.CallOption) (*Peer, error)
 	ListPeers(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListPeersResponse, error)
 	DeletePeer(ctx context.Context, in *DeletePeerRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -46,10 +48,20 @@ func NewPeerServiceClient(cc grpc.ClientConnInterface) PeerServiceClient {
 	return &peerServiceClient{cc}
 }
 
-func (c *peerServiceClient) CreatePeer(ctx context.Context, in *CreatePeerRequest, opts ...grpc.CallOption) (*CreatePeerResponse, error) {
+func (c *peerServiceClient) CreatePeerExplicit(ctx context.Context, in *CreatePeerExplicitRequest, opts ...grpc.CallOption) (*CreatePeerResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CreatePeerResponse)
-	err := c.cc.Invoke(ctx, PeerService_CreatePeer_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, PeerService_CreatePeerExplicit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *peerServiceClient) CreatePeerAutoID(ctx context.Context, in *CreatePeerAutoIDRequest, opts ...grpc.CallOption) (*CreatePeerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreatePeerResponse)
+	err := c.cc.Invoke(ctx, PeerService_CreatePeerAutoID_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +112,8 @@ func (c *peerServiceClient) GenerateClientKey(ctx context.Context, in *GenerateC
 // All implementations must embed UnimplementedPeerServiceServer
 // for forward compatibility.
 type PeerServiceServer interface {
-	CreatePeer(context.Context, *CreatePeerRequest) (*CreatePeerResponse, error)
+	CreatePeerExplicit(context.Context, *CreatePeerExplicitRequest) (*CreatePeerResponse, error)
+	CreatePeerAutoID(context.Context, *CreatePeerAutoIDRequest) (*CreatePeerResponse, error)
 	GetPeer(context.Context, *GetPeerRequest) (*Peer, error)
 	ListPeers(context.Context, *emptypb.Empty) (*ListPeersResponse, error)
 	DeletePeer(context.Context, *DeletePeerRequest) (*emptypb.Empty, error)
@@ -115,8 +128,11 @@ type PeerServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedPeerServiceServer struct{}
 
-func (UnimplementedPeerServiceServer) CreatePeer(context.Context, *CreatePeerRequest) (*CreatePeerResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method CreatePeer not implemented")
+func (UnimplementedPeerServiceServer) CreatePeerExplicit(context.Context, *CreatePeerExplicitRequest) (*CreatePeerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreatePeerExplicit not implemented")
+}
+func (UnimplementedPeerServiceServer) CreatePeerAutoID(context.Context, *CreatePeerAutoIDRequest) (*CreatePeerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreatePeerAutoID not implemented")
 }
 func (UnimplementedPeerServiceServer) GetPeer(context.Context, *GetPeerRequest) (*Peer, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPeer not implemented")
@@ -151,20 +167,38 @@ func RegisterPeerServiceServer(s grpc.ServiceRegistrar, srv PeerServiceServer) {
 	s.RegisterService(&PeerService_ServiceDesc, srv)
 }
 
-func _PeerService_CreatePeer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CreatePeerRequest)
+func _PeerService_CreatePeerExplicit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreatePeerExplicitRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PeerServiceServer).CreatePeer(ctx, in)
+		return srv.(PeerServiceServer).CreatePeerExplicit(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: PeerService_CreatePeer_FullMethodName,
+		FullMethod: PeerService_CreatePeerExplicit_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PeerServiceServer).CreatePeer(ctx, req.(*CreatePeerRequest))
+		return srv.(PeerServiceServer).CreatePeerExplicit(ctx, req.(*CreatePeerExplicitRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PeerService_CreatePeerAutoID_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreatePeerAutoIDRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PeerServiceServer).CreatePeerAutoID(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PeerService_CreatePeerAutoID_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PeerServiceServer).CreatePeerAutoID(ctx, req.(*CreatePeerAutoIDRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -249,8 +283,12 @@ var PeerService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*PeerServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "CreatePeer",
-			Handler:    _PeerService_CreatePeer_Handler,
+			MethodName: "CreatePeerExplicit",
+			Handler:    _PeerService_CreatePeerExplicit_Handler,
+		},
+		{
+			MethodName: "CreatePeerAutoID",
+			Handler:    _PeerService_CreatePeerAutoID_Handler,
 		},
 		{
 			MethodName: "GetPeer",

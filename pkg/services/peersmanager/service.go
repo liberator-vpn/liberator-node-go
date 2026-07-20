@@ -63,8 +63,22 @@ func (pm *PeersManager) Start(ctx context.Context) error {
 	return nil
 }
 
-func (pm *PeersManager) CreatePeer(ctx context.Context, peer *model.Peer) (uint64, error) {
+func (pm *PeersManager) CreatePeerAutoID(ctx context.Context, peer *model.Peer) (uint64, error) {
+	row, err := pm.db.CreatePeerAutoID(ctx, repos.CreatePeerAutoIDParams{
+		Type:           peer.Type,
+		VirtualIp:      int64(peer.VirtualIP),
+		AwgPrivateKey:  peer.AwgPrivateKey,
+		AwgPublicKey:   peer.AwgPublicKey,
+		ExpirationDate: peer.ExpirationDate,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("create peer: %w", err)
+	}
+	return uint64(row.ID), nil
+}
+func (pm *PeersManager) CreatePeerExplicit(ctx context.Context, peer *model.Peer) (uint64, error) {
 	row, err := pm.db.CreatePeerExplicit(ctx, repos.CreatePeerExplicitParams{
+		ID:             int64(peer.ID),
 		Type:           peer.Type,
 		VirtualIp:      int64(peer.VirtualIP),
 		AwgPrivateKey:  peer.AwgPrivateKey,
