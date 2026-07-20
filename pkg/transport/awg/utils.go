@@ -1,4 +1,4 @@
-package awgconfig
+package awg
 
 import (
 	"bytes"
@@ -7,7 +7,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"liberator-node-go/internal/utils/netutils"
+	"liberator-node-go/pkg/model"
 	"net"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -15,6 +18,7 @@ import (
 
 // ClientParams параметры для генерации
 type ClientParams struct {
+	EndpointName string
 	ServerAddr   string
 	ServerPort   int
 	ServerPubKey string
@@ -23,7 +27,8 @@ type ClientParams struct {
 	ClientPrivKey string
 	ClientPubKey  string
 	ClientIP      string // Формат "10.8.0.2/32"
-	DNSServer     string
+	DNSServer1    string
+	DNSServer2    string
 
 	// Параметры обфускации передаем строками, чтобы поддержать любой формат
 	H1, H2, H3, H4     string
@@ -83,6 +88,8 @@ type lastConfigInner struct {
 	Jmax                string   `json:"Jmax"`
 	S1                  string   `json:"S1"`
 	S2                  string   `json:"S2"`
+	S3                  string   `json:"S3"`
+	S4                  string   `json:"S4"`
 	AllowedIPs          []string `json:"allowed_ips"`
 	ClientId            string   `json:"clientId"`
 	ClientIP            string   `json:"client_ip"`
@@ -98,15 +105,14 @@ type lastConfigInner struct {
 }
 
 // GenerateURI собирает ссылку vpn:// в формате Amnezia v2
-func GenerateURI(p *ClientParams) (string, string, error) {
+func generateURI(p *ClientParams) (string, error) {
 	// 1. Генерируем обычный INI текст (как фоллбэк для клиента)
 	iniStr := buildINIString(p)
 
 	// 2. Вычисляем subnet_address (берем сеть из IP клиента)
 	_, ipNet, err := net.ParseCIDR(p.ClientIP)
-	subnet := "10.0.0.0"
-	if err == nil {
-		subnet = ipNet.IP.String()
+	if err != nil {
+		return "", err
 	}
 
 	// Генерируем случайный clientId (Base64 от UUID)
@@ -119,7 +125,8 @@ func GenerateURI(p *ClientParams) (string, string, error) {
 	// 3. Формируем внутренний объект last_config
 	lastCfg := lastConfigInner{
 		H1: p.H1, H2: p.H2, H3: p.H3, H4: p.H4,
-		Jc: p.Jc, Jmin: p.Jmin, Jmax: p.Jmax, S1: p.S1, S2: p.S2,
+		Jc: p.Jc, Jmin: p.Jmin, Jmax: p.Jmax,
+		S1: p.S1, S2: p.S2, S3: p.S3, S4: p.S4,
 		AllowedIPs:          []string{"0.0.0.0/0", "::/0"},
 		ClientId:            clientId,
 		ClientIP:            strings.Replace(p.ClientIP, "/32", "", 1),
@@ -127,7 +134,7 @@ func GenerateURI(p *ClientParams) (string, string, error) {
 		ClientPubKey:        clientPubB64,
 		Config:              iniStr,
 		HostName:            p.ServerAddr,
-		Mtu:                 "1350",
+		Mtu:                 "1372",
 		PersistentKeepAlive: "25",
 		Port:                fmt.Sprintf("%d", p.ServerPort),
 		PskKey:              p.ServerPSK,
@@ -137,7 +144,7 @@ func GenerateURI(p *ClientParams) (string, string, error) {
 	// Сериализуем last_config в JSON СТРОКУ (ключевой момент!)
 	lastCfgBytes, err := json.Marshal(lastCfg)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 
 	// 4. Формируем основной JSON объект
@@ -153,22 +160,22 @@ func GenerateURI(p *ClientParams) (string, string, error) {
 					LastConfig:      string(lastCfgBytes), // Вставляем строку
 					Port:            fmt.Sprintf("%d", p.ServerPort),
 					ProtocolVersion: "2",
-					SubnetAddress:   subnet,
+					SubnetAddress:   ipNet.IP.String(),
 					TransportProto:  "udp",
 				},
 			},
 		},
 		DefaultContainer: "amnezia-awg2",
-		Description:      "Liberator Node",
-		Dns1:             p.DNSServer,
-		Dns2:             "",
+		Description:      p.EndpointName,
+		Dns1:             p.DNSServer1,
+		Dns2:             p.DNSServer2,
 		HostName:         p.ServerAddr,
 	}
 
 	// Сериализуем весь корень в JSON
 	rootJsonBytes, err := json.Marshal(root)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 
 	// 5. Сжимаем Zlib
@@ -191,7 +198,7 @@ func GenerateURI(p *ClientParams) (string, string, error) {
 	finalBytes := append(header, compressedBytes...)
 	encodedStr := base64.RawURLEncoding.EncodeToString(finalBytes)
 
-	return "vpn://" + encodedStr, iniStr, nil
+	return "vpn://" + encodedStr, nil
 }
 
 // Вспомогательная функция генерации INI текста (для поля Config внутри last_config)
@@ -200,16 +207,16 @@ func buildINIString(p *ClientParams) string {
 
 	sb.WriteString("[Interface]\n")
 	sb.WriteString(fmt.Sprintf("Address = %s\n", p.ClientIP))
-	sb.WriteString(fmt.Sprintf("DNS = %s\n", p.DNSServer))
+	sb.WriteString(fmt.Sprintf("DNS = %s\n", p.DNSServer1))
 	sb.WriteString(fmt.Sprintf("PrivateKey = %s\n", p.ClientPrivKey))
 
-	if p.Jc != "" {
-		sb.WriteString(fmt.Sprintf("Jc = %s\n", p.Jc))
-		sb.WriteString(fmt.Sprintf("Jmin = %s\n", p.Jmin))
-		sb.WriteString(fmt.Sprintf("Jmax = %s\n", p.Jmax))
-		sb.WriteString(fmt.Sprintf("S1 = %s\n", p.S1))
-		sb.WriteString(fmt.Sprintf("S2 = %s\n", p.S2))
-	}
+	sb.WriteString(fmt.Sprintf("Jc = %s\n", p.Jc))
+	sb.WriteString(fmt.Sprintf("Jmin = %s\n", p.Jmin))
+	sb.WriteString(fmt.Sprintf("Jmax = %s\n", p.Jmax))
+	sb.WriteString(fmt.Sprintf("S1 = %s\n", p.S1))
+	sb.WriteString(fmt.Sprintf("S2 = %s\n", p.S2))
+	sb.WriteString(fmt.Sprintf("S3 = %s\n", p.S3))
+	sb.WriteString(fmt.Sprintf("S4 = %s\n", p.S4))
 
 	sb.WriteString(fmt.Sprintf("H1 = %s\n", p.H1))
 	sb.WriteString(fmt.Sprintf("H2 = %s\n", p.H2))
@@ -247,4 +254,34 @@ func buildINIString(p *ClientParams) string {
 func hexToBase64(h string) string {
 	b, _ := hex.DecodeString(h)
 	return base64.StdEncoding.EncodeToString(b)
+}
+func (awg *AWGTransport) GenerateClientKey(peer *model.Peer, addr string, name string) (string, error) {
+	connectionStr, err := generateURI(&ClientParams{
+		EndpointName: name,
+		ServerAddr:   addr,
+
+		ServerPort:   awg.cfg.ListenPort,
+		ServerPubKey: awg.publicKey,
+
+		ClientPrivKey: peer.AwgPrivateKey,
+
+		ClientIP:   netutils.Uint32ToIPString(peer.VirtualIP) + "/32",
+		DNSServer1: "8.8.8.8",
+		DNSServer2: "1.1.1.1",
+
+		H1: awg.cfg.H1,
+		H2: awg.cfg.H2,
+		H3: awg.cfg.H3,
+		H4: awg.cfg.H4,
+
+		Jc:   strconv.Itoa(awg.cfg.Jc),
+		Jmin: strconv.Itoa(awg.cfg.JMin),
+		Jmax: strconv.Itoa(awg.cfg.JMax),
+
+		S1: strconv.Itoa(awg.cfg.S1),
+		S2: strconv.Itoa(awg.cfg.S2),
+		S3: strconv.Itoa(awg.cfg.S3),
+		S4: strconv.Itoa(awg.cfg.S4),
+	})
+	return connectionStr, err
 }

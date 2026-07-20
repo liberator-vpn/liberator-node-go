@@ -47,6 +47,13 @@ type DatabaseConfig struct {
 	File string `yaml:"file"`
 }
 
+type GrpcConfig struct {
+	ListenAddr string `yaml:"listen_addr"`
+}
+type ApiConfig struct {
+	Grpc GrpcConfig `yaml:"grpc"`
+}
+
 // AppConfig общая структура конфигурации
 type AppConfig struct {
 	Auth      AuthConfig     `yaml:"auth"`
@@ -55,6 +62,7 @@ type AppConfig struct {
 	Mesh      MeshConfig     `yaml:"mesh"`
 	Database  DatabaseConfig `yaml:"database"`
 	Metrics   MetricsConfig  `yaml:"metrics"`
+	Api       ApiConfig      `yaml:"api"`
 }
 
 // LoadAppConfig загружает конфигурацию из YAML-файла

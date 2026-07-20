@@ -9,7 +9,7 @@ import (
 // TransportConfig настройки входящих AmneziaWG-соединений
 type TransportConfig struct {
 	MTU              int           `yaml:"mtu"`
-	ListenAddr       string        `yaml:"listen_addr"`
+	ListenPort       int           `yaml:"listen_port"`
 	PrivateKey       string        `yaml:"private_key"`
 	WatchdogInterval time.Duration `yaml:"watchdog_interval"`
 
@@ -24,6 +24,8 @@ type TransportConfig struct {
 	JMax int `yaml:"jmax"`
 	S1   int `yaml:"s1"`
 	S2   int `yaml:"s2"`
+	S3   int `yaml:"s3"`
+	S4   int `yaml:"s4"`
 }
 
 func ParseConfig(config any) (*TransportConfig, error) {

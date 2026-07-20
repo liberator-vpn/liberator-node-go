@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"liberator-node-go/internal/appconfig"
 	"log"
+	"net"
 	"sync"
 
 	"liberator-node-go/internal/utils/safemap"
@@ -20,6 +21,9 @@ import (
 	"liberator-node-go/pkg/transport/awg"
 
 	_ "github.com/mattn/go-sqlite3"
+	"google.golang.org/grpc"
+
+	grpcctrl "liberator-node-go/pkg/api/controllers/grpc"
 )
 
 type App struct {
@@ -39,6 +43,9 @@ type App struct {
 	node       *mesh.MeshNode
 	tunIface   *iface.TUNIface
 	transports safemap.Safemap[string, transport.Transport]
+
+	grpcLis    net.Listener
+	grpcServer *grpc.Server
 }
 
 func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
@@ -48,8 +55,14 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		routingTable: routingtable.New(),
 		firewall:     firewall.New(),
 		transports:   safemap.New[string, transport.Transport](),
+		grpcServer:   grpc.NewServer(),
 	}
 	var err error
+
+	app.grpcLis, err = net.Listen("tcp", cfg.Api.Grpc.ListenAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to launch grpc server: %w", err)
+	}
 
 	if app.db, err = sql.Open("sqlite3", app.cfg.Database.File); err != nil {
 		return nil, fmt.Errorf("failed to open database: %v", err)
@@ -106,8 +119,6 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to create ingress %s: %w", name, err)
 			}
-
-			app.testCreateUser(icfg, trp)
 		default:
 			return nil, fmt.Errorf("unknown ingress type: %s", typ)
 		}
@@ -117,54 +128,11 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	return app, nil
 }
 
-func (app *App) testCreateUser(icfg *awg.TransportConfig, trp transport.Transport) {
-
-	serverPubKey, err := getServerPubKey(icfg.PrivateKey)
-	if err != nil {
-		log.Fatalf("Failed to calc server pub key: %v", err)
-	}
-	fmt.Printf("Сервер Public Key (HEX): %s\n", serverPubKey)
-
-	//clientPrivKey := "58627383123294ebb76f5831ddcf3d40ed31104a9ef1c1accaf007efb4318b73"
-	//clientPubKey := "afa89c215becc53d4bc90562b7e1c8667298ec39ff3cff47857052c55a45b402"
-	// Генерируем ключи клиента СРАЗУ В HEX
-	//clientPrivKey, clientPubKey, err := generateKeyPair()
-	//if err != nil {
-	//	log.Fatalf("Failed to generate client keys: %v", err)
-	//}
-	/*
-		err = trp.PreparePeer(netutils.IPStringToUint32(clientIp), clientPubKey, 0)
-		if err != nil {
-			log.Fatalf("Failed to prepare peer: %v", err)
-		}
-
-		clientTestConfig, _, err := awgconfig.GenerateURI(&awgconfig.ClientParams{
-			ServerAddr:    "192.168.68.121",
-			ServerPort:    2200,
-			ServerPubKey:  serverPubKey,
-			ClientPrivKey: clientPrivKey,
-			ClientIP:      clientIp + "/32",
-			DNSServer:     "10.0.0.1",
-
-			// Передаем ОБЯЗАТЕЛЬНО строками!
-			H1:   icfg.H1,
-			H2:   icfg.H2,
-			H3:   icfg.H3,
-			H4:   icfg.H4,
-			Jc:   strconv.Itoa(icfg.Jc),
-			Jmin: strconv.Itoa(icfg.JMin),
-			Jmax: strconv.Itoa(icfg.JMax),
-			S1:   strconv.Itoa(icfg.S1),
-			S2:   strconv.Itoa(icfg.S2),
-		})
-		if err != nil {
-			log.Fatalf("Failed to gen config: %v", err)
-		}
-				fmt.Println(clientTestConfig)
-	*/
-}
-
 func (app *App) Run() error {
+	// Registering controllers
+	grpcctrl.RegisterFirewallService(app.grpcServer, app.firewallManager)
+	grpcctrl.RegisterPeerService(app.grpcServer, app.peersManager)
+
 	if err := app.firewallManager.Start(app.ctx); err != nil {
 		return fmt.Errorf("failed to start firewall manager: %v", err)
 	}
@@ -177,9 +145,14 @@ func (app *App) Run() error {
 	wg.Go(app.router.Run)
 	wg.Go(app.node.Run)
 	wg.Go(app.tunIface.Run)
-
 	app.transports.Foreach(func(_ string, t transport.Transport) {
 		wg.Go(t.Run)
+	})
+
+	wg.Go(func() {
+		if err := app.grpcServer.Serve(app.grpcLis); err != nil {
+			log.Fatalf("failed to start grpc server: %w", err)
+		}
 	})
 
 	wg.Wait()

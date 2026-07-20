@@ -51,6 +51,13 @@ func (pm *PeersManager) Start(ctx context.Context) error {
 			log.Printf("failed to prepare peer: %v", err)
 			continue
 		}
+
+		key, err := transport.GenerateClientKey(peer, "192.168.68.121", "Sraka")
+		if err != nil {
+			log.Printf("failed to gen client key")
+			continue
+		}
+		fmt.Println(key)
 	}
 	return nil
 }
@@ -142,4 +149,18 @@ func (pm *PeersManager) IncrementPeerCounters(ctx context.Context, id uint64, fr
 		return fmt.Errorf("increment peer counters: %w", err)
 	}
 	return nil
+}
+
+func (pm *PeersManager) GenerateClientKey(ctx context.Context, peerId uint64, addr string, name string) (string, error) {
+	peer, err := pm.GetPeerByID(ctx, peerId)
+	if err != nil {
+		return "", err
+	}
+
+	transport, ex := pm.transports.Get(peer.Type)
+	if !ex {
+		return "", fmt.Errorf("corresponding transport %s not found", peer.Type)
+	}
+
+	return transport.GenerateClientKey(peer, addr, name)
 }

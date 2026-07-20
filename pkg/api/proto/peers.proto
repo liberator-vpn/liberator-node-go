@@ -1,0 +1,64 @@
+syntax = "proto3";
+import "google/protobuf/empty.proto";
+
+package grpc;
+option go_package = "liberator-node-go/pkg/api/grpc;grpc";
+
+import "google/protobuf/timestamp.proto";
+
+
+service PeerService {
+  rpc CreatePeer(CreatePeerRequest) returns (CreatePeerResponse);
+  rpc GetPeer(GetPeerRequest) returns (Peer);
+  rpc ListPeers(google.protobuf.Empty) returns (ListPeersResponse);
+  rpc DeletePeer(DeletePeerRequest) returns (google.protobuf.Empty);
+
+  rpc GenerateClientKey(GenerateClientKeyRequest) returns (GenerateClientKeyResponse);
+}
+
+
+message CreatePeerRequest {
+  string type = 1;
+  uint32 virtual_ip = 2;
+  string awg_private_key = 3;
+  string awg_public_key = 4;
+  google.protobuf.Timestamp expiration_date = 5;
+}
+
+message CreatePeerResponse {
+  uint64 id = 1;
+}
+
+
+message GetPeerRequest {
+  uint64 id = 1;
+}
+
+message Peer {
+  uint64 id = 1;
+  string type = 2;
+  uint32 virtual_ip = 3;
+  google.protobuf.Timestamp last_seen = 4;
+  google.protobuf.Timestamp expiration_date = 5;
+  uint64 from_peer_total = 6;
+  uint64 to_peer_total = 7;
+  string awg_private_key = 8;
+  string awg_public_key = 9;
+}
+
+message ListPeersResponse {
+  repeated Peer peers = 1;
+}
+
+message DeletePeerRequest {
+  uint64 id = 1;
+}
+
+message GenerateClientKeyRequest {
+  uint64 peer_id = 1;
+  string addr = 2;
+  string name = 3;
+}
+message GenerateClientKeyResponse {
+  string key = 1;
+}

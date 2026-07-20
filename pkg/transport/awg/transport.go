@@ -2,9 +2,9 @@ package awg
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log"
-	"net"
 	"time"
 
 	"liberator-node-go/internal/utils/netutils"
@@ -14,13 +14,33 @@ import (
 
 	"github.com/amnezia-vpn/amneziawg-go/conn"
 	amneziawgdevice "github.com/amnezia-vpn/amneziawg-go/device"
+	"golang.org/x/crypto/curve25519"
 )
+
+// getServerPubKey из HEX приватного ключа делает HEX публичный
+func getServerPubKey(privKeyHex string) (string, error) {
+	// Декодируем HEX в 32 байта
+	privBytes, err := hex.DecodeString(privKeyHex)
+	if err != nil {
+		return "", fmt.Errorf("invalid hex private key: %w", err)
+	}
+	if len(privBytes) != 32 {
+		return "", fmt.Errorf("private key must be 32 bytes")
+	}
+	pubBytes, err := curve25519.X25519(privBytes, curve25519.Basepoint)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(pubBytes), nil
+}
 
 var _ transport.Transport = (*AWGTransport)(nil)
 
 type AWGTransport struct {
 	ctx context.Context
 	cfg *TransportConfig
+
+	publicKey string
 
 	router transport.Router
 	nodeID string
@@ -47,6 +67,12 @@ func New(
 		peersByIP: safemap.New[uint32, *AWGPeer](),
 	}
 
+	pubKey, err := getServerPubKey(cfg.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pub key: %v", err)
+	}
+	ig.publicKey = pubKey
+
 	ig.channelTun = NewChannelTun(ctx, ig.in, ig.router, cfg.MTU)
 
 	udpBind := conn.NewDefaultBind()
@@ -54,26 +80,23 @@ func New(
 	logger := amneziawgdevice.NewLogger(amneziawgdevice.LogLevelVerbose, fmt.Sprintf("(%s-awg) ", nodeID))
 	ig.awgDevice = amneziawgdevice.NewDevice(ig.channelTun, udpBind, logger)
 
-	_, portStr, err := net.SplitHostPort(cfg.ListenAddr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid listen address format '%s': %w", cfg.ListenAddr, err)
-	}
-
-	if err := ig.awgDevice.IpcSet(fmt.Sprintf("private_key=%s\nlisten_port=%s\n",
+	if err := ig.awgDevice.IpcSet(fmt.Sprintf("private_key=%s\nlisten_port=%d\n",
 		cfg.PrivateKey,
-		portStr,
+		cfg.ListenPort,
 	)); err != nil {
 		return nil, fmt.Errorf("failed to set base AWG config: %w", err)
 	}
 
 	if err := ig.awgDevice.IpcSet(fmt.Sprintf(
-		"h1=%s\nh2=%s\nh3=%s\nh4=%s\ns1=%d\ns2=%d\n",
+		"h1=%s\nh2=%s\nh3=%s\nh4=%s\ns1=%d\ns2=%d\ns3=%d\ns4=%d\n",
 		cfg.H1,
 		cfg.H2,
 		cfg.H3,
 		cfg.H4,
 		cfg.S1,
 		cfg.S2,
+		cfg.S3,
+		cfg.S4,
 	)); err != nil {
 		return nil, fmt.Errorf("failed to set AWG H[1-4] and S[1-2] obfuscation config: %w", err)
 	}
@@ -99,7 +122,7 @@ func New(
 		return nil, fmt.Errorf("failed to bring up AWG device: %w", err)
 	}
 
-	log.Printf("[%s] AmneziaWG Ingress started on port %s", nodeID, cfg.ListenAddr)
+	log.Printf("[%s] AmneziaWG Ingress started on port %d", nodeID, cfg.ListenPort)
 	return ig, nil
 }
 

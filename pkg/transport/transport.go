@@ -11,6 +11,8 @@ type Transport interface {
 
 	KickUser(ip uint32) bool
 	PreparePeer(peerInfo *model.Peer) error
+
+	GenerateClientKey(peer *model.Peer, addr string, name string) (string, error)
 }
 
 type Router interface {
