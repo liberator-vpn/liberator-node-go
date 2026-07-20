@@ -20,13 +20,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PeerService_CreatePeer_FullMethodName            = "/grpc.PeerService/CreatePeer"
-	PeerService_GetPeer_FullMethodName               = "/grpc.PeerService/GetPeer"
-	PeerService_ListPeers_FullMethodName             = "/grpc.PeerService/ListPeers"
-	PeerService_DeletePeer_FullMethodName            = "/grpc.PeerService/DeletePeer"
-	PeerService_UpdatePeerLastSeen_FullMethodName    = "/grpc.PeerService/UpdatePeerLastSeen"
-	PeerService_IncrementPeerCounters_FullMethodName = "/grpc.PeerService/IncrementPeerCounters"
-	PeerService_GenerateClientKey_FullMethodName     = "/grpc.PeerService/GenerateClientKey"
+	PeerService_CreatePeer_FullMethodName        = "/grpc.PeerService/CreatePeer"
+	PeerService_GetPeer_FullMethodName           = "/grpc.PeerService/GetPeer"
+	PeerService_ListPeers_FullMethodName         = "/grpc.PeerService/ListPeers"
+	PeerService_DeletePeer_FullMethodName        = "/grpc.PeerService/DeletePeer"
+	PeerService_GenerateClientKey_FullMethodName = "/grpc.PeerService/GenerateClientKey"
 )
 
 // PeerServiceClient is the client API for PeerService service.
@@ -37,8 +35,6 @@ type PeerServiceClient interface {
 	GetPeer(ctx context.Context, in *GetPeerRequest, opts ...grpc.CallOption) (*Peer, error)
 	ListPeers(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListPeersResponse, error)
 	DeletePeer(ctx context.Context, in *DeletePeerRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	UpdatePeerLastSeen(ctx context.Context, in *UpdatePeerLastSeenRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	IncrementPeerCounters(ctx context.Context, in *IncrementPeerCountersRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	GenerateClientKey(ctx context.Context, in *GenerateClientKeyRequest, opts ...grpc.CallOption) (*GenerateClientKeyResponse, error)
 }
 
@@ -90,26 +86,6 @@ func (c *peerServiceClient) DeletePeer(ctx context.Context, in *DeletePeerReques
 	return out, nil
 }
 
-func (c *peerServiceClient) UpdatePeerLastSeen(ctx context.Context, in *UpdatePeerLastSeenRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, PeerService_UpdatePeerLastSeen_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *peerServiceClient) IncrementPeerCounters(ctx context.Context, in *IncrementPeerCountersRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, PeerService_IncrementPeerCounters_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *peerServiceClient) GenerateClientKey(ctx context.Context, in *GenerateClientKeyRequest, opts ...grpc.CallOption) (*GenerateClientKeyResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GenerateClientKeyResponse)
@@ -128,8 +104,6 @@ type PeerServiceServer interface {
 	GetPeer(context.Context, *GetPeerRequest) (*Peer, error)
 	ListPeers(context.Context, *emptypb.Empty) (*ListPeersResponse, error)
 	DeletePeer(context.Context, *DeletePeerRequest) (*emptypb.Empty, error)
-	UpdatePeerLastSeen(context.Context, *UpdatePeerLastSeenRequest) (*emptypb.Empty, error)
-	IncrementPeerCounters(context.Context, *IncrementPeerCountersRequest) (*emptypb.Empty, error)
 	GenerateClientKey(context.Context, *GenerateClientKeyRequest) (*GenerateClientKeyResponse, error)
 	mustEmbedUnimplementedPeerServiceServer()
 }
@@ -152,12 +126,6 @@ func (UnimplementedPeerServiceServer) ListPeers(context.Context, *emptypb.Empty)
 }
 func (UnimplementedPeerServiceServer) DeletePeer(context.Context, *DeletePeerRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeletePeer not implemented")
-}
-func (UnimplementedPeerServiceServer) UpdatePeerLastSeen(context.Context, *UpdatePeerLastSeenRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method UpdatePeerLastSeen not implemented")
-}
-func (UnimplementedPeerServiceServer) IncrementPeerCounters(context.Context, *IncrementPeerCountersRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method IncrementPeerCounters not implemented")
 }
 func (UnimplementedPeerServiceServer) GenerateClientKey(context.Context, *GenerateClientKeyRequest) (*GenerateClientKeyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GenerateClientKey not implemented")
@@ -255,42 +223,6 @@ func _PeerService_DeletePeer_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
-func _PeerService_UpdatePeerLastSeen_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(UpdatePeerLastSeenRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(PeerServiceServer).UpdatePeerLastSeen(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: PeerService_UpdatePeerLastSeen_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PeerServiceServer).UpdatePeerLastSeen(ctx, req.(*UpdatePeerLastSeenRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _PeerService_IncrementPeerCounters_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(IncrementPeerCountersRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(PeerServiceServer).IncrementPeerCounters(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: PeerService_IncrementPeerCounters_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PeerServiceServer).IncrementPeerCounters(ctx, req.(*IncrementPeerCountersRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _PeerService_GenerateClientKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GenerateClientKeyRequest)
 	if err := dec(in); err != nil {
@@ -331,14 +263,6 @@ var PeerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeletePeer",
 			Handler:    _PeerService_DeletePeer_Handler,
-		},
-		{
-			MethodName: "UpdatePeerLastSeen",
-			Handler:    _PeerService_UpdatePeerLastSeen_Handler,
-		},
-		{
-			MethodName: "IncrementPeerCounters",
-			Handler:    _PeerService_IncrementPeerCounters_Handler,
 		},
 		{
 			MethodName: "GenerateClientKey",

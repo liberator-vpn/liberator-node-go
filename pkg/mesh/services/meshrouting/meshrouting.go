@@ -2,12 +2,13 @@ package meshrouting
 
 import (
 	"context"
-	"liberator-node-go/internal/utils/peerstore"
-	"liberator-node-go/pkg/mesh/services/meshrouting/proto"
-	"liberator-node-go/pkg/routingtable"
 	"log"
 	"net"
 	"time"
+
+	"github.com/TexHik620953/liberator-node-go/internal/utils/peerstore"
+	"github.com/TexHik620953/liberator-node-go/pkg/mesh/services/meshrouting/proto"
+	"github.com/TexHik620953/liberator-node-go/pkg/routingtable"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"

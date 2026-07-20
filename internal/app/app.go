@@ -4,26 +4,27 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"liberator-node-go/internal/appconfig"
 	"log"
 	"net"
 	"sync"
 
-	"liberator-node-go/internal/utils/safemap"
-	"liberator-node-go/pkg/firewall"
-	"liberator-node-go/pkg/iface"
-	"liberator-node-go/pkg/mesh"
-	"liberator-node-go/pkg/router"
-	"liberator-node-go/pkg/routingtable"
-	"liberator-node-go/pkg/services/firewallmanager"
-	"liberator-node-go/pkg/services/peersmanager"
-	"liberator-node-go/pkg/transport"
-	"liberator-node-go/pkg/transport/awg"
+	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
+
+	"github.com/TexHik620953/liberator-node-go/internal/utils/safemap"
+	"github.com/TexHik620953/liberator-node-go/pkg/firewall"
+	"github.com/TexHik620953/liberator-node-go/pkg/iface"
+	"github.com/TexHik620953/liberator-node-go/pkg/mesh"
+	"github.com/TexHik620953/liberator-node-go/pkg/router"
+	"github.com/TexHik620953/liberator-node-go/pkg/routingtable"
+	"github.com/TexHik620953/liberator-node-go/pkg/services/firewallmanager"
+	"github.com/TexHik620953/liberator-node-go/pkg/services/peersmanager"
+	"github.com/TexHik620953/liberator-node-go/pkg/transport"
+	"github.com/TexHik620953/liberator-node-go/pkg/transport/awg"
 
 	_ "github.com/mattn/go-sqlite3"
 	"google.golang.org/grpc"
 
-	grpcctrl "liberator-node-go/pkg/api/controllers/grpc"
+	grpcctrl "github.com/TexHik620953/liberator-node-go/pkg/api/controllers/grpc"
 )
 
 type App struct {
@@ -151,7 +152,7 @@ func (app *App) Run() error {
 
 	wg.Go(func() {
 		if err := app.grpcServer.Serve(app.grpcLis); err != nil {
-			log.Fatalf("failed to start grpc server: %w", err)
+			log.Fatalf("failed to start grpc server: %v", err)
 		}
 	})
 

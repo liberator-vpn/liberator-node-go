@@ -4,8 +4,9 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"fmt"
-	"liberator-node-go/internal/utils/cert"
 	"path"
+
+	"github.com/TexHik620953/liberator-node-go/internal/utils/cert"
 )
 
 func main() {

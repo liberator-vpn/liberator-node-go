@@ -7,11 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"liberator-node-go/internal/utils/netutils"
-	"liberator-node-go/pkg/model"
 	"net"
 	"strconv"
 	"strings"
+
+	"github.com/TexHik620953/liberator-node-go/internal/utils/netutils"
+	"github.com/TexHik620953/liberator-node-go/pkg/model"
 
 	"github.com/google/uuid"
 )

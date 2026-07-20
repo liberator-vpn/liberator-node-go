@@ -3,8 +3,9 @@ package firewallmanager
 import (
 	"context"
 	"fmt"
-	"liberator-node-go/internal/infra/repos"
-	"liberator-node-go/pkg/firewall"
+
+	"github.com/TexHik620953/liberator-node-go/internal/infra/repos"
+	"github.com/TexHik620953/liberator-node-go/pkg/firewall"
 )
 
 type Firewallmanager struct {

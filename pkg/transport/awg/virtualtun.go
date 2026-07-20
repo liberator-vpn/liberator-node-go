@@ -3,11 +3,12 @@ package awg
 import (
 	"context"
 	"fmt"
-	"liberator-node-go/internal/utils/safemap"
-	"liberator-node-go/pkg/transport"
 	"os"
 	"runtime"
 	"time"
+
+	"github.com/TexHik620953/liberator-node-go/internal/utils/safemap"
+	"github.com/TexHik620953/liberator-node-go/pkg/transport"
 
 	"github.com/amnezia-vpn/amneziawg-go/tun"
 )

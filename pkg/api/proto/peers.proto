@@ -2,7 +2,7 @@ syntax = "proto3";
 import "google/protobuf/empty.proto";
 
 package grpc;
-option go_package = "liberator-node-go/pkg/api/grpc;grpc";
+option go_package = "github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpc";
 
 import "google/protobuf/timestamp.proto";
 

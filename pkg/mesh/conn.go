@@ -5,8 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"liberator-node-go/internal/utils/quictransport"
 	"net"
+
+	"github.com/TexHik620953/liberator-node-go/internal/utils/quictransport"
 
 	"github.com/quic-go/quic-go"
 	"google.golang.org/grpc"

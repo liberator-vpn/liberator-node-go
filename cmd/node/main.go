@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
-	"liberator-node-go/internal/app"
-	"liberator-node-go/internal/appconfig"
 	"log"
 	"net/http"
 	"runtime"
+
+	"github.com/TexHik620953/liberator-node-go/internal/app"
+	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
 
 	_ "net/http/pprof"
 	"os"

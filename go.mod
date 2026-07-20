@@ -1,4 +1,4 @@
-module liberator-node-go
+module github.com/TexHik620953/liberator-node-go
 
 go 1.26.2
 

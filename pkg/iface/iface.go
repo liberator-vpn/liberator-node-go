@@ -3,8 +3,6 @@ package iface
 import (
 	"context"
 	"fmt"
-	"liberator-node-go/internal/appconfig"
-	"liberator-node-go/internal/utils/dgmessage"
 	"log"
 	"math"
 	"net"
@@ -12,6 +10,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
+	"github.com/TexHik620953/liberator-node-go/internal/utils/dgmessage"
 
 	"github.com/coreos/go-iptables/iptables"
 	"github.com/vishvananda/netlink"

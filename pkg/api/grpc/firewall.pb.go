@@ -317,7 +317,7 @@ const file_firewall_proto_rawDesc = "" +
 	"\aAddRule\x12\x14.grpc.AddRuleRequest\x1a\x15.grpc.AddRuleResponse\x12=\n" +
 	"\n" +
 	"RemoveRule\x12\x17.grpc.RemoveRuleRequest\x1a\x16.google.protobuf.Empty\x12M\n" +
-	"\x12RemoveAllPeerRules\x12\x1f.grpc.RemoveAllPeerRulesRequest\x1a\x16.google.protobuf.EmptyB%Z#liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
+	"\x12RemoveAllPeerRules\x12\x1f.grpc.RemoveAllPeerRulesRequest\x1a\x16.google.protobuf.EmptyB=Z;github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
 
 var (
 	file_firewall_proto_rawDescOnce sync.Once

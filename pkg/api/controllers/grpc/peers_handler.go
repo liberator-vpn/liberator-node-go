@@ -9,9 +9,9 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pb "liberator-node-go/pkg/api/grpc" // Наш общий сгенерированный grpc пакет
-	"liberator-node-go/pkg/model"
-	"liberator-node-go/pkg/services/peersmanager"
+	pb "github.com/TexHik620953/liberator-node-go/pkg/api/grpc" // Наш общий сгенерированный grpc пакет
+	"github.com/TexHik620953/liberator-node-go/pkg/model"
+	"github.com/TexHik620953/liberator-node-go/pkg/services/peersmanager"
 )
 
 type PeersHandler struct {

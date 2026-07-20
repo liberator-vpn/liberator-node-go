@@ -8,16 +8,18 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"liberator-node-go/internal/appconfig"
-	"liberator-node-go/internal/utils/cert"
-	"liberator-node-go/internal/utils/peerstore"
-	"liberator-node-go/internal/utils/quictransport"
 
-	"liberator-node-go/pkg/mesh/services/discovery"
-	"liberator-node-go/pkg/routingtable"
+	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
+	"github.com/TexHik620953/liberator-node-go/internal/utils/cert"
+	"github.com/TexHik620953/liberator-node-go/internal/utils/peerstore"
+	"github.com/TexHik620953/liberator-node-go/internal/utils/quictransport"
+
 	"log"
 	"net"
 	"time"
+
+	"github.com/TexHik620953/liberator-node-go/pkg/mesh/services/discovery"
+	"github.com/TexHik620953/liberator-node-go/pkg/routingtable"
 
 	"github.com/quic-go/quic-go"
 	"google.golang.org/grpc"

@@ -2,9 +2,10 @@ package firewall
 
 import (
 	"fmt"
-	"liberator-node-go/internal/utils/dgmessage"
 	"sync"
 	"time"
+
+	"github.com/TexHik620953/liberator-node-go/internal/utils/dgmessage"
 )
 
 // Protocol - tcp/udp/both

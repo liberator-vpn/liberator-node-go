@@ -3,12 +3,13 @@ package peersmanager
 import (
 	"context"
 	"fmt"
-	"liberator-node-go/internal/infra/repos"
-	"liberator-node-go/internal/utils/safemap"
-	"liberator-node-go/pkg/model"
-	"liberator-node-go/pkg/services/firewallmanager"
-	"liberator-node-go/pkg/transport"
 	"log"
+
+	"github.com/TexHik620953/liberator-node-go/internal/infra/repos"
+	"github.com/TexHik620953/liberator-node-go/internal/utils/safemap"
+	"github.com/TexHik620953/liberator-node-go/pkg/model"
+	"github.com/TexHik620953/liberator-node-go/pkg/services/firewallmanager"
+	"github.com/TexHik620953/liberator-node-go/pkg/transport"
 
 	"time"
 )

@@ -1,7 +1,7 @@
 package router
 
 import (
-	"liberator-node-go/internal/utils/dgmessage"
+	"github.com/TexHik620953/liberator-node-go/internal/utils/dgmessage"
 )
 
 type fromType = int

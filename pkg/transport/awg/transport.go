@@ -7,10 +7,10 @@ import (
 	"log"
 	"time"
 
-	"liberator-node-go/internal/utils/netutils"
-	"liberator-node-go/internal/utils/safemap"
-	"liberator-node-go/pkg/model"
-	"liberator-node-go/pkg/transport"
+	"github.com/TexHik620953/liberator-node-go/internal/utils/netutils"
+	"github.com/TexHik620953/liberator-node-go/internal/utils/safemap"
+	"github.com/TexHik620953/liberator-node-go/pkg/model"
+	"github.com/TexHik620953/liberator-node-go/pkg/transport"
 
 	"github.com/amnezia-vpn/amneziawg-go/conn"
 	amneziawgdevice "github.com/amnezia-vpn/amneziawg-go/device"

@@ -3,8 +3,8 @@ package discovery
 import (
 	"context"
 
-	"liberator-node-go/internal/utils/peerstore"
-	"liberator-node-go/pkg/mesh/services/discovery/proto"
+	"github.com/TexHik620953/liberator-node-go/internal/utils/peerstore"
+	"github.com/TexHik620953/liberator-node-go/pkg/mesh/services/discovery/proto"
 
 	"log"
 	"time"

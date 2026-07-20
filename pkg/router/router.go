@@ -3,16 +3,17 @@ package router
 import (
 	"context"
 	"fmt"
-	"liberator-node-go/internal/appconfig"
-	"liberator-node-go/internal/utils/dgmessage"
-	"liberator-node-go/internal/utils/netutils"
-	"liberator-node-go/pkg/firewall"
-	"liberator-node-go/pkg/routingtable"
 	"log"
 	"math"
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
+	"github.com/TexHik620953/liberator-node-go/internal/utils/dgmessage"
+	"github.com/TexHik620953/liberator-node-go/internal/utils/netutils"
+	"github.com/TexHik620953/liberator-node-go/pkg/firewall"
+	"github.com/TexHik620953/liberator-node-go/pkg/routingtable"
 )
 
 type Router struct {
