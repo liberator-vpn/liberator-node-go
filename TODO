@@ -86,4 +86,4 @@ created by sync.(*WaitGroup).Go in goroutine 65
         /root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.linux-amd64/src/sync/waitgroup.go:238 +0x73
 
 
-app does not stop on crtl+c
+fix subnet_address in client key generation

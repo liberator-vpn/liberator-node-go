@@ -1,27 +1,29 @@
-FROM golang AS builder
+FROM golang:1.26.2-alpine AS builder
 
-ENV CGO_ENABLED 0
-ENV GOOS linux
-
-RUN apt update
-RUN apt install tzdata
-RUN apt install git
-
-WORKDIR /build
-
-ADD go.mod .
-ADD go.sum .
-RUN go mod download
-COPY . .
-
-
-RUN go build -ldflags="-s -w" -o /app/exec ./main.go
-
-FROM alpine
-
+RUN apk add --no-cache gcc musl-dev
 
 WORKDIR /app
 
-COPY --from=builder /app/exec /app/exec
+COPY go.mod go.sum ./
+RUN go mod download
 
-CMD ["./exec"]
+# Копируем весь код
+COPY . .
+
+# Собираем, указывая путь к пакету с main (замените на ваш)
+RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o vpn-router ./cmd/node/main.go
+
+FROM alpine:3.22
+
+
+
+RUN apk add --no-cache iptables
+
+COPY --from=builder /app/vpn-router /usr/local/bin/
+COPY entrypoint.sh /entrypoint.sh
+
+RUN chmod +x /entrypoint.sh /usr/local/bin/vpn-router
+
+WORKDIR /app
+
+ENTRYPOINT ["/entrypoint.sh"]

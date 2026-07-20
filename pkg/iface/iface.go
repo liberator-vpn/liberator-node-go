@@ -6,8 +6,6 @@ import (
 	"log"
 	"math"
 	"net"
-	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -99,25 +97,27 @@ func NewTUN(
 		return nil, fmt.Errorf("failed to up iface: %w", err)
 	}
 
-	// 4. Включаем IP-форвардинг
-	if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0644); err != nil {
-		eg.Close()
-		return nil, fmt.Errorf("failed to enable ipv4 forward: %w", err)
-	}
+	/*
+		// 4. Включаем IP-форвардинг
+		if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0644); err != nil {
+			eg.Close()
+			return nil, fmt.Errorf("failed to enable ipv4 forward: %w", err)
+		}
 
-	// 4.1. ДОБАВЛЕНО: Глобально включаем BBR для всех TCP соединений сервера
-	// Для работы BBR ядро Linux также требует дисциплину очередей fq (она у вас уже активна)
-	if err := os.WriteFile("/proc/sys/net/ipv4/tcp_congestion_control", []byte("bbr"), 0644); err != nil {
-		// Если ядро старое и не поддерживает BBR, логируем предупреждение, но не падаем
-		log.Printf("[Warning] Failed to set TCP congestion control to BBR: %v. Falling back to system default.", err)
-	}
+		// 4.1. ДОБАВЛЕНО: Глобально включаем BBR для всех TCP соединений сервера
+		// Для работы BBR ядро Linux также требует дисциплину очередей fq (она у вас уже активна)
+		if err := os.WriteFile("/proc/sys/net/ipv4/tcp_congestion_control", []byte("bbr"), 0644); err != nil {
+			// Если ядро старое и не поддерживает BBR, логируем предупреждение, но не падаем
+			log.Printf("[Warning] Failed to set TCP congestion control to BBR: %v. Falling back to system default.", err)
+		}
 
-	// 5. ДОБАВЛЕНО: Отключаем Reverse Path Filtering для интерфейса liberator
-	rpFilterPath := filepath.Join("/proc/sys/net/ipv4/conf", cfg.IfaceInName, "rp_filter")
-	if err := os.WriteFile(rpFilterPath, []byte("0"), 0644); err != nil {
-		// Некоторые ядра требуют отключения и на глобальном уровне
-		_ = os.WriteFile("/proc/sys/net/ipv4/conf/all/rp_filter", []byte("0"), 0644)
-	}
+		// 5. ДОБАВЛЕНО: Отключаем Reverse Path Filtering для интерфейса liberator
+		rpFilterPath := filepath.Join("/proc/sys/net/ipv4/conf", cfg.IfaceInName, "rp_filter")
+		if err := os.WriteFile(rpFilterPath, []byte("0"), 0644); err != nil {
+			// Некоторые ядра требуют отключения и на глобальном уровне
+			_ = os.WriteFile("/proc/sys/net/ipv4/conf/all/rp_filter", []byte("0"), 0644)
+		}
+	*/
 
 	// 5. Настраиваем NAT через go-iptables
 	eg.ipt, err = iptables.New()

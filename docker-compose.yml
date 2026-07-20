@@ -1,0 +1,17 @@
+
+services:
+  liberator:
+    build: .
+    container_name: liberator
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    volumes:
+      - "/dev/net/tun:/dev/net/tun"
+      - "./config.yaml:/app/config.yaml:ro"
+      - "./certs/:/app/certs/:ro"
+      - "./database.sqlite:/app/database.sqlite"
+    command: ["/app/config.yaml"]
+      
