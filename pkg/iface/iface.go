@@ -6,6 +6,8 @@ import (
 	"log"
 	"math"
 	"net"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -98,7 +100,24 @@ func NewTUN(
 	}
 
 	// 4. Включаем IP-форвардинг
-	// sysctl -w net.ipv4.ip_forward=1
+	if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0644); err != nil {
+		eg.Close()
+		return nil, fmt.Errorf("failed to enable ipv4 forward: %w", err)
+	}
+
+	// 4.1. ДОБАВЛЕНО: Глобально включаем BBR для всех TCP соединений сервера
+	// Для работы BBR ядро Linux также требует дисциплину очередей fq (она у вас уже активна)
+	if err := os.WriteFile("/proc/sys/net/ipv4/tcp_congestion_control", []byte("bbr"), 0644); err != nil {
+		// Если ядро старое и не поддерживает BBR, логируем предупреждение, но не падаем
+		log.Printf("[Warning] Failed to set TCP congestion control to BBR: %v. Falling back to system default.", err)
+	}
+
+	// 5. ДОБАВЛЕНО: Отключаем Reverse Path Filtering для интерфейса liberator
+	rpFilterPath := filepath.Join("/proc/sys/net/ipv4/conf", cfg.IfaceInName, "rp_filter")
+	if err := os.WriteFile(rpFilterPath, []byte("0"), 0644); err != nil {
+		// Некоторые ядра требуют отключения и на глобальном уровне
+		_ = os.WriteFile("/proc/sys/net/ipv4/conf/all/rp_filter", []byte("0"), 0644)
+	}
 
 	// 5. Настраиваем NAT через go-iptables
 	eg.ipt, err = iptables.New()
@@ -117,7 +136,6 @@ func NewTUN(
 
 // sudo iptables -t nat -I POSTROUTING 1 -s 10.8.0.0/16 -o amn0 -j MASQUERADE
 func (eg *TUNIface) setupNAT() error {
-	// Если внешний интерфейс не задан, определяем его автоматически
 	if eg.cfg.IfaceOutName == "" {
 		ext, err := getDefaultInterface()
 		if err != nil {
@@ -132,21 +150,42 @@ func (eg *TUNIface) setupNAT() error {
 	}
 	tunNet := network.String()
 
-	// Маскарадинг (NAT)
-	fmt.Println("nat ", "POSTROUTING ", "-s ", tunNet, " -o ", eg.cfg.IfaceOutName, " -j ", "MASQUERADE")
+	// А) ДОБАВЛЕНО: MSS Clamping (Зажатие MSS под PMTU)
+	// Это заставит компьютеры на Windows/Linux отправлять TCP сегменты,
+	// которые гарантированно пролезут через L3 Point-to-Point линк
+	err := eg.ipt.Append("mangle", "FORWARD",
+		"-p", "tcp",
+		"--tcp-flags", "SYN,RST", "SYN",
+		"-j", "TCPMSS",
+		"--clamp-mss-to-pmtu",
+	)
+	if err != nil {
+		return fmt.Errorf("failed to setup MSS Clamping: %w", err)
+	}
+
+	// Б) Маскарадинг (NAT) трафика из подсети туннеля наружу в amn0
 	if err := eg.ipt.Append("nat", "POSTROUTING", "-s", tunNet, "-o", eg.cfg.IfaceOutName, "-j", "MASQUERADE"); err != nil {
 		return fmt.Errorf("failed to setup NAT: %w", err)
 	}
 
-	// Разрешаем форвардинг для TUN-интерфейса
-	for _, rule := range [][]string{
-		{"-i", eg.cfg.IfaceInName, "-j", "ACCEPT"},
-		{"-o", eg.cfg.IfaceInName, "-j", "ACCEPT"},
-	} {
-		if err := eg.ipt.Append("filter", "FORWARD", rule...); err != nil {
-			return fmt.Errorf("failed to setup iface FORWARD: %w", err)
-		}
+	// В) КРОСС-ФОРВАРДИНГ: Разрешаем прохождение пакетов МЕЖДУ интерфейсами
+	// Разрешаем трафик из TUN во внешний мир
+	if err := eg.ipt.Append("filter", "FORWARD", "-i", eg.cfg.IfaceInName, "-o", eg.cfg.IfaceOutName, "-j", "ACCEPT"); err != nil {
+		return fmt.Errorf("failed to setup FORWARD IN->OUT: %w", err)
 	}
+
+	// Разрешаем трафик из внешнего мира обратно в TUN (только для уже установленных соединений)
+	err = eg.ipt.Append("filter", "FORWARD",
+		"-i", eg.cfg.IfaceOutName,
+		"-o", eg.cfg.IfaceInName,
+		"-m", "conntrack",
+		"--ctstate", "RELATED,ESTABLISHED",
+		"-j", "ACCEPT",
+	)
+	if err != nil {
+		return fmt.Errorf("failed to setup FORWARD OUT->IN: %w", err)
+	}
+
 	return nil
 }
 
