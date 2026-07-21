@@ -2,6 +2,7 @@ package peersmanager
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"time"
@@ -14,8 +15,10 @@ import (
 )
 
 type PeersManager struct {
-	ctx             context.Context
-	db              *repos.Queries
+	ctx context.Context
+
+	db              *sql.DB
+	queries         *repos.Queries
 	firewallManager *firewallmanager.Firewallmanager
 
 	transports safemap.Safemap[string, transport.Transport]
@@ -25,12 +28,13 @@ type PeersManager struct {
 
 func New(
 	ctx context.Context,
-	db repos.DBTX,
+	db *sql.DB,
 	firewallManager *firewallmanager.Firewallmanager,
 ) *PeersManager {
 	return &PeersManager{
 		ctx:             ctx,
-		db:              repos.New(db),
+		db:              db,
+		queries:         repos.New(db),
 		firewallManager: firewallManager,
 		transports:      safemap.New[string, transport.Transport](),
 		statsDrain:      make(chan transport.TransportPeerStats, 1000),
@@ -52,7 +56,7 @@ func (pm *PeersManager) RegisterTransport(name string, trp transport.Transport) 
 }
 
 func (pm *PeersManager) Run() error {
-	rows, err := pm.db.ListPeers(pm.ctx)
+	rows, err := pm.queries.ListPeers(pm.ctx)
 	if err != nil {
 		return fmt.Errorf("failed to load peers: %w", err)
 	}
@@ -88,7 +92,7 @@ func (pm *PeersManager) Run() error {
 			case <-pm.ctx.Done():
 				return
 			case data := <-pm.statsDrain:
-				err := pm.db.UpdatePeerStats(pm.ctx, repos.UpdatePeerStatsParams{
+				err := pm.queries.UpdatePeerStats(pm.ctx, repos.UpdatePeerStatsParams{
 					VirtualIp: int64(data.VirtualIP),
 					LastSeen:  data.LastSeen,
 					FromInc:   int64(data.DeltaFromPeer),
@@ -104,51 +108,57 @@ func (pm *PeersManager) Run() error {
 	return nil
 }
 
-func (pm *PeersManager) CreatePeerAutoID(ctx context.Context, peer *model.Peer) (uint64, error) {
-	row, err := pm.db.CreatePeerAutoID(ctx, repos.CreatePeerAutoIDParams{
-		Type:           peer.Type,
-		VirtualIp:      int64(peer.VirtualIP),
-		AwgPrivateKey:  peer.AwgPrivateKey,
-		AwgPublicKey:   peer.AwgPublicKey,
-		ExpirationDate: peer.ExpirationDate,
-	})
+func (pm *PeersManager) CreatePeerAutoID(ctx context.Context, peer *model.Peer) error {
+	// Начинаем транзакцию с эксклюзивной блокировкой
+	tx, err := pm.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
-		return 0, fmt.Errorf("create peer: %w", err)
+		return fmt.Errorf("begin tx: %w", err)
 	}
-	transport, ex := pm.transports.Get(peer.Type)
-	if ex {
-		err = transport.PreparePeer(peer)
+	defer func() {
 		if err != nil {
-			return 0, fmt.Errorf("failed to prepare peer: %v", err)
+			_ = tx.Rollback()
 		}
+	}()
+
+	// Устанавливаем эксклюзивную блокировку (SQLite)
+	// Это нужно выполнить до вставки
+	_, err = tx.ExecContext(ctx, "BEGIN EXCLUSIVE")
+	if err != nil {
+		return fmt.Errorf("exclusive lock: %w", err)
 	}
 
-	return uint64(row.ID), nil
-}
-func (pm *PeersManager) CreatePeerExplicit(ctx context.Context, peer *model.Peer) (uint64, error) {
-	row, err := pm.db.CreatePeerExplicit(ctx, repos.CreatePeerExplicitParams{
-		ID:             int64(peer.ID),
+	// Создаём экземпляр Queries, привязанный к транзакции
+	q := repos.New(tx)
+
+	// Выполняем вставку (подзапрос MAX+1 будет безопасен)
+	row, err := q.CreatePeerAutoID(ctx, repos.CreatePeerAutoIDParams{
 		Type:           peer.Type,
-		VirtualIp:      int64(peer.VirtualIP),
 		AwgPrivateKey:  peer.AwgPrivateKey,
 		AwgPublicKey:   peer.AwgPublicKey,
 		ExpirationDate: peer.ExpirationDate,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("create peer: %w", err)
+		return fmt.Errorf("create peer: %w", err)
 	}
+
+	peer.ID = uint64(row.ID)
+	peer.VirtualIP = uint32(row.VirtualIp)
+
 	transport, ex := pm.transports.Get(peer.Type)
 	if ex {
-		err = transport.PreparePeer(peer)
-		if err != nil {
-			return 0, fmt.Errorf("failed to prepare peer: %v", err)
+		if err = transport.PreparePeer(peer); err != nil {
+			return fmt.Errorf("failed to prepare peer: %v", err)
 		}
 	}
-	return uint64(row.ID), nil
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+
+	return nil
 }
 
 func (pm *PeersManager) GetPeerByID(ctx context.Context, id uint64) (*model.Peer, error) {
-	row, err := pm.db.GetPeerByID(ctx, int64(id))
+	row, err := pm.queries.GetPeerByID(ctx, int64(id))
 	if err != nil {
 		return nil, fmt.Errorf("get peer by ID: %w", err)
 	}
@@ -160,11 +170,11 @@ func (pm *PeersManager) DeletePeer(ctx context.Context, peerId uint64) error {
 		return fmt.Errorf("delete peer rules from DB: %w", err)
 	}
 
-	peer, err := pm.db.GetPeerByID(ctx, int64(peerId))
+	peer, err := pm.queries.GetPeerByID(ctx, int64(peerId))
 	if err != nil {
 		return fmt.Errorf("failed to get peer: %w", err)
 	}
-	if err := pm.db.DeletePeer(ctx, int64(peerId)); err != nil {
+	if err := pm.queries.DeletePeer(ctx, int64(peerId)); err != nil {
 		return fmt.Errorf("delete peer from DB: %w", err)
 	}
 
@@ -191,14 +201,14 @@ func peerFromRow(row repos.Peer) *model.Peer {
 }
 
 func (pm *PeersManager) GetPeerByVirtualIP(ctx context.Context, virtualIP uint32) (*model.Peer, error) {
-	row, err := pm.db.GetPeerByVirtualIP(ctx, int64(virtualIP))
+	row, err := pm.queries.GetPeerByVirtualIP(ctx, int64(virtualIP))
 	if err != nil {
 		return nil, fmt.Errorf("get peer by virtual IP: %w", err)
 	}
 	return peerFromRow(row), nil
 }
 func (pm *PeersManager) ListPeers(ctx context.Context) ([]*model.Peer, error) {
-	rows, err := pm.db.ListPeers(ctx)
+	rows, err := pm.queries.ListPeers(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list peers: %w", err)
 	}

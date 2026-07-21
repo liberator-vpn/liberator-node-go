@@ -24,6 +24,7 @@ type Transport interface {
 	GenerateClientKey(peer *model.Peer, addr string, name string) (string, error)
 
 	DeltaChan() chan TransportPeerStats
+	Type() string
 }
 
 type Router interface {

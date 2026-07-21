@@ -23,90 +23,6 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type CreatePeerExplicitRequest struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Id             uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Type           string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
-	VirtualIp      uint32                 `protobuf:"varint,3,opt,name=virtual_ip,json=virtualIp,proto3" json:"virtual_ip,omitempty"`
-	AwgPrivateKey  string                 `protobuf:"bytes,4,opt,name=awg_private_key,json=awgPrivateKey,proto3" json:"awg_private_key,omitempty"`
-	AwgPublicKey   string                 `protobuf:"bytes,5,opt,name=awg_public_key,json=awgPublicKey,proto3" json:"awg_public_key,omitempty"`
-	ExpirationDate *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=expiration_date,json=expirationDate,proto3" json:"expiration_date,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
-}
-
-func (x *CreatePeerExplicitRequest) Reset() {
-	*x = CreatePeerExplicitRequest{}
-	mi := &file_peers_proto_msgTypes[0]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *CreatePeerExplicitRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CreatePeerExplicitRequest) ProtoMessage() {}
-
-func (x *CreatePeerExplicitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_peers_proto_msgTypes[0]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use CreatePeerExplicitRequest.ProtoReflect.Descriptor instead.
-func (*CreatePeerExplicitRequest) Descriptor() ([]byte, []int) {
-	return file_peers_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *CreatePeerExplicitRequest) GetId() uint64 {
-	if x != nil {
-		return x.Id
-	}
-	return 0
-}
-
-func (x *CreatePeerExplicitRequest) GetType() string {
-	if x != nil {
-		return x.Type
-	}
-	return ""
-}
-
-func (x *CreatePeerExplicitRequest) GetVirtualIp() uint32 {
-	if x != nil {
-		return x.VirtualIp
-	}
-	return 0
-}
-
-func (x *CreatePeerExplicitRequest) GetAwgPrivateKey() string {
-	if x != nil {
-		return x.AwgPrivateKey
-	}
-	return ""
-}
-
-func (x *CreatePeerExplicitRequest) GetAwgPublicKey() string {
-	if x != nil {
-		return x.AwgPublicKey
-	}
-	return ""
-}
-
-func (x *CreatePeerExplicitRequest) GetExpirationDate() *timestamppb.Timestamp {
-	if x != nil {
-		return x.ExpirationDate
-	}
-	return nil
-}
-
 type CreatePeerAutoIDRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Type           string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
@@ -120,7 +36,7 @@ type CreatePeerAutoIDRequest struct {
 
 func (x *CreatePeerAutoIDRequest) Reset() {
 	*x = CreatePeerAutoIDRequest{}
-	mi := &file_peers_proto_msgTypes[1]
+	mi := &file_peers_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -132,7 +48,7 @@ func (x *CreatePeerAutoIDRequest) String() string {
 func (*CreatePeerAutoIDRequest) ProtoMessage() {}
 
 func (x *CreatePeerAutoIDRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_peers_proto_msgTypes[1]
+	mi := &file_peers_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -145,7 +61,7 @@ func (x *CreatePeerAutoIDRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreatePeerAutoIDRequest.ProtoReflect.Descriptor instead.
 func (*CreatePeerAutoIDRequest) Descriptor() ([]byte, []int) {
-	return file_peers_proto_rawDescGZIP(), []int{1}
+	return file_peers_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *CreatePeerAutoIDRequest) GetType() string {
@@ -186,13 +102,14 @@ func (x *CreatePeerAutoIDRequest) GetExpirationDate() *timestamppb.Timestamp {
 type CreatePeerResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	VirtualIp     uint32                 `protobuf:"varint,2,opt,name=virtual_ip,json=virtualIp,proto3" json:"virtual_ip,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreatePeerResponse) Reset() {
 	*x = CreatePeerResponse{}
-	mi := &file_peers_proto_msgTypes[2]
+	mi := &file_peers_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -204,7 +121,7 @@ func (x *CreatePeerResponse) String() string {
 func (*CreatePeerResponse) ProtoMessage() {}
 
 func (x *CreatePeerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_peers_proto_msgTypes[2]
+	mi := &file_peers_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -217,12 +134,19 @@ func (x *CreatePeerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreatePeerResponse.ProtoReflect.Descriptor instead.
 func (*CreatePeerResponse) Descriptor() ([]byte, []int) {
-	return file_peers_proto_rawDescGZIP(), []int{2}
+	return file_peers_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *CreatePeerResponse) GetId() uint64 {
 	if x != nil {
 		return x.Id
+	}
+	return 0
+}
+
+func (x *CreatePeerResponse) GetVirtualIp() uint32 {
+	if x != nil {
+		return x.VirtualIp
 	}
 	return 0
 }
@@ -236,7 +160,7 @@ type GetPeerRequest struct {
 
 func (x *GetPeerRequest) Reset() {
 	*x = GetPeerRequest{}
-	mi := &file_peers_proto_msgTypes[3]
+	mi := &file_peers_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -248,7 +172,7 @@ func (x *GetPeerRequest) String() string {
 func (*GetPeerRequest) ProtoMessage() {}
 
 func (x *GetPeerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_peers_proto_msgTypes[3]
+	mi := &file_peers_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -261,7 +185,7 @@ func (x *GetPeerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetPeerRequest.ProtoReflect.Descriptor instead.
 func (*GetPeerRequest) Descriptor() ([]byte, []int) {
-	return file_peers_proto_rawDescGZIP(), []int{3}
+	return file_peers_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *GetPeerRequest) GetId() uint64 {
@@ -288,7 +212,7 @@ type Peer struct {
 
 func (x *Peer) Reset() {
 	*x = Peer{}
-	mi := &file_peers_proto_msgTypes[4]
+	mi := &file_peers_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -300,7 +224,7 @@ func (x *Peer) String() string {
 func (*Peer) ProtoMessage() {}
 
 func (x *Peer) ProtoReflect() protoreflect.Message {
-	mi := &file_peers_proto_msgTypes[4]
+	mi := &file_peers_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -313,7 +237,7 @@ func (x *Peer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Peer.ProtoReflect.Descriptor instead.
 func (*Peer) Descriptor() ([]byte, []int) {
-	return file_peers_proto_rawDescGZIP(), []int{4}
+	return file_peers_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Peer) GetId() uint64 {
@@ -388,7 +312,7 @@ type ListPeersResponse struct {
 
 func (x *ListPeersResponse) Reset() {
 	*x = ListPeersResponse{}
-	mi := &file_peers_proto_msgTypes[5]
+	mi := &file_peers_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -400,7 +324,7 @@ func (x *ListPeersResponse) String() string {
 func (*ListPeersResponse) ProtoMessage() {}
 
 func (x *ListPeersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_peers_proto_msgTypes[5]
+	mi := &file_peers_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -413,7 +337,7 @@ func (x *ListPeersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPeersResponse.ProtoReflect.Descriptor instead.
 func (*ListPeersResponse) Descriptor() ([]byte, []int) {
-	return file_peers_proto_rawDescGZIP(), []int{5}
+	return file_peers_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ListPeersResponse) GetPeers() []*Peer {
@@ -432,7 +356,7 @@ type DeletePeerRequest struct {
 
 func (x *DeletePeerRequest) Reset() {
 	*x = DeletePeerRequest{}
-	mi := &file_peers_proto_msgTypes[6]
+	mi := &file_peers_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -444,7 +368,7 @@ func (x *DeletePeerRequest) String() string {
 func (*DeletePeerRequest) ProtoMessage() {}
 
 func (x *DeletePeerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_peers_proto_msgTypes[6]
+	mi := &file_peers_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -457,7 +381,7 @@ func (x *DeletePeerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeletePeerRequest.ProtoReflect.Descriptor instead.
 func (*DeletePeerRequest) Descriptor() ([]byte, []int) {
-	return file_peers_proto_rawDescGZIP(), []int{6}
+	return file_peers_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *DeletePeerRequest) GetId() uint64 {
@@ -478,7 +402,7 @@ type GenerateClientKeyRequest struct {
 
 func (x *GenerateClientKeyRequest) Reset() {
 	*x = GenerateClientKeyRequest{}
-	mi := &file_peers_proto_msgTypes[7]
+	mi := &file_peers_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -490,7 +414,7 @@ func (x *GenerateClientKeyRequest) String() string {
 func (*GenerateClientKeyRequest) ProtoMessage() {}
 
 func (x *GenerateClientKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_peers_proto_msgTypes[7]
+	mi := &file_peers_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -503,7 +427,7 @@ func (x *GenerateClientKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateClientKeyRequest.ProtoReflect.Descriptor instead.
 func (*GenerateClientKeyRequest) Descriptor() ([]byte, []int) {
-	return file_peers_proto_rawDescGZIP(), []int{7}
+	return file_peers_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *GenerateClientKeyRequest) GetPeerId() uint64 {
@@ -536,7 +460,7 @@ type GenerateClientKeyResponse struct {
 
 func (x *GenerateClientKeyResponse) Reset() {
 	*x = GenerateClientKeyResponse{}
-	mi := &file_peers_proto_msgTypes[8]
+	mi := &file_peers_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -548,7 +472,7 @@ func (x *GenerateClientKeyResponse) String() string {
 func (*GenerateClientKeyResponse) ProtoMessage() {}
 
 func (x *GenerateClientKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_peers_proto_msgTypes[8]
+	mi := &file_peers_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -561,7 +485,7 @@ func (x *GenerateClientKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateClientKeyResponse.ProtoReflect.Descriptor instead.
 func (*GenerateClientKeyResponse) Descriptor() ([]byte, []int) {
-	return file_peers_proto_rawDescGZIP(), []int{8}
+	return file_peers_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GenerateClientKeyResponse) GetKey() string {
@@ -575,24 +499,18 @@ var File_peers_proto protoreflect.FileDescriptor
 
 const file_peers_proto_rawDesc = "" +
 	"\n" +
-	"\vpeers.proto\x12\x04grpc\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf1\x01\n" +
-	"\x19CreatePeerExplicitRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x12\n" +
-	"\x04type\x18\x02 \x01(\tR\x04type\x12\x1d\n" +
-	"\n" +
-	"virtual_ip\x18\x03 \x01(\rR\tvirtualIp\x12&\n" +
-	"\x0fawg_private_key\x18\x04 \x01(\tR\rawgPrivateKey\x12$\n" +
-	"\x0eawg_public_key\x18\x05 \x01(\tR\fawgPublicKey\x12C\n" +
-	"\x0fexpiration_date\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x0eexpirationDate\"\xdf\x01\n" +
+	"\vpeers.proto\x12\x04grpc\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xdf\x01\n" +
 	"\x17CreatePeerAutoIDRequest\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x1d\n" +
 	"\n" +
 	"virtual_ip\x18\x02 \x01(\rR\tvirtualIp\x12&\n" +
 	"\x0fawg_private_key\x18\x03 \x01(\tR\rawgPrivateKey\x12$\n" +
 	"\x0eawg_public_key\x18\x04 \x01(\tR\fawgPublicKey\x12C\n" +
-	"\x0fexpiration_date\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x0eexpirationDate\"$\n" +
+	"\x0fexpiration_date\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x0eexpirationDate\"C\n" +
 	"\x12CreatePeerResponse\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x04R\x02id\" \n" +
+	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x1d\n" +
+	"\n" +
+	"virtual_ip\x18\x02 \x01(\rR\tvirtualIp\" \n" +
 	"\x0eGetPeerRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\"\xe1\x02\n" +
 	"\x04Peer\x12\x0e\n" +
@@ -616,9 +534,8 @@ const file_peers_proto_rawDesc = "" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\"-\n" +
 	"\x19GenerateClientKeyResponse\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key2\xab\x03\n" +
-	"\vPeerService\x12O\n" +
-	"\x12CreatePeerExplicit\x12\x1f.grpc.CreatePeerExplicitRequest\x1a\x18.grpc.CreatePeerResponse\x12K\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key2\xda\x02\n" +
+	"\vPeerService\x12K\n" +
 	"\x10CreatePeerAutoID\x12\x1d.grpc.CreatePeerAutoIDRequest\x1a\x18.grpc.CreatePeerResponse\x12+\n" +
 	"\aGetPeer\x12\x14.grpc.GetPeerRequest\x1a\n" +
 	".grpc.Peer\x12<\n" +
@@ -639,43 +556,39 @@ func file_peers_proto_rawDescGZIP() []byte {
 	return file_peers_proto_rawDescData
 }
 
-var file_peers_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_peers_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_peers_proto_goTypes = []any{
-	(*CreatePeerExplicitRequest)(nil), // 0: grpc.CreatePeerExplicitRequest
-	(*CreatePeerAutoIDRequest)(nil),   // 1: grpc.CreatePeerAutoIDRequest
-	(*CreatePeerResponse)(nil),        // 2: grpc.CreatePeerResponse
-	(*GetPeerRequest)(nil),            // 3: grpc.GetPeerRequest
-	(*Peer)(nil),                      // 4: grpc.Peer
-	(*ListPeersResponse)(nil),         // 5: grpc.ListPeersResponse
-	(*DeletePeerRequest)(nil),         // 6: grpc.DeletePeerRequest
-	(*GenerateClientKeyRequest)(nil),  // 7: grpc.GenerateClientKeyRequest
-	(*GenerateClientKeyResponse)(nil), // 8: grpc.GenerateClientKeyResponse
-	(*timestamppb.Timestamp)(nil),     // 9: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),             // 10: google.protobuf.Empty
+	(*CreatePeerAutoIDRequest)(nil),   // 0: grpc.CreatePeerAutoIDRequest
+	(*CreatePeerResponse)(nil),        // 1: grpc.CreatePeerResponse
+	(*GetPeerRequest)(nil),            // 2: grpc.GetPeerRequest
+	(*Peer)(nil),                      // 3: grpc.Peer
+	(*ListPeersResponse)(nil),         // 4: grpc.ListPeersResponse
+	(*DeletePeerRequest)(nil),         // 5: grpc.DeletePeerRequest
+	(*GenerateClientKeyRequest)(nil),  // 6: grpc.GenerateClientKeyRequest
+	(*GenerateClientKeyResponse)(nil), // 7: grpc.GenerateClientKeyResponse
+	(*timestamppb.Timestamp)(nil),     // 8: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),             // 9: google.protobuf.Empty
 }
 var file_peers_proto_depIdxs = []int32{
-	9,  // 0: grpc.CreatePeerExplicitRequest.expiration_date:type_name -> google.protobuf.Timestamp
-	9,  // 1: grpc.CreatePeerAutoIDRequest.expiration_date:type_name -> google.protobuf.Timestamp
-	9,  // 2: grpc.Peer.last_seen:type_name -> google.protobuf.Timestamp
-	9,  // 3: grpc.Peer.expiration_date:type_name -> google.protobuf.Timestamp
-	4,  // 4: grpc.ListPeersResponse.peers:type_name -> grpc.Peer
-	0,  // 5: grpc.PeerService.CreatePeerExplicit:input_type -> grpc.CreatePeerExplicitRequest
-	1,  // 6: grpc.PeerService.CreatePeerAutoID:input_type -> grpc.CreatePeerAutoIDRequest
-	3,  // 7: grpc.PeerService.GetPeer:input_type -> grpc.GetPeerRequest
-	10, // 8: grpc.PeerService.ListPeers:input_type -> google.protobuf.Empty
-	6,  // 9: grpc.PeerService.DeletePeer:input_type -> grpc.DeletePeerRequest
-	7,  // 10: grpc.PeerService.GenerateClientKey:input_type -> grpc.GenerateClientKeyRequest
-	2,  // 11: grpc.PeerService.CreatePeerExplicit:output_type -> grpc.CreatePeerResponse
-	2,  // 12: grpc.PeerService.CreatePeerAutoID:output_type -> grpc.CreatePeerResponse
-	4,  // 13: grpc.PeerService.GetPeer:output_type -> grpc.Peer
-	5,  // 14: grpc.PeerService.ListPeers:output_type -> grpc.ListPeersResponse
-	10, // 15: grpc.PeerService.DeletePeer:output_type -> google.protobuf.Empty
-	8,  // 16: grpc.PeerService.GenerateClientKey:output_type -> grpc.GenerateClientKeyResponse
-	11, // [11:17] is the sub-list for method output_type
-	5,  // [5:11] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	8, // 0: grpc.CreatePeerAutoIDRequest.expiration_date:type_name -> google.protobuf.Timestamp
+	8, // 1: grpc.Peer.last_seen:type_name -> google.protobuf.Timestamp
+	8, // 2: grpc.Peer.expiration_date:type_name -> google.protobuf.Timestamp
+	3, // 3: grpc.ListPeersResponse.peers:type_name -> grpc.Peer
+	0, // 4: grpc.PeerService.CreatePeerAutoID:input_type -> grpc.CreatePeerAutoIDRequest
+	2, // 5: grpc.PeerService.GetPeer:input_type -> grpc.GetPeerRequest
+	9, // 6: grpc.PeerService.ListPeers:input_type -> google.protobuf.Empty
+	5, // 7: grpc.PeerService.DeletePeer:input_type -> grpc.DeletePeerRequest
+	6, // 8: grpc.PeerService.GenerateClientKey:input_type -> grpc.GenerateClientKeyRequest
+	1, // 9: grpc.PeerService.CreatePeerAutoID:output_type -> grpc.CreatePeerResponse
+	3, // 10: grpc.PeerService.GetPeer:output_type -> grpc.Peer
+	4, // 11: grpc.PeerService.ListPeers:output_type -> grpc.ListPeersResponse
+	9, // 12: grpc.PeerService.DeletePeer:output_type -> google.protobuf.Empty
+	7, // 13: grpc.PeerService.GenerateClientKey:output_type -> grpc.GenerateClientKeyResponse
+	9, // [9:14] is the sub-list for method output_type
+	4, // [4:9] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_peers_proto_init() }
@@ -689,7 +602,7 @@ func file_peers_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_peers_proto_rawDesc), len(file_peers_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

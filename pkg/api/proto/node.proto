@@ -6,6 +6,7 @@ package grpc;
 option go_package = "github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpc";
 service NodeService {
     rpc Ping(PingMessage) returns(PongMessage);
+    rpc ListTransportTypes(google.protobuf.Empty) returns(ListTransportTypesResponse);
 }
 
 
@@ -15,4 +16,9 @@ message PingMessage {
 message PongMessage {
   string node_id = 1;
   string country_code = 2;
+}
+
+
+message ListTransportTypesResponse {
+  repeated string types = 1;
 }

@@ -8,7 +8,6 @@ import "google/protobuf/timestamp.proto";
 
 
 service PeerService {
-  rpc CreatePeerExplicit(CreatePeerExplicitRequest) returns (CreatePeerResponse);
   rpc CreatePeerAutoID(CreatePeerAutoIDRequest) returns (CreatePeerResponse);
 
   rpc GetPeer(GetPeerRequest) returns (Peer);
@@ -18,14 +17,6 @@ service PeerService {
   rpc GenerateClientKey(GenerateClientKeyRequest) returns (GenerateClientKeyResponse);
 }
 
-message CreatePeerExplicitRequest {
-  uint64 id = 1;
-  string type = 2;
-  uint32 virtual_ip = 3;
-  string awg_private_key = 4;
-  string awg_public_key = 5;
-  google.protobuf.Timestamp expiration_date = 6;
-}
 message CreatePeerAutoIDRequest {
   string type = 1;
   uint32 virtual_ip = 2;
@@ -36,6 +27,7 @@ message CreatePeerAutoIDRequest {
 
 message CreatePeerResponse {
   uint64 id = 1;
+  uint32 virtual_ip=2;
 }
 
 

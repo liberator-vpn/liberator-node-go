@@ -9,7 +9,7 @@ package grpc
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	_ "google.golang.org/protobuf/types/known/emptypb"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -110,6 +110,50 @@ func (x *PongMessage) GetCountryCode() string {
 	return ""
 }
 
+type ListTransportTypesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Types         []string               `protobuf:"bytes,1,rep,name=types,proto3" json:"types,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListTransportTypesResponse) Reset() {
+	*x = ListTransportTypesResponse{}
+	mi := &file_node_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListTransportTypesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListTransportTypesResponse) ProtoMessage() {}
+
+func (x *ListTransportTypesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_node_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListTransportTypesResponse.ProtoReflect.Descriptor instead.
+func (*ListTransportTypesResponse) Descriptor() ([]byte, []int) {
+	return file_node_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ListTransportTypesResponse) GetTypes() []string {
+	if x != nil {
+		return x.Types
+	}
+	return nil
+}
+
 var File_node_proto protoreflect.FileDescriptor
 
 const file_node_proto_rawDesc = "" +
@@ -119,9 +163,12 @@ const file_node_proto_rawDesc = "" +
 	"\vPingMessage\"I\n" +
 	"\vPongMessage\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12!\n" +
-	"\fcountry_code\x18\x02 \x01(\tR\vcountryCode2;\n" +
+	"\fcountry_code\x18\x02 \x01(\tR\vcountryCode\"2\n" +
+	"\x1aListTransportTypesResponse\x12\x14\n" +
+	"\x05types\x18\x01 \x03(\tR\x05types2\x8b\x01\n" +
 	"\vNodeService\x12,\n" +
-	"\x04Ping\x12\x11.grpc.PingMessage\x1a\x11.grpc.PongMessageB=Z;github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
+	"\x04Ping\x12\x11.grpc.PingMessage\x1a\x11.grpc.PongMessage\x12N\n" +
+	"\x12ListTransportTypes\x12\x16.google.protobuf.Empty\x1a .grpc.ListTransportTypesResponseB=Z;github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
 
 var (
 	file_node_proto_rawDescOnce sync.Once
@@ -135,16 +182,20 @@ func file_node_proto_rawDescGZIP() []byte {
 	return file_node_proto_rawDescData
 }
 
-var file_node_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_node_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_node_proto_goTypes = []any{
-	(*PingMessage)(nil), // 0: grpc.PingMessage
-	(*PongMessage)(nil), // 1: grpc.PongMessage
+	(*PingMessage)(nil),                // 0: grpc.PingMessage
+	(*PongMessage)(nil),                // 1: grpc.PongMessage
+	(*ListTransportTypesResponse)(nil), // 2: grpc.ListTransportTypesResponse
+	(*emptypb.Empty)(nil),              // 3: google.protobuf.Empty
 }
 var file_node_proto_depIdxs = []int32{
 	0, // 0: grpc.NodeService.Ping:input_type -> grpc.PingMessage
-	1, // 1: grpc.NodeService.Ping:output_type -> grpc.PongMessage
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	3, // 1: grpc.NodeService.ListTransportTypes:input_type -> google.protobuf.Empty
+	1, // 2: grpc.NodeService.Ping:output_type -> grpc.PongMessage
+	2, // 3: grpc.NodeService.ListTransportTypes:output_type -> grpc.ListTransportTypesResponse
+	2, // [2:4] is the sub-list for method output_type
+	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -161,7 +212,7 @@ func file_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_node_proto_rawDesc), len(file_node_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

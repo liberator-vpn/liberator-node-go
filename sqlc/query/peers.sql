@@ -1,3 +1,4 @@
+
 -- name: CreatePeerAutoID :one
 INSERT INTO peers (
     type,
@@ -7,26 +8,7 @@ INSERT INTO peers (
     expiration_date
 ) VALUES (
     sqlc.arg(type),
-    sqlc.arg(virtual_ip),
-    sqlc.arg(awg_private_key),
-    sqlc.arg(awg_public_key),
-    sqlc.arg(expiration_date)
-)
-RETURNING *;
-
-
--- name: CreatePeerExplicit :one
-INSERT INTO peers (
-    id,
-    type,
-    virtual_ip,
-    awg_private_key,
-    awg_public_key,
-    expiration_date
-) VALUES (
-    sqlc.arg(id),
-    sqlc.arg(type),
-    sqlc.arg(virtual_ip),
+    COALESCE((SELECT MAX(virtual_ip) + 1 FROM peers), 1),
     sqlc.arg(awg_private_key),
     sqlc.arg(awg_public_key),
     sqlc.arg(expiration_date)

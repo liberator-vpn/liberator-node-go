@@ -54,6 +54,10 @@ type AWGTransport struct {
 	deltaChan chan transport.TransportPeerStats
 }
 
+func (ig *AWGTransport) Type() string {
+	return "awg"
+}
+
 func New(
 	ctx context.Context,
 	cfg *TransportConfig,

@@ -19,17 +19,16 @@ INSERT INTO peers (
     expiration_date
 ) VALUES (
     ?1,
+    COALESCE((SELECT MAX(virtual_ip) + 1 FROM peers), 1),
     ?2,
     ?3,
-    ?4,
-    ?5
+    ?4
 )
 RETURNING id, type, virtual_ip, last_seen, expiration_date, from_peer_total, to_peer_total, awg_private_key, awg_public_key
 `
 
 type CreatePeerAutoIDParams struct {
 	Type           string
-	VirtualIp      int64
 	AwgPrivateKey  string
 	AwgPublicKey   string
 	ExpirationDate *time.Time
@@ -38,59 +37,6 @@ type CreatePeerAutoIDParams struct {
 func (q *Queries) CreatePeerAutoID(ctx context.Context, arg CreatePeerAutoIDParams) (Peer, error) {
 	row := q.db.QueryRowContext(ctx, createPeerAutoID,
 		arg.Type,
-		arg.VirtualIp,
-		arg.AwgPrivateKey,
-		arg.AwgPublicKey,
-		arg.ExpirationDate,
-	)
-	var i Peer
-	err := row.Scan(
-		&i.ID,
-		&i.Type,
-		&i.VirtualIp,
-		&i.LastSeen,
-		&i.ExpirationDate,
-		&i.FromPeerTotal,
-		&i.ToPeerTotal,
-		&i.AwgPrivateKey,
-		&i.AwgPublicKey,
-	)
-	return i, err
-}
-
-const createPeerExplicit = `-- name: CreatePeerExplicit :one
-INSERT INTO peers (
-    id,
-    type,
-    virtual_ip,
-    awg_private_key,
-    awg_public_key,
-    expiration_date
-) VALUES (
-    ?1,
-    ?2,
-    ?3,
-    ?4,
-    ?5,
-    ?6
-)
-RETURNING id, type, virtual_ip, last_seen, expiration_date, from_peer_total, to_peer_total, awg_private_key, awg_public_key
-`
-
-type CreatePeerExplicitParams struct {
-	ID             int64
-	Type           string
-	VirtualIp      int64
-	AwgPrivateKey  string
-	AwgPublicKey   string
-	ExpirationDate *time.Time
-}
-
-func (q *Queries) CreatePeerExplicit(ctx context.Context, arg CreatePeerExplicitParams) (Peer, error) {
-	row := q.db.QueryRowContext(ctx, createPeerExplicit,
-		arg.ID,
-		arg.Type,
-		arg.VirtualIp,
 		arg.AwgPrivateKey,
 		arg.AwgPublicKey,
 		arg.ExpirationDate,

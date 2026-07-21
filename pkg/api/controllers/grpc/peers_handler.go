@@ -39,36 +39,16 @@ func (h *PeersHandler) CreatePeerAutoID(ctx context.Context, req *pb.CreatePeerA
 		domainPeer.ExpirationDate = &expTime
 	}
 
-	id, err := h.manager.CreatePeerAutoID(ctx, domainPeer)
+	err := h.manager.CreatePeerAutoID(ctx, domainPeer)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create peer: %v", err)
 	}
 
-	return &pb.CreatePeerResponse{Id: id}, nil
+	return &pb.CreatePeerResponse{
+		Id:        domainPeer.ID,
+		VirtualIp: domainPeer.VirtualIP,
+	}, nil
 }
-func (h *PeersHandler) CreatePeerExplicit(ctx context.Context, req *pb.CreatePeerExplicitRequest) (*pb.CreatePeerResponse, error) {
-	domainPeer := &model.Peer{
-		ID:            req.Id,
-		Type:          req.Type,
-		VirtualIP:     req.VirtualIp,
-		AwgPrivateKey: req.AwgPrivateKey,
-		AwgPublicKey:  req.AwgPublicKey,
-	}
-
-	// Обрабатываем nullable/optional дату окончания действия
-	if req.ExpirationDate != nil {
-		expTime := req.ExpirationDate.AsTime()
-		domainPeer.ExpirationDate = &expTime
-	}
-
-	id, err := h.manager.CreatePeerExplicit(ctx, domainPeer)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to create peer: %v", err)
-	}
-
-	return &pb.CreatePeerResponse{Id: id}, nil
-}
-
 func (h *PeersHandler) GetPeer(ctx context.Context, req *pb.GetPeerRequest) (*pb.Peer, error) {
 	if req.Id == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id cannot be 0")

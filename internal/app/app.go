@@ -171,7 +171,7 @@ func (app *App) Run() error {
 	// Registering controllers
 	grpcctrl.RegisterFirewallService(app.grpcServer, app.firewallManager)
 	grpcctrl.RegisterPeerService(app.grpcServer, app.peersManager)
-	grpcctrl.RegisterNodeService(app.grpcServer, app.node.NodeID(), *app.ipInfo)
+	grpcctrl.RegisterNodeService(app.grpcServer, app.node.NodeID(), *app.ipInfo, app.transports)
 
 	if err := app.firewallManager.Run(); err != nil {
 		return fmt.Errorf("failed to start firewall manager: %v", err)
