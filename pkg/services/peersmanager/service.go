@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/TexHik620953/liberator-node-go/internal/infra/repos"
 	"github.com/TexHik620953/liberator-node-go/internal/utils/safemap"
@@ -58,6 +59,16 @@ func (pm *PeersManager) Run() error {
 
 	for _, row := range rows {
 		peer := peerFromRow(row)
+		if peer.ExpirationDate != nil {
+			if time.Now().After(*peer.ExpirationDate) {
+				err = pm.DeletePeer(pm.ctx, peer.ID)
+				if err != nil {
+					log.Printf("failed to remove expired peer: %v", err)
+				}
+				continue
+			}
+		}
+
 		transport, ex := pm.transports.Get(peer.Type)
 		if !ex {
 			log.Printf("failed to prepare peer %d - transport with corresponding name %s not found", peer.ID, peer.Type)
