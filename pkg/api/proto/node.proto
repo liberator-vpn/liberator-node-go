@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+import "google/protobuf/empty.proto";
+
+package grpc;
+option go_package = "github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpc";
+service NodeService {
+    rpc Ping(PingMessage) returns(PongMessage);
+}
+
+
+message PingMessage {
+  
+}
+message PongMessage {
+  string node_id = 1;
+}

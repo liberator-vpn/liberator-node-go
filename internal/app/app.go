@@ -85,7 +85,7 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 
 	app.grpcServer = grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{
 		Certificates: []tls.Certificate{app.nodeCert},
-		NextProtos:   []string{"mesh"},
+		NextProtos:   []string{"nodectl"},
 	})))
 
 	// Db
@@ -158,6 +158,7 @@ func (app *App) Run() error {
 	// Registering controllers
 	grpcctrl.RegisterFirewallService(app.grpcServer, app.firewallManager)
 	grpcctrl.RegisterPeerService(app.grpcServer, app.peersManager)
+	grpcctrl.RegisterNodeService(app.grpcServer, app.node.NodeID())
 
 	if err := app.firewallManager.Run(); err != nil {
 		return fmt.Errorf("failed to start firewall manager: %v", err)
