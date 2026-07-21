@@ -50,6 +50,8 @@ type AWGTransport struct {
 	in         chan []byte
 
 	peersByIP safemap.Safemap[uint32, *AWGPeer]
+
+	deltaChan chan transport.TransportPeerStats
 }
 
 func New(
@@ -65,6 +67,7 @@ func New(
 		nodeID:    nodeID,
 		in:        make(chan []byte, 1000),
 		peersByIP: safemap.New[uint32, *AWGPeer](),
+		deltaChan: make(chan transport.TransportPeerStats, 100),
 	}
 
 	pubKey, err := getServerPubKey(cfg.PrivateKey)
@@ -140,9 +143,13 @@ func (ig *AWGTransport) Run() {
 			fmt.Println("transport exit")
 			return
 		case <-ticker.C:
-			ig.cleanupDeadPeers()
+			ig.watchPeers()
 		}
 	}
+}
+
+func (ig *AWGTransport) DeltaChan() chan transport.TransportPeerStats {
+	return ig.deltaChan
 }
 
 // PreparePeer вызывается из VpnAuthService ДО подключения клиента.
@@ -199,8 +206,8 @@ func (ig *AWGTransport) removePeerInternal(peer *AWGPeer) {
 
 }
 
-// cleanupDeadPeers Watchdog (Сторожевой таймер)
-func (ig *AWGTransport) cleanupDeadPeers() {
+// watchPeers Watchdog (Сторожевой таймер)
+func (ig *AWGTransport) watchPeers() {
 	now := time.Now()
 	var toDelete []*AWGPeer
 
@@ -209,6 +216,16 @@ func (ig *AWGTransport) cleanupDeadPeers() {
 			if peer.expiration.After(now) {
 				toDelete = append(toDelete, peer)
 			}
+		}
+		select {
+		case ig.deltaChan <- transport.TransportPeerStats{
+			VirtualIP: peer.virtualIP,
+			LastSeen:  peer.lastSeen,
+
+			DeltaToPeer:   peer.totalToPeer.Swap(0),
+			DeltaFromPeer: peer.totalFromPeer.Swap(0),
+		}:
+		default:
 		}
 	})
 

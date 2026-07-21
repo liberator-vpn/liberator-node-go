@@ -72,8 +72,8 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		return nil, fmt.Errorf("failed to ping database: %v", err)
 	}
 
-	app.firewallManager = firewallmanager.New(app.firewall, app.db)
-	app.peersManager = peersmanager.New(app.db, app.firewallManager)
+	app.firewallManager = firewallmanager.New(app.ctx, app.firewall, app.db)
+	app.peersManager = peersmanager.New(app.ctx, app.db, app.firewallManager)
 
 	if app.router, err = router.New(ctx, cfg.Router, app.routingTable, app.firewall); err != nil {
 		return nil, fmt.Errorf("failed to create router: %v", err)
@@ -134,11 +134,10 @@ func (app *App) Run() error {
 	grpcctrl.RegisterFirewallService(app.grpcServer, app.firewallManager)
 	grpcctrl.RegisterPeerService(app.grpcServer, app.peersManager)
 
-	if err := app.firewallManager.Start(app.ctx); err != nil {
+	if err := app.firewallManager.Run(); err != nil {
 		return fmt.Errorf("failed to start firewall manager: %v", err)
 	}
-
-	if err := app.peersManager.Start(app.ctx); err != nil {
+	if err := app.peersManager.Run(); err != nil {
 		return fmt.Errorf("failed to start peers manager: %v", err)
 	}
 

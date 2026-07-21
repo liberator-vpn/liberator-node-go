@@ -164,25 +164,6 @@ func (q *Queries) GetPeerByVirtualIP(ctx context.Context, virtualIp int64) (Peer
 	return i, err
 }
 
-const incrementPeerCounters = `-- name: IncrementPeerCounters :exec
-UPDATE peers
-SET
-    from_peer_total = from_peer_total + ?1,
-    to_peer_total   = to_peer_total + ?2
-WHERE id = ?3
-`
-
-type IncrementPeerCountersParams struct {
-	FromInc int64
-	ToInc   int64
-	ID      int64
-}
-
-func (q *Queries) IncrementPeerCounters(ctx context.Context, arg IncrementPeerCountersParams) error {
-	_, err := q.db.ExecContext(ctx, incrementPeerCounters, arg.FromInc, arg.ToInc, arg.ID)
-	return err
-}
-
 const listPeers = `-- name: ListPeers :many
 SELECT id, type, virtual_ip, last_seen, expiration_date, from_peer_total, to_peer_total, awg_private_key, awg_public_key FROM peers
 ORDER BY id
@@ -221,21 +202,28 @@ func (q *Queries) ListPeers(ctx context.Context) ([]Peer, error) {
 	return items, nil
 }
 
-const updatePeerLastSeen = `-- name: UpdatePeerLastSeen :exec
+const updatePeerStats = `-- name: UpdatePeerStats :exec
 UPDATE peers
 SET
-    last_seen = ?1,
-    expiration_date = ?2
-WHERE id = ?3
+    from_peer_total = from_peer_total + ?1,
+    to_peer_total   = to_peer_total + ?2,
+    last_seen       = MAX(last_seen, ?3)
+WHERE virtual_ip = ?4
 `
 
-type UpdatePeerLastSeenParams struct {
-	LastSeen       time.Time
-	ExpirationDate *time.Time
-	ID             int64
+type UpdatePeerStatsParams struct {
+	FromInc   int64
+	ToInc     int64
+	LastSeen  interface{}
+	VirtualIp int64
 }
 
-func (q *Queries) UpdatePeerLastSeen(ctx context.Context, arg UpdatePeerLastSeenParams) error {
-	_, err := q.db.ExecContext(ctx, updatePeerLastSeen, arg.LastSeen, arg.ExpirationDate, arg.ID)
+func (q *Queries) UpdatePeerStats(ctx context.Context, arg UpdatePeerStatsParams) error {
+	_, err := q.db.ExecContext(ctx, updatePeerStats,
+		arg.FromInc,
+		arg.ToInc,
+		arg.LastSeen,
+		arg.VirtualIp,
+	)
 	return err
 }

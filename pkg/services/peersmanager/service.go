@@ -10,31 +10,48 @@ import (
 	"github.com/TexHik620953/liberator-node-go/pkg/model"
 	"github.com/TexHik620953/liberator-node-go/pkg/services/firewallmanager"
 	"github.com/TexHik620953/liberator-node-go/pkg/transport"
-
-	"time"
 )
 
 type PeersManager struct {
+	ctx             context.Context
 	db              *repos.Queries
 	firewallManager *firewallmanager.Firewallmanager
 
 	transports safemap.Safemap[string, transport.Transport]
+
+	statsDrain chan transport.TransportPeerStats
 }
 
-func New(db repos.DBTX, firewallManager *firewallmanager.Firewallmanager) *PeersManager {
+func New(
+	ctx context.Context,
+	db repos.DBTX,
+	firewallManager *firewallmanager.Firewallmanager,
+) *PeersManager {
 	return &PeersManager{
+		ctx:             ctx,
 		db:              repos.New(db),
 		firewallManager: firewallManager,
 		transports:      safemap.New[string, transport.Transport](),
+		statsDrain:      make(chan transport.TransportPeerStats, 1000),
 	}
 }
 
 func (pm *PeersManager) RegisterTransport(name string, trp transport.Transport) {
 	pm.transports.Set(name, trp)
+	go func() {
+		for {
+			select {
+			case <-pm.ctx.Done():
+				return
+			case data := <-trp.DeltaChan():
+				pm.statsDrain <- data
+			}
+		}
+	}()
 }
 
-func (pm *PeersManager) Start(ctx context.Context) error {
-	rows, err := pm.db.ListPeers(ctx)
+func (pm *PeersManager) Run() error {
+	rows, err := pm.db.ListPeers(pm.ctx)
 	if err != nil {
 		return fmt.Errorf("failed to load peers: %w", err)
 	}
@@ -53,6 +70,26 @@ func (pm *PeersManager) Start(ctx context.Context) error {
 			continue
 		}
 	}
+
+	go func() {
+		for {
+			select {
+			case <-pm.ctx.Done():
+				return
+			case data := <-pm.statsDrain:
+				err := pm.db.UpdatePeerStats(pm.ctx, repos.UpdatePeerStatsParams{
+					VirtualIp: int64(data.VirtualIP),
+					LastSeen:  data.LastSeen,
+					FromInc:   int64(data.DeltaFromPeer),
+					ToInc:     int64(data.DeltaToPeer),
+				})
+				if err != nil {
+					log.Printf("failed to update peer stats: %v", err)
+				}
+			}
+		}
+	}()
+
 	return nil
 }
 
@@ -160,29 +197,6 @@ func (pm *PeersManager) ListPeers(ctx context.Context) ([]*model.Peer, error) {
 	}
 	return peers, nil
 }
-func (pm *PeersManager) UpdatePeerLastSeen(ctx context.Context, id uint64, lastSeen time.Time, expiration *time.Time) error {
-	err := pm.db.UpdatePeerLastSeen(ctx, repos.UpdatePeerLastSeenParams{
-		ID:             int64(id),
-		LastSeen:       lastSeen,
-		ExpirationDate: expiration,
-	})
-	if err != nil {
-		return fmt.Errorf("update peer last_seen: %w", err)
-	}
-	return nil
-}
-func (pm *PeersManager) IncrementPeerCounters(ctx context.Context, id uint64, fromInc, toInc uint64) error {
-	err := pm.db.IncrementPeerCounters(ctx, repos.IncrementPeerCountersParams{
-		ID:      int64(id),
-		FromInc: int64(fromInc),
-		ToInc:   int64(toInc),
-	})
-	if err != nil {
-		return fmt.Errorf("increment peer counters: %w", err)
-	}
-	return nil
-}
-
 func (pm *PeersManager) GenerateClientKey(ctx context.Context, peerId uint64, addr string, name string) (string, error) {
 	peer, err := pm.GetPeerByID(ctx, peerId)
 	if err != nil {

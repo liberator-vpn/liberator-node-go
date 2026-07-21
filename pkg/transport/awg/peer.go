@@ -1,6 +1,7 @@
 package awg
 
 import (
+	"sync/atomic"
 	"time"
 )
 
@@ -15,6 +16,9 @@ type AWGPeer struct {
 	lastSeen   time.Time
 	ingress    *AWGTransport
 	expiration *time.Time
+
+	totalToPeer   atomic.Uint64
+	totalFromPeer atomic.Uint64
 }
 
 func NewAWGPeer(nodeID string, ip uint32, pubKey string, ingress *AWGTransport, expiration *time.Time) *AWGPeer {
@@ -34,6 +38,7 @@ func (p *AWGPeer) GetNodeID() string    { return p.nodeID }
 func (p *AWGPeer) GetVirtualIP() uint32 { return p.virtualIP }
 
 func (p *AWGPeer) SendDatagram(data []byte) error {
+	p.totalToPeer.Add(uint64(len(data)))
 	return p.ingress.writePacket(data)
 }
 

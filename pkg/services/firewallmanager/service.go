@@ -10,22 +10,25 @@ import (
 )
 
 type Firewallmanager struct {
+	ctx      context.Context
 	firewall firewall.FirewallEngine
 	db       *repos.Queries
 }
 
 func New(
+	ctx context.Context,
 	firewall firewall.FirewallEngine,
 	db repos.DBTX,
 ) *Firewallmanager {
 	return &Firewallmanager{
+		ctx:      ctx,
 		firewall: firewall,
 		db:       repos.New(db),
 	}
 }
 
-func (fm *Firewallmanager) Start(ctx context.Context) error {
-	dbRules, err := fm.db.LoadAllRules(ctx)
+func (fm *Firewallmanager) Run() error {
+	dbRules, err := fm.db.LoadAllRules(fm.ctx)
 	if err != nil {
 		return fmt.Errorf("load rules from DB: %w", err)
 	}

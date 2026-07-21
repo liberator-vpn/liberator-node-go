@@ -1,10 +1,19 @@
 package transport
 
 import (
+	"time"
+
 	"github.com/TexHik620953/liberator-node-go/internal/utils/dgmessage"
 	"github.com/TexHik620953/liberator-node-go/pkg/model"
 	"github.com/TexHik620953/liberator-node-go/pkg/routingtable"
 )
+
+type TransportPeerStats struct {
+	VirtualIP     uint32
+	DeltaToPeer   uint64
+	DeltaFromPeer uint64
+	LastSeen      time.Time
+}
 
 type Transport interface {
 	Run()
@@ -13,6 +22,8 @@ type Transport interface {
 	PreparePeer(peerInfo *model.Peer) error
 
 	GenerateClientKey(peer *model.Peer, addr string, name string) (string, error)
+
+	DeltaChan() chan TransportPeerStats
 }
 
 type Router interface {

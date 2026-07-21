@@ -70,6 +70,7 @@ func (t *ChannelTun) Write(bufs [][]byte, offset int) (int, error) {
 			if now.Sub(peer.lastSeen) > time.Second {
 				peer.lastSeen = now
 			}
+			peer.totalToPeer.Add(uint64(len(pkt)))
 		}
 
 		t.router.HandleTransportPacket(msg)
