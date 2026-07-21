@@ -28,7 +28,6 @@ func RegisterPeerService(server *grpc.Server, manager *peersmanager.PeersManager
 func (h *PeersHandler) CreatePeerAutoID(ctx context.Context, req *pb.CreatePeerAutoIDRequest) (*pb.CreatePeerResponse, error) {
 	domainPeer := &model.Peer{
 		Type:          req.Type,
-		VirtualIP:     req.VirtualIp,
 		AwgPrivateKey: req.AwgPrivateKey,
 		AwgPublicKey:  req.AwgPublicKey,
 	}
