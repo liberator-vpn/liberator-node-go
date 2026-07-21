@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"fmt"
 	"log"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
 
+	"github.com/TexHik620953/liberator-node-go/internal/utils/cert"
 	"github.com/TexHik620953/liberator-node-go/internal/utils/safemap"
 	"github.com/TexHik620953/liberator-node-go/pkg/firewall"
 	"github.com/TexHik620953/liberator-node-go/pkg/iface"
@@ -23,6 +26,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	grpcctrl "github.com/TexHik620953/liberator-node-go/pkg/api/controllers/grpc"
 )
@@ -47,6 +51,11 @@ type App struct {
 
 	grpcLis    net.Listener
 	grpcServer *grpc.Server
+
+	// Certs
+
+	rootCa   *x509.Certificate
+	nodeCert tls.Certificate
 }
 
 func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
@@ -56,30 +65,46 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		routingTable: routingtable.New(),
 		firewall:     firewall.New(),
 		transports:   safemap.New[string, transport.Transport](),
-		grpcServer:   grpc.NewServer(),
 	}
 	var err error
+	// Load certs
+	app.rootCa, err = cert.ReadCertificateFromFile(cfg.Auth.RootCert)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load root cert: %v", err)
+	}
+	app.nodeCert, err = tls.LoadX509KeyPair(cfg.Auth.Cert, cfg.Auth.Key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load node cert: %v", err)
+	}
 
+	// Grpc listener and server
 	app.grpcLis, err = net.Listen("tcp", cfg.Api.Grpc.ListenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to launch grpc server: %w", err)
 	}
 
+	app.grpcServer = grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{
+		Certificates: []tls.Certificate{app.nodeCert},
+		NextProtos:   []string{"mesh"},
+	})))
+
+	// Db
 	if app.db, err = sql.Open("sqlite3", app.cfg.Database.File); err != nil {
 		return nil, fmt.Errorf("failed to open database: %v", err)
 	}
 	if err = app.db.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %v", err)
 	}
-
+	// managers
 	app.firewallManager = firewallmanager.New(app.ctx, app.firewall, app.db)
 	app.peersManager = peersmanager.New(app.ctx, app.db, app.firewallManager)
 
+	// Network stuff
 	if app.router, err = router.New(ctx, cfg.Router, app.routingTable, app.firewall); err != nil {
 		return nil, fmt.Errorf("failed to create router: %v", err)
 	}
 
-	if app.node, err = mesh.New(ctx, cfg.Mesh, app.router); err != nil {
+	if app.node, err = mesh.New(ctx, cfg.Mesh, app.rootCa, app.nodeCert, app.router); err != nil {
 		return nil, fmt.Errorf("failed to create mesh node: %v", err)
 	}
 

@@ -10,7 +10,6 @@ import (
 	"fmt"
 
 	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
-	"github.com/TexHik620953/liberator-node-go/internal/utils/cert"
 	"github.com/TexHik620953/liberator-node-go/internal/utils/peerstore"
 	"github.com/TexHik620953/liberator-node-go/internal/utils/quictransport"
 
@@ -75,18 +74,11 @@ type MeshNode struct {
 func New(
 	ctx context.Context,
 	cfg appconfig.MeshConfig,
+	rootCa *x509.Certificate,
+	nodeCert tls.Certificate,
 	router Router,
 ) (*MeshNode, error) {
 	// Load certs
-	rootCa, err := cert.ReadCertificateFromFile(cfg.RootCert)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load root cert: %v", err)
-	}
-
-	nodeCert, err := tls.LoadX509KeyPair(cfg.Cert, cfg.Key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load node cert: %v", err)
-	}
 
 	nodeId, err := extractPeerId(&nodeCert)
 	if err != nil {

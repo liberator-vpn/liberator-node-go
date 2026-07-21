@@ -9,6 +9,9 @@ import (
 // AuthConfig содержит настройки аутентификации
 type AuthConfig struct {
 	JWTSecret string `yaml:"jwt_secret"`
+	Cert      string `yaml:"cert"`
+	Key       string `yaml:"key"`
+	RootCert  string `yaml:"root_cert"`
 }
 
 // TUNConfig настройки выхода в интернет
@@ -32,9 +35,6 @@ type MeshConfig struct {
 	PeersStore        string        `yaml:"peers_store"`
 	DiscoveryInterval time.Duration `yaml:"discovery_interval"`
 	RTTUpdateInterval time.Duration `yaml:"rtt_update_interval"`
-	Cert              string        `yaml:"cert"`
-	Key               string        `yaml:"key"`
-	RootCert          string        `yaml:"root_cert"`
 }
 
 // MetricsConfig для сбора метрик

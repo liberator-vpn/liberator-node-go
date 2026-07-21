@@ -44,46 +44,11 @@ IngressPeerManager через RegisterIngress().
 Поправить чтобы роутер передавался в ингресс и эгресс.
 
 
-	peersManager := app.NewPeersManager(dbRepo)
-	
-	// 2. Создаем сетевое ядро (Data Plane)
-	routingTable := network.NewRoutingTable()
-	firewall := network.NewFirewall()
-	router := network.NewRouter(routingTable, firewall)
-	
-	// 3. Создаем физическое подключение (Сокет)
-	udpConn, _ := net.ListenUDP("udp", &net.UDPAddr{Port: 51820})
-	
-	// 4. Создаем двусторонний Транспорт и передаем ему Роутер
-	wgTransport := ingress.NewWireguardTransport("wg-main", udpConn, router)
-	
-	peersManager.RegisterIngress(ingressB)
-
-
-
-	Уведомления, Метрики, циклы очистки экспайреных токенов.
-
-
-
-panic: send on closed channel [recovered, repanicked]
-
-goroutine 70 [running]:
-sync.(*WaitGroup).Go.func1.1()
-        /root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.linux-amd64/src/sync/waitgroup.go:251 +0x45
-panic({0xd20200?, 0xe7a550?})
-        /root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.linux-amd64/src/runtime/panic.go:860 +0x13a
-github.com/TexHik620953/liberator-node-go/pkg/transport/awg.(*AWGTransport).writePacket(0x14b48e477540?, {0x14b4921ac000?, 0x14b48e3dee48?, 0x14b48e8afeb8?})
-        /root/liberator-node-go/pkg/transport/awg/transport.go:222 +0x88
-github.com/TexHik620953/liberator-node-go/pkg/transport/awg.(*AWGPeer).SendDatagram(0x0?, {0x14b4921ac000?, 0x100000000000000?, 0x100000000000000?})
-        /root/liberator-node-go/pkg/transport/awg/peer.go:37 +0x1c
-github.com/TexHik620953/liberator-node-go/pkg/router.(*Router).handleTunPacketInternal(0x0?, 0x14b48e477bd0)
-        /root/liberator-node-go/pkg/router/router.go:105 +0x57
-github.com/TexHik620953/liberator-node-go/pkg/router.(*Router).Run.func1()
-        /root/liberator-node-go/pkg/router/router.go:86 +0x7c
-sync.(*WaitGroup).Go.func1()
-        /root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.linux-amd64/src/sync/waitgroup.go:258 +0x4a
-created by sync.(*WaitGroup).Go in goroutine 65
-        /root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.linux-amd64/src/sync/waitgroup.go:238 +0x73
 
 
 fix subnet_address in client key generation
+
+
+peer stats grpc stuff
+
+добавить vless
