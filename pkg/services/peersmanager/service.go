@@ -109,6 +109,17 @@ func (pm *PeersManager) Run() error {
 }
 
 func (pm *PeersManager) CreatePeerAutoID(ctx context.Context, peer *model.Peer) error {
+	// Генерируем ключи для пира
+	transport, ex := pm.transports.Get(peer.Type)
+	if !ex {
+		return fmt.Errorf("transport with type %s not found", peer.Type)
+	}
+
+	err := transport.GeneratePeerKeys(peer)
+	if err != nil {
+		return fmt.Errorf("failed to generate peer keys: %v", err)
+	}
+
 	// Начинаем транзакцию с эксклюзивной блокировкой
 	tx, err := pm.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
@@ -144,12 +155,10 @@ func (pm *PeersManager) CreatePeerAutoID(ctx context.Context, peer *model.Peer) 
 	peer.ID = uint64(row.ID)
 	peer.VirtualIP = uint32(row.VirtualIp)
 
-	transport, ex := pm.transports.Get(peer.Type)
-	if ex {
-		if err = transport.PreparePeer(peer); err != nil {
-			return fmt.Errorf("failed to prepare peer: %v", err)
-		}
+	if err = transport.PreparePeer(peer); err != nil {
+		return fmt.Errorf("failed to prepare peer: %v", err)
 	}
+
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("commit tx: %w", err)
 	}
@@ -229,5 +238,5 @@ func (pm *PeersManager) GenerateClientKey(ctx context.Context, peerId uint64, ad
 		return "", fmt.Errorf("corresponding transport %s not found", peer.Type)
 	}
 
-	return transport.GenerateClientKey(peer, addr, name)
+	return transport.GenerateClientConnectionString(peer, addr, name)
 }

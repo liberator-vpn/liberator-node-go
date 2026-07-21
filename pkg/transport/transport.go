@@ -21,7 +21,8 @@ type Transport interface {
 	KickUser(ip uint32) bool
 	PreparePeer(peerInfo *model.Peer) error
 
-	GenerateClientKey(peer *model.Peer, addr string, name string) (string, error)
+	GenerateClientConnectionString(peer *model.Peer, addr string, name string) (string, error)
+	GeneratePeerKeys(peer *model.Peer) error
 
 	DeltaChan() chan TransportPeerStats
 	Type() string

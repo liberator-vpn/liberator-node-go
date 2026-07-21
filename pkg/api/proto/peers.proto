@@ -19,14 +19,14 @@ service PeerService {
 
 message CreatePeerAutoIDRequest {
   string type = 1;
-  string awg_private_key = 2;
-  string awg_public_key = 3;
-  google.protobuf.Timestamp expiration_date = 4;
+  google.protobuf.Timestamp expiration_date = 2;
 }
 
 message CreatePeerResponse {
   uint64 id = 1;
   uint32 virtual_ip=2;
+  string awg_private_key = 3;
+  string awg_public_key = 4;
 }
 
 

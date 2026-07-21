@@ -26,9 +26,7 @@ const (
 type CreatePeerAutoIDRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Type           string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
-	AwgPrivateKey  string                 `protobuf:"bytes,2,opt,name=awg_private_key,json=awgPrivateKey,proto3" json:"awg_private_key,omitempty"`
-	AwgPublicKey   string                 `protobuf:"bytes,3,opt,name=awg_public_key,json=awgPublicKey,proto3" json:"awg_public_key,omitempty"`
-	ExpirationDate *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=expiration_date,json=expirationDate,proto3" json:"expiration_date,omitempty"`
+	ExpirationDate *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expiration_date,json=expirationDate,proto3" json:"expiration_date,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -70,20 +68,6 @@ func (x *CreatePeerAutoIDRequest) GetType() string {
 	return ""
 }
 
-func (x *CreatePeerAutoIDRequest) GetAwgPrivateKey() string {
-	if x != nil {
-		return x.AwgPrivateKey
-	}
-	return ""
-}
-
-func (x *CreatePeerAutoIDRequest) GetAwgPublicKey() string {
-	if x != nil {
-		return x.AwgPublicKey
-	}
-	return ""
-}
-
 func (x *CreatePeerAutoIDRequest) GetExpirationDate() *timestamppb.Timestamp {
 	if x != nil {
 		return x.ExpirationDate
@@ -95,6 +79,8 @@ type CreatePeerResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
 	VirtualIp     uint32                 `protobuf:"varint,2,opt,name=virtual_ip,json=virtualIp,proto3" json:"virtual_ip,omitempty"`
+	AwgPrivateKey string                 `protobuf:"bytes,3,opt,name=awg_private_key,json=awgPrivateKey,proto3" json:"awg_private_key,omitempty"`
+	AwgPublicKey  string                 `protobuf:"bytes,4,opt,name=awg_public_key,json=awgPublicKey,proto3" json:"awg_public_key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -141,6 +127,20 @@ func (x *CreatePeerResponse) GetVirtualIp() uint32 {
 		return x.VirtualIp
 	}
 	return 0
+}
+
+func (x *CreatePeerResponse) GetAwgPrivateKey() string {
+	if x != nil {
+		return x.AwgPrivateKey
+	}
+	return ""
+}
+
+func (x *CreatePeerResponse) GetAwgPublicKey() string {
+	if x != nil {
+		return x.AwgPublicKey
+	}
+	return ""
 }
 
 type GetPeerRequest struct {
@@ -491,16 +491,16 @@ var File_peers_proto protoreflect.FileDescriptor
 
 const file_peers_proto_rawDesc = "" +
 	"\n" +
-	"\vpeers.proto\x12\x04grpc\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc0\x01\n" +
+	"\vpeers.proto\x12\x04grpc\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"r\n" +
 	"\x17CreatePeerAutoIDRequest\x12\x12\n" +
-	"\x04type\x18\x01 \x01(\tR\x04type\x12&\n" +
-	"\x0fawg_private_key\x18\x02 \x01(\tR\rawgPrivateKey\x12$\n" +
-	"\x0eawg_public_key\x18\x03 \x01(\tR\fawgPublicKey\x12C\n" +
-	"\x0fexpiration_date\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x0eexpirationDate\"C\n" +
+	"\x04type\x18\x01 \x01(\tR\x04type\x12C\n" +
+	"\x0fexpiration_date\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x0eexpirationDate\"\x91\x01\n" +
 	"\x12CreatePeerResponse\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x1d\n" +
 	"\n" +
-	"virtual_ip\x18\x02 \x01(\rR\tvirtualIp\" \n" +
+	"virtual_ip\x18\x02 \x01(\rR\tvirtualIp\x12&\n" +
+	"\x0fawg_private_key\x18\x03 \x01(\tR\rawgPrivateKey\x12$\n" +
+	"\x0eawg_public_key\x18\x04 \x01(\tR\fawgPublicKey\" \n" +
 	"\x0eGetPeerRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\"\xe1\x02\n" +
 	"\x04Peer\x12\x0e\n" +

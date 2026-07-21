@@ -3,6 +3,7 @@ package awg
 import (
 	"bytes"
 	"compress/zlib"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/TexHik620953/liberator-node-go/internal/utils/netutils"
 	"github.com/TexHik620953/liberator-node-go/pkg/model"
+	"golang.org/x/crypto/curve25519"
 
 	"github.com/google/uuid"
 )
@@ -249,7 +251,7 @@ func hexToBase64(h string) string {
 	b, _ := hex.DecodeString(h)
 	return base64.StdEncoding.EncodeToString(b)
 }
-func (awg *AWGTransport) GenerateClientKey(peer *model.Peer, addr string, name string) (string, error) {
+func (awg *AWGTransport) GenerateClientConnectionString(peer *model.Peer, addr string, name string) (string, error) {
 	connectionStr, err := generateURI(&ClientParams{
 		EndpointName: name,
 		ServerAddr:   addr,
@@ -278,4 +280,33 @@ func (awg *AWGTransport) GenerateClientKey(peer *model.Peer, addr string, name s
 		S4: strconv.Itoa(awg.cfg.S4),
 	})
 	return connectionStr, err
+}
+func generateKeyPair() (privKey string, pubKey string, err error) {
+	var privBytes [32]byte
+	if _, err = rand.Read(privBytes[:]); err != nil {
+		return "", "", err
+	}
+
+	// Сначала вычисляем публичный ключ из сырых байт
+	pubBytes, err := curve25519.X25519(privBytes[:], curve25519.Basepoint)
+	if err != nil {
+		return "", "", err
+	}
+
+	// Теперь клампируем приватный ключ для хранения/использования
+	privBytes[0] &= 248
+	privBytes[31] &= 127
+	privBytes[31] |= 64
+
+	// Возвращаем оба ключа в HEX формате
+	return hex.EncodeToString(privBytes[:]), hex.EncodeToString(pubBytes), nil
+}
+func (awg *AWGTransport) GeneratePeerKeys(peer *model.Peer) error {
+	priv, pub, err := generateKeyPair()
+	if err != nil {
+		return err
+	}
+	peer.AwgPrivateKey = priv
+	peer.AwgPublicKey = pub
+	return nil
 }
