@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
+	"github.com/TexHik620953/liberator-node-go/internal/infra/ipapi"
 
 	"github.com/TexHik620953/liberator-node-go/internal/utils/cert"
 	"github.com/TexHik620953/liberator-node-go/internal/utils/safemap"
@@ -56,6 +57,8 @@ type App struct {
 
 	rootCa   *x509.Certificate
 	nodeCert tls.Certificate
+
+	ipInfo *ipapi.IpInfo
 }
 
 func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
@@ -108,6 +111,16 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		return nil, fmt.Errorf("failed to create mesh node: %v", err)
 	}
 
+	// Get current server ip and location
+	ipInfo, err := ipapi.GetIpInfo()
+	if err != nil {
+		log.Printf("failed to update err: %v", err)
+		ipInfo = &ipapi.IpInfo{
+			CountryCode: "UNKNOWN",
+		}
+	}
+	app.ipInfo = ipInfo
+
 	// Create tun iface
 	if app.tunIface, err = iface.NewTUN(
 		ctx,
@@ -158,7 +171,7 @@ func (app *App) Run() error {
 	// Registering controllers
 	grpcctrl.RegisterFirewallService(app.grpcServer, app.firewallManager)
 	grpcctrl.RegisterPeerService(app.grpcServer, app.peersManager)
-	grpcctrl.RegisterNodeService(app.grpcServer, app.node.NodeID())
+	grpcctrl.RegisterNodeService(app.grpcServer, app.node.NodeID(), *app.ipInfo)
 
 	if err := app.firewallManager.Run(); err != nil {
 		return fmt.Errorf("failed to start firewall manager: %v", err)

@@ -61,6 +61,7 @@ func (*PingMessage) Descriptor() ([]byte, []int) {
 type PongMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	CountryCode   string                 `protobuf:"bytes,2,opt,name=country_code,json=countryCode,proto3" json:"country_code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -102,15 +103,23 @@ func (x *PongMessage) GetNodeId() string {
 	return ""
 }
 
+func (x *PongMessage) GetCountryCode() string {
+	if x != nil {
+		return x.CountryCode
+	}
+	return ""
+}
+
 var File_node_proto protoreflect.FileDescriptor
 
 const file_node_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
 	"node.proto\x12\x04grpc\x1a\x1bgoogle/protobuf/empty.proto\"\r\n" +
-	"\vPingMessage\"&\n" +
+	"\vPingMessage\"I\n" +
 	"\vPongMessage\x12\x17\n" +
-	"\anode_id\x18\x01 \x01(\tR\x06nodeId2;\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12!\n" +
+	"\fcountry_code\x18\x02 \x01(\tR\vcountryCode2;\n" +
 	"\vNodeService\x12,\n" +
 	"\x04Ping\x12\x11.grpc.PingMessage\x1a\x11.grpc.PongMessageB=Z;github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
 

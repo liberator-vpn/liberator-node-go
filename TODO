@@ -52,3 +52,6 @@ fix subnet_address in client key generation
 peer stats grpc stuff
 
 добавить vless
+
+
+mesh должен работать на том-же grpc сервере что и основное приложение
