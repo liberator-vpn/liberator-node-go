@@ -20,6 +20,8 @@ service PeerService {
 message CreatePeerAutoIDRequest {
   string type = 1;
   google.protobuf.Timestamp expiration_date = 2;
+  optional double traffic_limit_gb = 3;
+  optional double speed_limit_mbps = 4;
 }
 
 message CreatePeerResponse {

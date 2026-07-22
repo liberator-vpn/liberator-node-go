@@ -142,12 +142,26 @@ func (pm *PeersManager) CreatePeerAutoID(ctx context.Context, peer *model.Peer) 
 	q := repos.New(tx)
 
 	// Выполняем вставку (подзапрос MAX+1 будет безопасен)
-	row, err := q.CreatePeerAutoID(ctx, repos.CreatePeerAutoIDParams{
+	rq := repos.CreatePeerAutoIDParams{
 		Type:           peer.Type,
 		AwgPrivateKey:  peer.AwgPrivateKey,
 		AwgPublicKey:   peer.AwgPublicKey,
 		ExpirationDate: peer.ExpirationDate,
-	})
+	}
+	if peer.TrafficLimitGb != nil {
+		rq.TrafficLimitGb = sql.NullFloat64{
+			Float64: *peer.TrafficLimitGb,
+			Valid:   true,
+		}
+	}
+	if peer.SpeedLimitMbps != nil {
+		rq.SpeedLimitMbps = sql.NullFloat64{
+			Float64: *peer.SpeedLimitMbps,
+			Valid:   true,
+		}
+	}
+
+	row, err := q.CreatePeerAutoID(ctx, rq)
 	if err != nil {
 		return fmt.Errorf("create peer: %w", err)
 	}
@@ -196,7 +210,7 @@ func (pm *PeersManager) DeletePeer(ctx context.Context, peerId uint64) error {
 
 // peerFromRow преобразует сгенерированную sqlc-строку в Peer.
 func peerFromRow(row repos.Peer) *model.Peer {
-	return &model.Peer{
+	p := &model.Peer{
 		ID:             uint64(row.ID),
 		Type:           row.Type,
 		VirtualIP:      uint32(row.VirtualIp),
@@ -207,6 +221,14 @@ func peerFromRow(row repos.Peer) *model.Peer {
 		AwgPrivateKey:  row.AwgPrivateKey,
 		AwgPublicKey:   row.AwgPublicKey,
 	}
+
+	if row.TrafficLimitGb.Valid {
+		p.TrafficLimitGb = &row.TrafficLimitGb.Float64
+	}
+	if row.SpeedLimitMbps.Valid {
+		p.SpeedLimitMbps = &row.SpeedLimitMbps.Float64
+	}
+	return p
 }
 
 func (pm *PeersManager) GetPeerByVirtualIP(ctx context.Context, virtualIP uint32) (*model.Peer, error) {

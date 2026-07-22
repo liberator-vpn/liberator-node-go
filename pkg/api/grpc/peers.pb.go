@@ -27,6 +27,8 @@ type CreatePeerAutoIDRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Type           string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
 	ExpirationDate *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expiration_date,json=expirationDate,proto3" json:"expiration_date,omitempty"`
+	TrafficLimitGb *float64               `protobuf:"fixed64,3,opt,name=traffic_limit_gb,json=trafficLimitGb,proto3,oneof" json:"traffic_limit_gb,omitempty"`
+	SpeedLimitMbps *float64               `protobuf:"fixed64,4,opt,name=speed_limit_mbps,json=speedLimitMbps,proto3,oneof" json:"speed_limit_mbps,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -73,6 +75,20 @@ func (x *CreatePeerAutoIDRequest) GetExpirationDate() *timestamppb.Timestamp {
 		return x.ExpirationDate
 	}
 	return nil
+}
+
+func (x *CreatePeerAutoIDRequest) GetTrafficLimitGb() float64 {
+	if x != nil && x.TrafficLimitGb != nil {
+		return *x.TrafficLimitGb
+	}
+	return 0
+}
+
+func (x *CreatePeerAutoIDRequest) GetSpeedLimitMbps() float64 {
+	if x != nil && x.SpeedLimitMbps != nil {
+		return *x.SpeedLimitMbps
+	}
+	return 0
 }
 
 type CreatePeerResponse struct {
@@ -491,10 +507,14 @@ var File_peers_proto protoreflect.FileDescriptor
 
 const file_peers_proto_rawDesc = "" +
 	"\n" +
-	"\vpeers.proto\x12\x04grpc\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"r\n" +
+	"\vpeers.proto\x12\x04grpc\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xfa\x01\n" +
 	"\x17CreatePeerAutoIDRequest\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12C\n" +
-	"\x0fexpiration_date\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x0eexpirationDate\"\x91\x01\n" +
+	"\x0fexpiration_date\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x0eexpirationDate\x12-\n" +
+	"\x10traffic_limit_gb\x18\x03 \x01(\x01H\x00R\x0etrafficLimitGb\x88\x01\x01\x12-\n" +
+	"\x10speed_limit_mbps\x18\x04 \x01(\x01H\x01R\x0espeedLimitMbps\x88\x01\x01B\x13\n" +
+	"\x11_traffic_limit_gbB\x13\n" +
+	"\x11_speed_limit_mbps\"\x91\x01\n" +
 	"\x12CreatePeerResponse\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x1d\n" +
 	"\n" +
@@ -586,6 +606,7 @@ func file_peers_proto_init() {
 	if File_peers_proto != nil {
 		return
 	}
+	file_peers_proto_msgTypes[0].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

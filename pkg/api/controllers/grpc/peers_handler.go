@@ -27,7 +27,9 @@ func RegisterPeerService(server *grpc.Server, manager *peersmanager.PeersManager
 
 func (h *PeersHandler) CreatePeerAutoID(ctx context.Context, req *pb.CreatePeerAutoIDRequest) (*pb.CreatePeerResponse, error) {
 	domainPeer := &model.Peer{
-		Type: req.Type,
+		Type:           req.Type,
+		TrafficLimitGb: req.TrafficLimitGb,
+		SpeedLimitMbps: req.SpeedLimitMbps,
 	}
 
 	// Обрабатываем nullable/optional дату окончания действия

@@ -98,6 +98,11 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	if err = app.db.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %v", err)
 	}
+	err = app.migrateDatabase()
+	if err != nil {
+		return nil, fmt.Errorf("failed to migrate database: %v", err)
+	}
+
 	// managers
 	app.firewallManager = firewallmanager.New(app.ctx, app.firewall, app.db)
 	app.peersManager = peersmanager.New(app.ctx, app.db, app.firewallManager)

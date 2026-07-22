@@ -7,6 +7,7 @@ package repos
 
 import (
 	"context"
+	"database/sql"
 	"time"
 )
 
@@ -14,32 +15,40 @@ const createPeerAutoID = `-- name: CreatePeerAutoID :one
 INSERT INTO peers (
     type,
     virtual_ip,
+    expiration_date,
+    traffic_limit_gb,
+    speed_limit_mbps,
     awg_private_key,
-    awg_public_key,
-    expiration_date
+    awg_public_key
 ) VALUES (
-    ?1,
-    COALESCE((SELECT MAX(virtual_ip) + 1 FROM peers), 1),
-    ?2,
-    ?3,
-    ?4
-)
-RETURNING id, type, virtual_ip, last_seen, expiration_date, from_peer_total, to_peer_total, awg_private_key, awg_public_key
+             ?1,
+             COALESCE((SELECT MAX(virtual_ip) + 1 FROM peers), 1),
+             ?2,
+             ?3,
+             ?4,
+             ?5,
+             ?6
+         )
+RETURNING id, type, virtual_ip, last_seen, expiration_date, from_peer_total, to_peer_total, traffic_limit_gb, speed_limit_mbps, awg_private_key, awg_public_key
 `
 
 type CreatePeerAutoIDParams struct {
 	Type           string
+	ExpirationDate *time.Time
+	TrafficLimitGb sql.NullFloat64
+	SpeedLimitMbps sql.NullFloat64
 	AwgPrivateKey  string
 	AwgPublicKey   string
-	ExpirationDate *time.Time
 }
 
 func (q *Queries) CreatePeerAutoID(ctx context.Context, arg CreatePeerAutoIDParams) (Peer, error) {
 	row := q.db.QueryRowContext(ctx, createPeerAutoID,
 		arg.Type,
+		arg.ExpirationDate,
+		arg.TrafficLimitGb,
+		arg.SpeedLimitMbps,
 		arg.AwgPrivateKey,
 		arg.AwgPublicKey,
-		arg.ExpirationDate,
 	)
 	var i Peer
 	err := row.Scan(
@@ -50,6 +59,8 @@ func (q *Queries) CreatePeerAutoID(ctx context.Context, arg CreatePeerAutoIDPara
 		&i.ExpirationDate,
 		&i.FromPeerTotal,
 		&i.ToPeerTotal,
+		&i.TrafficLimitGb,
+		&i.SpeedLimitMbps,
 		&i.AwgPrivateKey,
 		&i.AwgPublicKey,
 	)
@@ -57,8 +68,7 @@ func (q *Queries) CreatePeerAutoID(ctx context.Context, arg CreatePeerAutoIDPara
 }
 
 const deletePeer = `-- name: DeletePeer :exec
-DELETE FROM peers
-WHERE id = ?1
+DELETE FROM peers WHERE id = ?1
 `
 
 func (q *Queries) DeletePeer(ctx context.Context, id int64) error {
@@ -67,8 +77,7 @@ func (q *Queries) DeletePeer(ctx context.Context, id int64) error {
 }
 
 const getPeerByID = `-- name: GetPeerByID :one
-SELECT id, type, virtual_ip, last_seen, expiration_date, from_peer_total, to_peer_total, awg_private_key, awg_public_key FROM peers
-WHERE id = ?1
+SELECT id, type, virtual_ip, last_seen, expiration_date, from_peer_total, to_peer_total, traffic_limit_gb, speed_limit_mbps, awg_private_key, awg_public_key FROM peers WHERE id = ?1
 `
 
 func (q *Queries) GetPeerByID(ctx context.Context, id int64) (Peer, error) {
@@ -82,6 +91,8 @@ func (q *Queries) GetPeerByID(ctx context.Context, id int64) (Peer, error) {
 		&i.ExpirationDate,
 		&i.FromPeerTotal,
 		&i.ToPeerTotal,
+		&i.TrafficLimitGb,
+		&i.SpeedLimitMbps,
 		&i.AwgPrivateKey,
 		&i.AwgPublicKey,
 	)
@@ -89,8 +100,7 @@ func (q *Queries) GetPeerByID(ctx context.Context, id int64) (Peer, error) {
 }
 
 const getPeerByVirtualIP = `-- name: GetPeerByVirtualIP :one
-SELECT id, type, virtual_ip, last_seen, expiration_date, from_peer_total, to_peer_total, awg_private_key, awg_public_key FROM peers
-WHERE virtual_ip = ?1
+SELECT id, type, virtual_ip, last_seen, expiration_date, from_peer_total, to_peer_total, traffic_limit_gb, speed_limit_mbps, awg_private_key, awg_public_key FROM peers WHERE virtual_ip = ?1
 `
 
 func (q *Queries) GetPeerByVirtualIP(ctx context.Context, virtualIp int64) (Peer, error) {
@@ -104,6 +114,8 @@ func (q *Queries) GetPeerByVirtualIP(ctx context.Context, virtualIp int64) (Peer
 		&i.ExpirationDate,
 		&i.FromPeerTotal,
 		&i.ToPeerTotal,
+		&i.TrafficLimitGb,
+		&i.SpeedLimitMbps,
 		&i.AwgPrivateKey,
 		&i.AwgPublicKey,
 	)
@@ -111,8 +123,7 @@ func (q *Queries) GetPeerByVirtualIP(ctx context.Context, virtualIp int64) (Peer
 }
 
 const listPeers = `-- name: ListPeers :many
-SELECT id, type, virtual_ip, last_seen, expiration_date, from_peer_total, to_peer_total, awg_private_key, awg_public_key FROM peers
-ORDER BY id
+SELECT id, type, virtual_ip, last_seen, expiration_date, from_peer_total, to_peer_total, traffic_limit_gb, speed_limit_mbps, awg_private_key, awg_public_key FROM peers ORDER BY id
 `
 
 func (q *Queries) ListPeers(ctx context.Context) ([]Peer, error) {
@@ -132,6 +143,8 @@ func (q *Queries) ListPeers(ctx context.Context) ([]Peer, error) {
 			&i.ExpirationDate,
 			&i.FromPeerTotal,
 			&i.ToPeerTotal,
+			&i.TrafficLimitGb,
+			&i.SpeedLimitMbps,
 			&i.AwgPrivateKey,
 			&i.AwgPublicKey,
 		); err != nil {

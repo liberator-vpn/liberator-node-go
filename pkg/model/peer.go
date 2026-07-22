@@ -1,6 +1,8 @@
 package model
 
-import "time"
+import (
+	"time"
+)
 
 type Peer struct {
 	ID             uint64
@@ -10,6 +12,8 @@ type Peer struct {
 	ExpirationDate *time.Time
 	FromPeerTotal  uint64
 	ToPeerTotal    uint64
+	TrafficLimitGb *float64
+	SpeedLimitMbps *float64
 	AwgPrivateKey  string
 	AwgPublicKey   string
 }

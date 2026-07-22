@@ -5,6 +5,7 @@
 package repos
 
 import (
+	"database/sql"
 	"time"
 )
 
@@ -16,6 +17,8 @@ type Peer struct {
 	ExpirationDate *time.Time
 	FromPeerTotal  int64
 	ToPeerTotal    int64
+	TrafficLimitGb sql.NullFloat64
+	SpeedLimitMbps sql.NullFloat64
 	AwgPrivateKey  string
 	AwgPublicKey   string
 }
