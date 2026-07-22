@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	FirewallService_AddRule_FullMethodName            = "/grpc.FirewallService/AddRule"
+	FirewallService_ListPeerRules_FullMethodName      = "/grpc.FirewallService/ListPeerRules"
 	FirewallService_RemoveRule_FullMethodName         = "/grpc.FirewallService/RemoveRule"
 	FirewallService_RemoveAllPeerRules_FullMethodName = "/grpc.FirewallService/RemoveAllPeerRules"
 )
@@ -28,10 +29,9 @@ const (
 // FirewallServiceClient is the client API for FirewallService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-//
-// protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative pkg/api/proto/firewall.proto
 type FirewallServiceClient interface {
-	AddRule(ctx context.Context, in *AddRuleRequest, opts ...grpc.CallOption) (*AddRuleResponse, error)
+	AddRule(ctx context.Context, in *PortRule, opts ...grpc.CallOption) (*AddRuleResponse, error)
+	ListPeerRules(ctx context.Context, in *ListPeerRulesRequest, opts ...grpc.CallOption) (*ListRulesResponse, error)
 	RemoveRule(ctx context.Context, in *RemoveRuleRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	RemoveAllPeerRules(ctx context.Context, in *RemoveAllPeerRulesRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
@@ -44,10 +44,20 @@ func NewFirewallServiceClient(cc grpc.ClientConnInterface) FirewallServiceClient
 	return &firewallServiceClient{cc}
 }
 
-func (c *firewallServiceClient) AddRule(ctx context.Context, in *AddRuleRequest, opts ...grpc.CallOption) (*AddRuleResponse, error) {
+func (c *firewallServiceClient) AddRule(ctx context.Context, in *PortRule, opts ...grpc.CallOption) (*AddRuleResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AddRuleResponse)
 	err := c.cc.Invoke(ctx, FirewallService_AddRule_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *firewallServiceClient) ListPeerRules(ctx context.Context, in *ListPeerRulesRequest, opts ...grpc.CallOption) (*ListRulesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListRulesResponse)
+	err := c.cc.Invoke(ctx, FirewallService_ListPeerRules_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -77,10 +87,9 @@ func (c *firewallServiceClient) RemoveAllPeerRules(ctx context.Context, in *Remo
 // FirewallServiceServer is the server API for FirewallService service.
 // All implementations must embed UnimplementedFirewallServiceServer
 // for forward compatibility.
-//
-// protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative pkg/api/proto/firewall.proto
 type FirewallServiceServer interface {
-	AddRule(context.Context, *AddRuleRequest) (*AddRuleResponse, error)
+	AddRule(context.Context, *PortRule) (*AddRuleResponse, error)
+	ListPeerRules(context.Context, *ListPeerRulesRequest) (*ListRulesResponse, error)
 	RemoveRule(context.Context, *RemoveRuleRequest) (*emptypb.Empty, error)
 	RemoveAllPeerRules(context.Context, *RemoveAllPeerRulesRequest) (*emptypb.Empty, error)
 	mustEmbedUnimplementedFirewallServiceServer()
@@ -93,8 +102,11 @@ type FirewallServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedFirewallServiceServer struct{}
 
-func (UnimplementedFirewallServiceServer) AddRule(context.Context, *AddRuleRequest) (*AddRuleResponse, error) {
+func (UnimplementedFirewallServiceServer) AddRule(context.Context, *PortRule) (*AddRuleResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AddRule not implemented")
+}
+func (UnimplementedFirewallServiceServer) ListPeerRules(context.Context, *ListPeerRulesRequest) (*ListRulesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListPeerRules not implemented")
 }
 func (UnimplementedFirewallServiceServer) RemoveRule(context.Context, *RemoveRuleRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemoveRule not implemented")
@@ -124,7 +136,7 @@ func RegisterFirewallServiceServer(s grpc.ServiceRegistrar, srv FirewallServiceS
 }
 
 func _FirewallService_AddRule_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(AddRuleRequest)
+	in := new(PortRule)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -136,7 +148,25 @@ func _FirewallService_AddRule_Handler(srv interface{}, ctx context.Context, dec 
 		FullMethod: FirewallService_AddRule_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(FirewallServiceServer).AddRule(ctx, req.(*AddRuleRequest))
+		return srv.(FirewallServiceServer).AddRule(ctx, req.(*PortRule))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FirewallService_ListPeerRules_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListPeerRulesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FirewallServiceServer).ListPeerRules(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FirewallService_ListPeerRules_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FirewallServiceServer).ListPeerRules(ctx, req.(*ListPeerRulesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -187,6 +217,10 @@ var FirewallService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AddRule",
 			Handler:    _FirewallService_AddRule_Handler,
+		},
+		{
+			MethodName: "ListPeerRules",
+			Handler:    _FirewallService_ListPeerRules_Handler,
 		},
 		{
 			MethodName: "RemoveRule",

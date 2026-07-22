@@ -22,19 +22,108 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type ListPeerRulesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PeerId        uint64                 `protobuf:"varint,1,opt,name=peer_id,json=peerId,proto3" json:"peer_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListPeerRulesRequest) Reset() {
+	*x = ListPeerRulesRequest{}
+	mi := &file_firewall_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListPeerRulesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListPeerRulesRequest) ProtoMessage() {}
+
+func (x *ListPeerRulesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_firewall_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListPeerRulesRequest.ProtoReflect.Descriptor instead.
+func (*ListPeerRulesRequest) Descriptor() ([]byte, []int) {
+	return file_firewall_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *ListPeerRulesRequest) GetPeerId() uint64 {
+	if x != nil {
+		return x.PeerId
+	}
+	return 0
+}
+
+type ListRulesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Rules         []*PortRule            `protobuf:"bytes,1,rep,name=rules,proto3" json:"rules,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRulesResponse) Reset() {
+	*x = ListRulesResponse{}
+	mi := &file_firewall_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRulesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRulesResponse) ProtoMessage() {}
+
+func (x *ListRulesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_firewall_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRulesResponse.ProtoReflect.Descriptor instead.
+func (*ListRulesResponse) Descriptor() ([]byte, []int) {
+	return file_firewall_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ListRulesResponse) GetRules() []*PortRule {
+	if x != nil {
+		return x.Rules
+	}
+	return nil
+}
+
 type PortRule struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	TargetAddress  *uint32                `protobuf:"varint,1,opt,name=target_address,json=targetAddress,proto3,oneof" json:"target_address,omitempty"`
-	Protocol       string                 `protobuf:"bytes,2,opt,name=protocol,proto3" json:"protocol,omitempty"`
-	PortRangeStart uint32                 `protobuf:"varint,3,opt,name=port_range_start,json=portRangeStart,proto3" json:"port_range_start,omitempty"`
-	PortRangeEnd   *uint32                `protobuf:"varint,4,opt,name=port_range_end,json=portRangeEnd,proto3,oneof" json:"port_range_end,omitempty"`
+	PeerId         uint64                 `protobuf:"varint,1,opt,name=peer_id,json=peerId,proto3" json:"peer_id,omitempty"`
+	TargetAddress  *uint32                `protobuf:"varint,2,opt,name=target_address,json=targetAddress,proto3,oneof" json:"target_address,omitempty"`
+	Protocol       string                 `protobuf:"bytes,3,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	PortRangeStart uint32                 `protobuf:"varint,4,opt,name=port_range_start,json=portRangeStart,proto3" json:"port_range_start,omitempty"`
+	PortRangeEnd   *uint32                `protobuf:"varint,5,opt,name=port_range_end,json=portRangeEnd,proto3,oneof" json:"port_range_end,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
 func (x *PortRule) Reset() {
 	*x = PortRule{}
-	mi := &file_firewall_proto_msgTypes[0]
+	mi := &file_firewall_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -46,7 +135,7 @@ func (x *PortRule) String() string {
 func (*PortRule) ProtoMessage() {}
 
 func (x *PortRule) ProtoReflect() protoreflect.Message {
-	mi := &file_firewall_proto_msgTypes[0]
+	mi := &file_firewall_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -59,7 +148,14 @@ func (x *PortRule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PortRule.ProtoReflect.Descriptor instead.
 func (*PortRule) Descriptor() ([]byte, []int) {
-	return file_firewall_proto_rawDescGZIP(), []int{0}
+	return file_firewall_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *PortRule) GetPeerId() uint64 {
+	if x != nil {
+		return x.PeerId
+	}
+	return 0
 }
 
 func (x *PortRule) GetTargetAddress() uint32 {
@@ -90,58 +186,6 @@ func (x *PortRule) GetPortRangeEnd() uint32 {
 	return 0
 }
 
-type AddRuleRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	PeerId        uint64                 `protobuf:"varint,1,opt,name=peer_id,json=peerId,proto3" json:"peer_id,omitempty"`
-	Rule          *PortRule              `protobuf:"bytes,2,opt,name=rule,proto3" json:"rule,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *AddRuleRequest) Reset() {
-	*x = AddRuleRequest{}
-	mi := &file_firewall_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *AddRuleRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*AddRuleRequest) ProtoMessage() {}
-
-func (x *AddRuleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_firewall_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use AddRuleRequest.ProtoReflect.Descriptor instead.
-func (*AddRuleRequest) Descriptor() ([]byte, []int) {
-	return file_firewall_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *AddRuleRequest) GetPeerId() uint64 {
-	if x != nil {
-		return x.PeerId
-	}
-	return 0
-}
-
-func (x *AddRuleRequest) GetRule() *PortRule {
-	if x != nil {
-		return x.Rule
-	}
-	return nil
-}
-
 type AddRuleResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RuleId        uint64                 `protobuf:"varint,1,opt,name=rule_id,json=ruleId,proto3" json:"rule_id,omitempty"`
@@ -151,7 +195,7 @@ type AddRuleResponse struct {
 
 func (x *AddRuleResponse) Reset() {
 	*x = AddRuleResponse{}
-	mi := &file_firewall_proto_msgTypes[2]
+	mi := &file_firewall_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -163,7 +207,7 @@ func (x *AddRuleResponse) String() string {
 func (*AddRuleResponse) ProtoMessage() {}
 
 func (x *AddRuleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_firewall_proto_msgTypes[2]
+	mi := &file_firewall_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -176,7 +220,7 @@ func (x *AddRuleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddRuleResponse.ProtoReflect.Descriptor instead.
 func (*AddRuleResponse) Descriptor() ([]byte, []int) {
-	return file_firewall_proto_rawDescGZIP(), []int{2}
+	return file_firewall_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *AddRuleResponse) GetRuleId() uint64 {
@@ -195,7 +239,7 @@ type RemoveRuleRequest struct {
 
 func (x *RemoveRuleRequest) Reset() {
 	*x = RemoveRuleRequest{}
-	mi := &file_firewall_proto_msgTypes[3]
+	mi := &file_firewall_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -207,7 +251,7 @@ func (x *RemoveRuleRequest) String() string {
 func (*RemoveRuleRequest) ProtoMessage() {}
 
 func (x *RemoveRuleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_firewall_proto_msgTypes[3]
+	mi := &file_firewall_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -220,7 +264,7 @@ func (x *RemoveRuleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveRuleRequest.ProtoReflect.Descriptor instead.
 func (*RemoveRuleRequest) Descriptor() ([]byte, []int) {
-	return file_firewall_proto_rawDescGZIP(), []int{3}
+	return file_firewall_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *RemoveRuleRequest) GetRuleId() uint64 {
@@ -239,7 +283,7 @@ type RemoveAllPeerRulesRequest struct {
 
 func (x *RemoveAllPeerRulesRequest) Reset() {
 	*x = RemoveAllPeerRulesRequest{}
-	mi := &file_firewall_proto_msgTypes[4]
+	mi := &file_firewall_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -251,7 +295,7 @@ func (x *RemoveAllPeerRulesRequest) String() string {
 func (*RemoveAllPeerRulesRequest) ProtoMessage() {}
 
 func (x *RemoveAllPeerRulesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_firewall_proto_msgTypes[4]
+	mi := &file_firewall_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -264,7 +308,7 @@ func (x *RemoveAllPeerRulesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveAllPeerRulesRequest.ProtoReflect.Descriptor instead.
 func (*RemoveAllPeerRulesRequest) Descriptor() ([]byte, []int) {
-	return file_firewall_proto_rawDescGZIP(), []int{4}
+	return file_firewall_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *RemoveAllPeerRulesRequest) GetPeerId() uint64 {
@@ -278,25 +322,28 @@ var File_firewall_proto protoreflect.FileDescriptor
 
 const file_firewall_proto_rawDesc = "" +
 	"\n" +
-	"\x0efirewall.proto\x12\x04grpc\x1a\x1bgoogle/protobuf/empty.proto\"\xcd\x01\n" +
-	"\bPortRule\x12*\n" +
-	"\x0etarget_address\x18\x01 \x01(\rH\x00R\rtargetAddress\x88\x01\x01\x12\x1a\n" +
-	"\bprotocol\x18\x02 \x01(\tR\bprotocol\x12(\n" +
-	"\x10port_range_start\x18\x03 \x01(\rR\x0eportRangeStart\x12)\n" +
-	"\x0eport_range_end\x18\x04 \x01(\rH\x01R\fportRangeEnd\x88\x01\x01B\x11\n" +
+	"\x0efirewall.proto\x12\x04grpc\x1a\x1bgoogle/protobuf/empty.proto\"/\n" +
+	"\x14ListPeerRulesRequest\x12\x17\n" +
+	"\apeer_id\x18\x01 \x01(\x04R\x06peerId\"9\n" +
+	"\x11ListRulesResponse\x12$\n" +
+	"\x05rules\x18\x01 \x03(\v2\x0e.grpc.PortRuleR\x05rules\"\xe6\x01\n" +
+	"\bPortRule\x12\x17\n" +
+	"\apeer_id\x18\x01 \x01(\x04R\x06peerId\x12*\n" +
+	"\x0etarget_address\x18\x02 \x01(\rH\x00R\rtargetAddress\x88\x01\x01\x12\x1a\n" +
+	"\bprotocol\x18\x03 \x01(\tR\bprotocol\x12(\n" +
+	"\x10port_range_start\x18\x04 \x01(\rR\x0eportRangeStart\x12)\n" +
+	"\x0eport_range_end\x18\x05 \x01(\rH\x01R\fportRangeEnd\x88\x01\x01B\x11\n" +
 	"\x0f_target_addressB\x11\n" +
-	"\x0f_port_range_end\"M\n" +
-	"\x0eAddRuleRequest\x12\x17\n" +
-	"\apeer_id\x18\x01 \x01(\x04R\x06peerId\x12\"\n" +
-	"\x04rule\x18\x02 \x01(\v2\x0e.grpc.PortRuleR\x04rule\"*\n" +
+	"\x0f_port_range_end\"*\n" +
 	"\x0fAddRuleResponse\x12\x17\n" +
 	"\arule_id\x18\x01 \x01(\x04R\x06ruleId\",\n" +
 	"\x11RemoveRuleRequest\x12\x17\n" +
 	"\arule_id\x18\x01 \x01(\x04R\x06ruleId\"4\n" +
 	"\x19RemoveAllPeerRulesRequest\x12\x17\n" +
-	"\apeer_id\x18\x01 \x01(\x04R\x06peerId2\xd7\x01\n" +
-	"\x0fFirewallService\x126\n" +
-	"\aAddRule\x12\x14.grpc.AddRuleRequest\x1a\x15.grpc.AddRuleResponse\x12=\n" +
+	"\apeer_id\x18\x01 \x01(\x04R\x06peerId2\x97\x02\n" +
+	"\x0fFirewallService\x120\n" +
+	"\aAddRule\x12\x0e.grpc.PortRule\x1a\x15.grpc.AddRuleResponse\x12D\n" +
+	"\rListPeerRules\x12\x1a.grpc.ListPeerRulesRequest\x1a\x17.grpc.ListRulesResponse\x12=\n" +
 	"\n" +
 	"RemoveRule\x12\x17.grpc.RemoveRuleRequest\x1a\x16.google.protobuf.Empty\x12M\n" +
 	"\x12RemoveAllPeerRules\x12\x1f.grpc.RemoveAllPeerRulesRequest\x1a\x16.google.protobuf.EmptyB=Z;github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
@@ -313,25 +360,28 @@ func file_firewall_proto_rawDescGZIP() []byte {
 	return file_firewall_proto_rawDescData
 }
 
-var file_firewall_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_firewall_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_firewall_proto_goTypes = []any{
-	(*PortRule)(nil),                  // 0: grpc.PortRule
-	(*AddRuleRequest)(nil),            // 1: grpc.AddRuleRequest
-	(*AddRuleResponse)(nil),           // 2: grpc.AddRuleResponse
-	(*RemoveRuleRequest)(nil),         // 3: grpc.RemoveRuleRequest
-	(*RemoveAllPeerRulesRequest)(nil), // 4: grpc.RemoveAllPeerRulesRequest
-	(*emptypb.Empty)(nil),             // 5: google.protobuf.Empty
+	(*ListPeerRulesRequest)(nil),      // 0: grpc.ListPeerRulesRequest
+	(*ListRulesResponse)(nil),         // 1: grpc.ListRulesResponse
+	(*PortRule)(nil),                  // 2: grpc.PortRule
+	(*AddRuleResponse)(nil),           // 3: grpc.AddRuleResponse
+	(*RemoveRuleRequest)(nil),         // 4: grpc.RemoveRuleRequest
+	(*RemoveAllPeerRulesRequest)(nil), // 5: grpc.RemoveAllPeerRulesRequest
+	(*emptypb.Empty)(nil),             // 6: google.protobuf.Empty
 }
 var file_firewall_proto_depIdxs = []int32{
-	0, // 0: grpc.AddRuleRequest.rule:type_name -> grpc.PortRule
-	1, // 1: grpc.FirewallService.AddRule:input_type -> grpc.AddRuleRequest
-	3, // 2: grpc.FirewallService.RemoveRule:input_type -> grpc.RemoveRuleRequest
-	4, // 3: grpc.FirewallService.RemoveAllPeerRules:input_type -> grpc.RemoveAllPeerRulesRequest
-	2, // 4: grpc.FirewallService.AddRule:output_type -> grpc.AddRuleResponse
-	5, // 5: grpc.FirewallService.RemoveRule:output_type -> google.protobuf.Empty
-	5, // 6: grpc.FirewallService.RemoveAllPeerRules:output_type -> google.protobuf.Empty
-	4, // [4:7] is the sub-list for method output_type
-	1, // [1:4] is the sub-list for method input_type
+	2, // 0: grpc.ListRulesResponse.rules:type_name -> grpc.PortRule
+	2, // 1: grpc.FirewallService.AddRule:input_type -> grpc.PortRule
+	0, // 2: grpc.FirewallService.ListPeerRules:input_type -> grpc.ListPeerRulesRequest
+	4, // 3: grpc.FirewallService.RemoveRule:input_type -> grpc.RemoveRuleRequest
+	5, // 4: grpc.FirewallService.RemoveAllPeerRules:input_type -> grpc.RemoveAllPeerRulesRequest
+	3, // 5: grpc.FirewallService.AddRule:output_type -> grpc.AddRuleResponse
+	1, // 6: grpc.FirewallService.ListPeerRules:output_type -> grpc.ListRulesResponse
+	6, // 7: grpc.FirewallService.RemoveRule:output_type -> google.protobuf.Empty
+	6, // 8: grpc.FirewallService.RemoveAllPeerRules:output_type -> google.protobuf.Empty
+	5, // [5:9] is the sub-list for method output_type
+	1, // [1:5] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -342,14 +392,14 @@ func file_firewall_proto_init() {
 	if File_firewall_proto != nil {
 		return
 	}
-	file_firewall_proto_msgTypes[0].OneofWrappers = []any{}
+	file_firewall_proto_msgTypes[2].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_firewall_proto_rawDesc), len(file_firewall_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

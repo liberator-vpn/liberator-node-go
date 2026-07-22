@@ -23,23 +23,19 @@ func RegisterFirewallService(server *grpc.Server, manager *firewallmanager.Firew
 	pb.RegisterFirewallServiceServer(server, handler)
 }
 
-func (h *FirewallHandler) AddRule(ctx context.Context, req *pb.AddRuleRequest) (*pb.AddRuleResponse, error) {
-	if req.Rule == nil {
-		return nil, status.Error(codes.InvalidArgument, "rule cannot be nil")
-	}
-
+func (h *FirewallHandler) AddRule(ctx context.Context, req *pb.PortRule) (*pb.AddRuleResponse, error) {
 	// Благодаря `optional` в .proto, поля TargetAddress и PortRangeEnd
 	// в структуре req.Rule автоматически стали указателями (*uint32)!
 	// Если клиент их не передал, они придут как nil, что идеально для нашей БД.
 	domainRule := model.PortRule{
-		TargetAddress:  req.Rule.TargetAddress, // Прямой маппинг *uint32 -> *uint32
-		Protocol:       req.Rule.Protocol,
-		PortRangeStart: uint16(req.Rule.PortRangeStart),
+		TargetAddress:  req.TargetAddress, // Прямой маппинг *uint32 -> *uint32
+		Protocol:       req.Protocol,
+		PortRangeStart: uint16(req.PortRangeStart),
 	}
 
 	// Приведение типов для PortRangeEnd из *uint32 в *uint16, если он передан
-	if req.Rule.PortRangeEnd != nil {
-		endPort := uint16(*req.Rule.PortRangeEnd)
+	if req.PortRangeEnd != nil {
+		endPort := uint16(*req.PortRangeEnd)
 		domainRule.PortRangeEnd = &endPort
 	}
 
@@ -51,6 +47,30 @@ func (h *FirewallHandler) AddRule(ctx context.Context, req *pb.AddRuleRequest) (
 
 	// Возвращаем сгенерированный ID правила (manager записал его в domainRule.ID)
 	return &pb.AddRuleResponse{RuleId: domainRule.ID}, nil
+}
+
+func (h *FirewallHandler) ListPeerRules(ctx context.Context, req *pb.ListPeerRulesRequest) (*pb.ListRulesResponse, error) {
+	r, err := h.manager.ListPeerRules(ctx, req.PeerId)
+	if err != nil {
+		return nil, err
+	}
+	resp := &pb.ListRulesResponse{
+		Rules: make([]*pb.PortRule, len(r)),
+	}
+	for i, v := range r {
+		resp.Rules[i] = &pb.PortRule{
+			PeerId:         req.PeerId,
+			TargetAddress:  v.TargetAddress,
+			Protocol:       v.Protocol,
+			PortRangeStart: uint32(v.PortRangeStart),
+		}
+		if v.PortRangeEnd != nil {
+			var portRangeEnd uint32
+			portRangeEnd = uint32(*v.PortRangeEnd)
+			resp.Rules[i].PortRangeEnd = &portRangeEnd
+		}
+	}
+	return resp, nil
 }
 
 func (h *FirewallHandler) RemoveRule(ctx context.Context, req *pb.RemoveRuleRequest) (*emptypb.Empty, error) {

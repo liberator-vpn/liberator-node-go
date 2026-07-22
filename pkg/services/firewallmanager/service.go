@@ -101,3 +101,23 @@ func (fm *Firewallmanager) RemoveAllPeerRules(ctx context.Context, peerID uint64
 	}
 	return nil
 }
+
+func (fm *Firewallmanager) ListPeerRules(ctx context.Context, peerID uint64) ([]model.PortRule, error) {
+	rows, err := fm.db.LoadRulesByPeerID(ctx, int64(peerID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to load rules from db: %w", err)
+	}
+
+	result := make([]model.PortRule, len(rows))
+
+	for i, row := range rows {
+		result[i] = model.PortRule{
+			ID:             uint64(row.ID),
+			TargetAddress:  row.TargetIp,
+			Protocol:       row.Protocol,
+			PortRangeStart: uint16(row.PortRangeStart),
+			PortRangeEnd:   row.PortRangeEnd,
+		}
+	}
+	return result, nil
+}

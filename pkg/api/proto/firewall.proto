@@ -4,23 +4,29 @@ import "google/protobuf/empty.proto";
 
 package grpc;
 option go_package = "github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpc";
-//protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative pkg/api/proto/firewall.proto
+
 service FirewallService {
-  rpc AddRule(AddRuleRequest) returns (AddRuleResponse);
+  rpc AddRule(PortRule) returns (AddRuleResponse);
+  rpc ListPeerRules(ListPeerRulesRequest) returns (ListRulesResponse);
   rpc RemoveRule(RemoveRuleRequest) returns (google.protobuf.Empty);
   rpc RemoveAllPeerRules(RemoveAllPeerRulesRequest) returns (google.protobuf.Empty);
 }
 
-message PortRule {
-  optional uint32 target_address = 1;
-  string protocol = 2;
-  uint32 port_range_start = 3;
-  optional uint32 port_range_end = 4;
+
+message ListPeerRulesRequest {
+  uint64 peer_id = 1;  
 }
 
-message AddRuleRequest {
+message ListRulesResponse { 
+  repeated PortRule rules = 1;
+}
+
+message PortRule {
   uint64 peer_id = 1;
-  PortRule rule = 2;
+  optional uint32 target_address = 2;
+  string protocol = 3;
+  uint32 port_range_start = 4;
+  optional uint32 port_range_end = 5;
 }
 
 message AddRuleResponse {
@@ -30,7 +36,6 @@ message AddRuleResponse {
 message RemoveRuleRequest {
   uint64 rule_id = 1;
 }
-
 
 message RemoveAllPeerRulesRequest {
   uint64 peer_id = 1;

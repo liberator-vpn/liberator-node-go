@@ -130,7 +130,6 @@ func (r *Router) HandleMeshPacketInternal(packet *dgmessage.DatagramMessage) {
 	packet.Free()
 }
 func (r *Router) HandleTransportPacketInternal(packet *dgmessage.DatagramMessage) {
-
 	if packet.HoleInfo.DstIP == r.gatewayAddr || !r.globalNetwork.Contains(packet.HoleInfo.DstIP) {
 		r.toIface <- packet // TUN
 		return
