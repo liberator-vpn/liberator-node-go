@@ -79,7 +79,7 @@ func (pm *PeersManager) Run() error {
 			continue
 		}
 
-		err = transport.PreparePeer(peer)
+		err = transport.CreatePeer(peer)
 		if err != nil {
 			log.Printf("failed to prepare peer: %v", err)
 			continue
@@ -169,7 +169,7 @@ func (pm *PeersManager) CreatePeerAutoID(ctx context.Context, peer *model.Peer) 
 	peer.ID = uint64(row.ID)
 	peer.VirtualIP = uint32(row.VirtualIp)
 
-	if err = transport.PreparePeer(peer); err != nil {
+	if err = transport.CreatePeer(peer); err != nil {
 		return fmt.Errorf("failed to prepare peer: %v", err)
 	}
 
@@ -203,7 +203,7 @@ func (pm *PeersManager) DeletePeer(ctx context.Context, peerId uint64) error {
 
 	transport, ex := pm.transports.Get(peer.Type)
 	if ex {
-		transport.KickUser(uint32(peer.VirtualIp))
+		transport.KickPeer(uint32(peer.VirtualIp))
 	}
 	return nil
 }

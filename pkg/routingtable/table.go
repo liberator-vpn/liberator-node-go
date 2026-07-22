@@ -1,6 +1,7 @@
 package routingtable
 
 import (
+	"context"
 	"fmt"
 	"sync"
 )
@@ -14,6 +15,7 @@ type RoutingObject interface {
 	GetNodeID() string
 	GetVirtualIP() uint32
 	SendDatagram([]byte) error
+	Context() context.Context
 }
 
 type RoutingTable interface {

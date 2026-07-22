@@ -103,17 +103,29 @@ func (r *Router) Run() {
 
 // Packets handling methods
 func (r *Router) handleTunPacketInternal(packet *dgmessage.DatagramMessage) {
+	defer packet.Free()
 	peer, ex := r.routingTable.GetByIP(packet.HoleInfo.DstIP)
 	if !ex {
 		return
 	}
-	err := peer.SendDatagram(packet.Data)
-	if err != nil {
-		log.Printf("failed to send datagram from tun %d: %v", len(packet.Data), err)
+	// Check rate limits
+	if shaped, ok := peer.(*routingtable.ShapedRoute); ok {
+		if !shaped.IsAllowed(uint64(len(packet.Data))) {
+			return
+		}
+		if !shaped.PushLimited(packet.Data) {
+			log.Printf("failed to push packets to shaped connection")
+		}
+	} else {
+		err := peer.SendDatagram(packet.Data)
+		if err != nil {
+			log.Printf("failed to send datagram from mesh %d: %v", len(packet.Data), err)
+		}
 	}
-	packet.Free()
 }
 func (r *Router) HandleMeshPacketInternal(packet *dgmessage.DatagramMessage) {
+	defer packet.Free()
+
 	if packet.HoleInfo.Protocol != "" {
 		r.firewall.Holepunch(packet.HoleInfo, time.Minute)
 	}
@@ -123,13 +135,24 @@ func (r *Router) HandleMeshPacketInternal(packet *dgmessage.DatagramMessage) {
 		return
 	}
 
-	err := peer.SendDatagram(packet.Data)
-	if err != nil {
-		log.Printf("failed to send datagram from mesh %d: %v", len(packet.Data), err)
+	// Check rate limits
+	if shaped, ok := peer.(*routingtable.ShapedRoute); ok {
+		if !shaped.IsAllowed(uint64(len(packet.Data))) {
+			return
+		}
+		if !shaped.PushLimited(packet.Data) {
+			log.Printf("failed to push packets to shaped connection")
+		}
+	} else {
+		err := peer.SendDatagram(packet.Data)
+		if err != nil {
+			log.Printf("failed to send datagram from mesh %d: %v", len(packet.Data), err)
+		}
 	}
-	packet.Free()
 }
 func (r *Router) HandleTransportPacketInternal(packet *dgmessage.DatagramMessage) {
+	defer packet.Free()
+
 	if packet.HoleInfo.DstIP == r.gatewayAddr || !r.globalNetwork.Contains(packet.HoleInfo.DstIP) {
 		r.toIface <- packet // TUN
 		return
@@ -154,6 +177,4 @@ func (r *Router) HandleTransportPacketInternal(packet *dgmessage.DatagramMessage
 	if err != nil {
 		log.Printf("failed to send datagram to mesh: %v", err)
 	}
-	packet.Free()
-
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/TexHik620953/liberator-node-go/internal/utils/netutils"
 	"github.com/TexHik620953/liberator-node-go/internal/utils/safemap"
 	"github.com/TexHik620953/liberator-node-go/pkg/model"
+	"github.com/TexHik620953/liberator-node-go/pkg/routingtable"
 	"github.com/TexHik620953/liberator-node-go/pkg/transport"
 
 	"github.com/amnezia-vpn/amneziawg-go/conn"
@@ -156,37 +157,54 @@ func (ig *AWGTransport) DeltaChan() chan transport.TransportPeerStats {
 	return ig.deltaChan
 }
 
-// PreparePeer вызывается из VpnAuthService ДО подключения клиента.
+// CreatePeer вызывается из VpnAuthService ДО подключения клиента.
 // Добавляет ключ в ядро AWG и выделяет маршрутизируемый объект.
-func (ig *AWGTransport) PreparePeer(peerInfo *model.Peer) error {
+func (ig *AWGTransport) CreatePeer(peerInfo *model.Peer) error {
 	// Если юзер уже подключен, удаляем его старую сессию
-	ig.KickUser(peerInfo.VirtualIP)
+	ig.KickPeer(peerInfo.VirtualIP)
 
-	peer := NewAWGPeer(ig.nodeID, peerInfo.VirtualIP, peerInfo.AwgPublicKey, ig, peerInfo.ExpirationDate)
+	// TODO: move cretion/deletion to router
+	var peer routingtable.RoutingObject
+	awgPeer := NewAWGPeer(ig.ctx, ig.nodeID, peerInfo.VirtualIP, peerInfo.AwgPublicKey, ig, peerInfo.ExpirationDate)
+	peer = awgPeer
+	// Wrap this to shaped object
+	if peerInfo.SpeedLimitMbps != nil || peerInfo.TrafficLimitGb != nil {
+		speedLimit := int64(0)
+		trafficLimit := int64(0)
+
+		if peerInfo.SpeedLimitMbps != nil {
+			speedLimit = int64((*peerInfo.SpeedLimitMbps) * 1024 * 1024)
+		}
+		if peerInfo.TrafficLimitGb != nil {
+			trafficLimit = int64(*peerInfo.TrafficLimitGb * 1024 * 1024 * 1024)
+		}
+
+		peer = routingtable.NewShapedRoute(peer, uint64(speedLimit), uint64(trafficLimit))
+	}
 
 	// Добавляем в ядро AWG
 	peerCmd := fmt.Sprintf("public_key=%s\nallowed_ip=%s/32\n", peerInfo.AwgPublicKey, netutils.Uint32ToIPString(peerInfo.VirtualIP))
 	if err := ig.awgDevice.IpcSet(peerCmd); err != nil {
 		return fmt.Errorf("failed to add AWG peer to kernel: %w", err)
 	}
-
 	// Добавляем в наши карты и в таблицу маршрутизации
-	ig.peersByIP.Set(peer.virtualIP, peer)
+	ig.peersByIP.Set(awgPeer.virtualIP, awgPeer)
+	ig.channelTun.peers.Set(awgPeer.virtualIP, awgPeer)
 
-	ig.channelTun.peers.Set(peer.virtualIP, peer)
+	// TODO: move cretion/deletion to router
 
 	if err := ig.router.AddRoutingObject(peer); err != nil {
 		// Если не смогли добавить в роутинг, откатываем всё
-		ig.removePeerInternal(peer)
+		ig.removePeerInternal(awgPeer)
 		return fmt.Errorf("failed to add peer to routing table: %w", err)
 	}
 
 	return nil
 }
 
-// KickUser реализует интерфейс для IngressManager
-func (ig *AWGTransport) KickUser(userIP uint32) bool {
-	peer, exists := ig.peersByIP.Get(userIP)
+// KickPeer реализует интерфейс для IngressManager
+func (ig *AWGTransport) KickPeer(ip uint32) bool {
+	peer, exists := ig.peersByIP.Get(ip)
 	if !exists {
 		return false
 	}

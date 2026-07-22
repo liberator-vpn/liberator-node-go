@@ -54,7 +54,6 @@ type App struct {
 	grpcServer *grpc.Server
 
 	// Certs
-
 	rootCa   *x509.Certificate
 	nodeCert tls.Certificate
 

@@ -18,8 +18,8 @@ type TransportPeerStats struct {
 type Transport interface {
 	Run()
 
-	KickUser(ip uint32) bool
-	PreparePeer(peerInfo *model.Peer) error
+	KickPeer(ip uint32) bool
+	CreatePeer(peerInfo *model.Peer) error
 
 	GenerateClientConnectionString(peer *model.Peer, addr string, name string) (string, error)
 	GeneratePeerKeys(peer *model.Peer) error

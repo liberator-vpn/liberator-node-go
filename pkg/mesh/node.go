@@ -393,6 +393,7 @@ func (n *MeshNode) NodeID() string {
 func (n *MeshNode) NewVirtualConnection(nodeID string, virtualIP uint32) (routingtable.RoutingObject, error) {
 
 	return &VirtualConnection{
+		Ctx:       n.ctx,
 		Parent:    n,
 		NodeID:    nodeID,
 		VirtualIp: virtualIP,
