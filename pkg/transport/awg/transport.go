@@ -169,17 +169,18 @@ func (ig *AWGTransport) CreatePeer(peerInfo *model.Peer) error {
 	peer = awgPeer
 	// Wrap this to shaped object
 	if peerInfo.SpeedLimitMbps != nil || peerInfo.TrafficLimitGb != nil {
-		speedLimit := int64(0)
-		trafficLimit := int64(0)
+		var speedLimit *uint64
+		var trafficLimit *uint64
 
 		if peerInfo.SpeedLimitMbps != nil {
-			speedLimit = int64((*peerInfo.SpeedLimitMbps) * 1024 * 1024)
+			v := uint64((*peerInfo.SpeedLimitMbps) * 1024 * 1024)
+			speedLimit = &v
 		}
 		if peerInfo.TrafficLimitGb != nil {
-			trafficLimit = int64(*peerInfo.TrafficLimitGb * 1024 * 1024 * 1024)
+			v := uint64(*peerInfo.TrafficLimitGb*1024*1024*1024) - uint64(peerInfo.FromPeerTotal+peerInfo.ToPeerTotal)
+			trafficLimit = &v
 		}
-
-		peer = routingtable.NewShapedRoute(peer, uint64(speedLimit), uint64(trafficLimit))
+		peer = routingtable.NewShapedRoute(peer, speedLimit, trafficLimit)
 	}
 
 	// Добавляем в ядро AWG
@@ -192,7 +193,6 @@ func (ig *AWGTransport) CreatePeer(peerInfo *model.Peer) error {
 	ig.channelTun.peers.Set(awgPeer.virtualIP, awgPeer)
 
 	// TODO: move cretion/deletion to router
-
 	if err := ig.router.AddRoutingObject(peer); err != nil {
 		// Если не смогли добавить в роутинг, откатываем всё
 		ig.removePeerInternal(awgPeer)
@@ -216,7 +216,8 @@ func (ig *AWGTransport) KickPeer(ip uint32) bool {
 // Вызывается при таймауте (Watchdog) или принудительном кике.
 func (ig *AWGTransport) removePeerInternal(peer *AWGPeer) {
 	// 1. Удаляем из таблицы маршрутизации
-	ig.router.DeleteRoutingObject(peer)
+	// TODO: move cretion/deletion to router
+	ig.router.DeleteRoutingObject(peer.GetVirtualIP())
 
 	// 3. Чистим свои карты
 	ig.peersByIP.Delete(peer.virtualIP)

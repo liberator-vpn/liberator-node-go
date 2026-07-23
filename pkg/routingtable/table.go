@@ -20,7 +20,7 @@ type RoutingObject interface {
 
 type RoutingTable interface {
 	Add(RoutingObject) error
-	Delete(RoutingObject) error
+	Delete(uint32) error
 
 	GetByIP(uint32) (RoutingObject, bool)
 	Dump() []RoutingTableRecordDump
@@ -51,16 +51,16 @@ func (r *routingTableImpl) Add(obj RoutingObject) error {
 }
 
 // Delete implements [RoutingTable].
-func (r *routingTableImpl) Delete(obj RoutingObject) error {
+func (r *routingTableImpl) Delete(ip uint32) error {
 	r.updateLock.Lock()
 	defer r.updateLock.Unlock()
 
-	_, ipEx := r.byVirtualIp[obj.GetVirtualIP()]
+	_, ipEx := r.byVirtualIp[ip]
 
 	if !ipEx {
 		return nil
 	}
-	delete(r.byVirtualIp, obj.GetVirtualIP())
+	delete(r.byVirtualIp, ip)
 	return nil
 }
 

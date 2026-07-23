@@ -12,8 +12,8 @@ func (r *Router) NewMessageCopyFrom(data []byte) (*dgmessage.DatagramMessage, er
 func (r *Router) AddRoutingObject(obj routingtable.RoutingObject) error {
 	return r.routingTable.Add(obj)
 }
-func (r *Router) DeleteRoutingObject(obj routingtable.RoutingObject) error {
-	return r.routingTable.Delete(obj)
+func (r *Router) DeleteRoutingObject(ip uint32) error {
+	return r.routingTable.Delete(ip)
 }
 
 // For TUN interface

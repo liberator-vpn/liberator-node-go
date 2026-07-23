@@ -26,18 +26,21 @@ type ShapedRoute struct {
 
 // speedLimit = 0 means no speed limiting
 // trafficLimit = 0 means no traffic limit
-func NewShapedRoute(obj RoutingObject, speedLimit uint64, trafficLimit uint64) *ShapedRoute {
+func NewShapedRoute(obj RoutingObject, speedLimit *uint64, trafficLimit *uint64) *ShapedRoute {
 	sr := &ShapedRoute{
 		ctx:            obj.Context(),
 		underlying:     obj,
 		totalLimit:     atomic.Int64{},
-		trafficLimited: trafficLimit > 0,
-		speedLimited:   speedLimit > 0,
+		trafficLimited: trafficLimit != nil,
+		speedLimited:   speedLimit != nil,
 	}
-	sr.totalLimit.Add(int64(trafficLimit))
+
+	if trafficLimit != nil {
+		sr.totalLimit.Add(int64(*trafficLimit))
+	}
 
 	if sr.speedLimited {
-		sr.limiter = rate.NewLimiter(rate.Limit(speedLimit), 256*1500)
+		sr.limiter = rate.NewLimiter(rate.Limit(*speedLimit), 256*1500)
 		sr.queue = make(chan *dgmessage.DatagramMessage, 500)
 		go sr.startWorker()
 	}

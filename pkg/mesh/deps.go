@@ -7,7 +7,7 @@ import (
 
 type Router interface {
 	AddRoutingObject(routingtable.RoutingObject) error
-	DeleteRoutingObject(routingtable.RoutingObject) error
+	DeleteRoutingObject(uint32) error
 
 	NewMessageCopyFrom(data []byte) (*dgmessage.DatagramMessage, error)
 	HandleMeshPacket(packet *dgmessage.DatagramMessage)
