@@ -166,6 +166,20 @@ func (q *Queries) ListPeers(ctx context.Context) ([]Peer, error) {
 	return items, nil
 }
 
+const prolongPeer = `-- name: ProlongPeer :exec
+update peers set expiration_date = ?1 where id = ?2 and expiration_data < ?1 limit 1
+`
+
+type ProlongPeerParams struct {
+	NewExpirationDate *time.Time
+	ID                int64
+}
+
+func (q *Queries) ProlongPeer(ctx context.Context, arg ProlongPeerParams) error {
+	_, err := q.db.ExecContext(ctx, prolongPeer, arg.NewExpirationDate, arg.ID)
+	return err
+}
+
 const updatePeerStats = `-- name: UpdatePeerStats :exec
 UPDATE peers
 SET

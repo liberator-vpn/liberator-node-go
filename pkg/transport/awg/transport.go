@@ -202,6 +202,10 @@ func (ig *AWGTransport) CreatePeer(peerInfo *model.Peer) error {
 	return nil
 }
 
+func (ig *AWGTransport) ExistsPeer(ip uint32) bool {
+	return ig.peersByIP.Exists(ip)
+}
+
 // KickPeer реализует интерфейс для IngressManager
 func (ig *AWGTransport) KickPeer(ip uint32) bool {
 	peer, exists := ig.peersByIP.Get(ip)

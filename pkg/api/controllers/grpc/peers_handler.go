@@ -87,6 +87,13 @@ func (h *PeersHandler) DeletePeer(ctx context.Context, req *pb.DeletePeerRequest
 
 	return &emptypb.Empty{}, nil
 }
+func (h *PeersHandler) ProlongPeer(ctx context.Context, req *pb.ProlongPeerRequest) (*emptypb.Empty, error) {
+	err := h.manager.ProlongPeer(ctx, req.Id, req.NewExpirationDate.AsTime())
+	if err != nil {
+		return nil, err
+	}
+	return &emptypb.Empty{}, nil
+}
 
 func (h *PeersHandler) GenerateClientKey(ctx context.Context, req *pb.GenerateClientKeyRequest) (*pb.GenerateClientKeyResponse, error) {
 	key, err := h.manager.GenerateClientKey(ctx, req.PeerId, req.Addr, req.Name)

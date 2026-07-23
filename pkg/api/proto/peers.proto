@@ -9,12 +9,19 @@ import "google/protobuf/timestamp.proto";
 
 service PeerService {
   rpc CreatePeerAutoID(CreatePeerAutoIDRequest) returns (CreatePeerResponse);
-
   rpc GetPeer(GetPeerRequest) returns (Peer);
   rpc ListPeers(google.protobuf.Empty) returns (ListPeersResponse);
   rpc DeletePeer(DeletePeerRequest) returns (google.protobuf.Empty);
 
+  rpc ProlongPeer(ProlongPeerRequest) returns(google.protobuf.Empty);
+  
   rpc GenerateClientKey(GenerateClientKeyRequest) returns (GenerateClientKeyResponse);
+}
+
+
+message ProlongPeerRequest {
+  uint64 id = 1;
+  google.protobuf.Timestamp new_expiration_date = 2;
 }
 
 message CreatePeerAutoIDRequest {

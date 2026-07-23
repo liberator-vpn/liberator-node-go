@@ -20,6 +20,7 @@ type Transport interface {
 
 	KickPeer(ip uint32) bool
 	CreatePeer(peerInfo *model.Peer) error
+	ExistsPeer(ip uint32) bool
 
 	GenerateClientConnectionString(peer *model.Peer, addr string, name string) (string, error)
 	GeneratePeerKeys(peer *model.Peer) error

@@ -17,3 +17,13 @@ type Peer struct {
 	AwgPrivateKey  string
 	AwgPublicKey   string
 }
+
+func (p *Peer) IsExpired() bool {
+	if p.ExpirationDate == nil {
+		return true
+	}
+	if time.Now().After(*p.ExpirationDate) {
+		return true
+	}
+	return false
+}

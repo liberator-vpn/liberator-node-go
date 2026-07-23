@@ -63,6 +63,36 @@ func (pm *PeersManager) RegisterTransport(name string, trp transport.Transport) 
 	}()
 }
 
+func (pm *PeersManager) syncPeers() error {
+	rows, err := pm.queries.ListPeers(pm.ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load peers: %w", err)
+	}
+
+	for _, row := range rows {
+		peer := peerFromRow(row)
+		if peer.IsExpired() {
+			continue
+		}
+
+		transport, ex := pm.transports.Get(peer.Type)
+		if !ex {
+			log.Printf("failed to prepare peer %d - transport with corresponding name %s not found", peer.ID, peer.Type)
+			continue
+		}
+		if transport.ExistsPeer(peer.VirtualIP) {
+			continue
+		}
+
+		err = transport.CreatePeer(peer)
+		if err != nil {
+			log.Printf("failed to prepare peer: %v", err)
+			continue
+		}
+	}
+	return nil
+}
+
 func (pm *PeersManager) Run() error {
 	rows, err := pm.queries.ListPeers(pm.ctx)
 	if err != nil {
@@ -71,14 +101,8 @@ func (pm *PeersManager) Run() error {
 
 	for _, row := range rows {
 		peer := peerFromRow(row)
-		if peer.ExpirationDate != nil {
-			if time.Now().After(*peer.ExpirationDate) {
-				err = pm.DeletePeer(pm.ctx, peer.ID)
-				if err != nil {
-					log.Printf("failed to remove expired peer: %v", err)
-				}
-				continue
-			}
+		if peer.IsExpired() {
+			continue
 		}
 
 		transport, ex := pm.transports.Get(peer.Type)
@@ -109,6 +133,20 @@ func (pm *PeersManager) Run() error {
 				if err != nil {
 					log.Printf("failed to update peer stats: %v", err)
 				}
+			}
+		}
+	}()
+
+	// Add missing peers
+	t := time.NewTicker(time.Second * 30)
+	go func() {
+		select {
+		case <-pm.ctx.Done():
+			return
+		case <-t.C:
+			err = pm.syncPeers()
+			if err != nil {
+				fmt.Printf("failed to sync peers: %v", err)
 			}
 		}
 	}()
@@ -208,6 +246,14 @@ func (pm *PeersManager) DeletePeer(ctx context.Context, peerId uint64) error {
 		transport.KickPeer(uint32(peer.VirtualIp))
 	}
 	return nil
+}
+
+func (pm *PeersManager) ProlongPeer(ctx context.Context, peerId uint64, newExpiration time.Time) error {
+	err := pm.queries.ProlongPeer(ctx, repos.ProlongPeerParams{
+		ID:                int64(peerId),
+		NewExpirationDate: &newExpiration,
+	})
+	return err
 }
 
 // peerFromRow преобразует сгенерированную sqlc-строку в Peer.
