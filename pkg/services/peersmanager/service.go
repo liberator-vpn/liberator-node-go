@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/TexHik620953/liberator-node-go/internal/infra/repos"
+	"github.com/TexHik620953/liberator-node-go/internal/utils/netutils"
 	"github.com/TexHik620953/liberator-node-go/internal/utils/safemap"
 	"github.com/TexHik620953/liberator-node-go/pkg/model"
 	"github.com/TexHik620953/liberator-node-go/pkg/services/firewallmanager"
@@ -15,7 +16,8 @@ import (
 )
 
 type PeersManager struct {
-	ctx context.Context
+	ctx        context.Context
+	startingIP uint32
 
 	db              *sql.DB
 	queries         *repos.Queries
@@ -30,8 +32,9 @@ func New(
 	ctx context.Context,
 	db *sql.DB,
 	firewallManager *firewallmanager.Firewallmanager,
+	netCIDR string,
 ) *PeersManager {
-	return &PeersManager{
+	pm := &PeersManager{
 		ctx:             ctx,
 		db:              db,
 		queries:         repos.New(db),
@@ -39,6 +42,11 @@ func New(
 		transports:      safemap.New[string, transport.Transport](),
 		statsDrain:      make(chan transport.TransportPeerStats, 1000),
 	}
+	// TODO
+	ip, _, _ := netutils.NewNativeIPNet(netCIDR)
+	pm.startingIP = ip + 1
+
+	return pm
 }
 
 func (pm *PeersManager) RegisterTransport(name string, trp transport.Transport) {
@@ -131,13 +139,6 @@ func (pm *PeersManager) CreatePeerAutoID(ctx context.Context, peer *model.Peer) 
 		}
 	}()
 
-	// Устанавливаем эксклюзивную блокировку (SQLite)
-	// Это нужно выполнить до вставки
-	_, err = tx.ExecContext(ctx, "BEGIN EXCLUSIVE")
-	if err != nil {
-		return fmt.Errorf("exclusive lock: %w", err)
-	}
-
 	// Создаём экземпляр Queries, привязанный к транзакции
 	q := repos.New(tx)
 
@@ -147,6 +148,7 @@ func (pm *PeersManager) CreatePeerAutoID(ctx context.Context, peer *model.Peer) 
 		AwgPrivateKey:  peer.AwgPrivateKey,
 		AwgPublicKey:   peer.AwgPublicKey,
 		ExpirationDate: peer.ExpirationDate,
+		MinVirtualIp:   int64(pm.startingIP),
 	}
 	if peer.TrafficLimitGb != nil {
 		rq.TrafficLimitGb = sql.NullFloat64{

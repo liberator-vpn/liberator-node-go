@@ -104,7 +104,7 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 
 	// managers
 	app.firewallManager = firewallmanager.New(app.ctx, app.firewall, app.db)
-	app.peersManager = peersmanager.New(app.ctx, app.db, app.firewallManager)
+	app.peersManager = peersmanager.New(app.ctx, app.db, app.firewallManager, app.cfg.Router.CIDR)
 
 	// Network stuff
 	if app.router, err = router.New(ctx, cfg.Router, app.routingTable, app.firewall); err != nil {

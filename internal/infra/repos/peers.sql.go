@@ -21,19 +21,23 @@ INSERT INTO peers (
     awg_private_key,
     awg_public_key
 ) VALUES (
-             ?1,
-             COALESCE((SELECT MAX(virtual_ip) + 1 FROM peers), 1),
-             ?2,
-             ?3,
-             ?4,
-             ?5,
-             ?6
-         )
+    ?1,
+    COALESCE(
+        (SELECT MAX(innerp.virtual_ip) + 1 FROM peers as innerp WHERE innerp.virtual_ip >= ?2),
+        ?2
+    ),
+    ?3,
+    ?4,
+    ?5,
+    ?6,
+    ?7
+)
 RETURNING id, type, virtual_ip, last_seen, expiration_date, from_peer_total, to_peer_total, traffic_limit_gb, speed_limit_mbps, awg_private_key, awg_public_key
 `
 
 type CreatePeerAutoIDParams struct {
 	Type           string
+	MinVirtualIp   int64
 	ExpirationDate *time.Time
 	TrafficLimitGb sql.NullFloat64
 	SpeedLimitMbps sql.NullFloat64
@@ -44,6 +48,7 @@ type CreatePeerAutoIDParams struct {
 func (q *Queries) CreatePeerAutoID(ctx context.Context, arg CreatePeerAutoIDParams) (Peer, error) {
 	row := q.db.QueryRowContext(ctx, createPeerAutoID,
 		arg.Type,
+		arg.MinVirtualIp,
 		arg.ExpirationDate,
 		arg.TrafficLimitGb,
 		arg.SpeedLimitMbps,

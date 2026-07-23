@@ -89,9 +89,9 @@ func (r *Router) Run() {
 					case fromTun:
 						r.handleTunPacketInternal(packet.Msg)
 					case fromMesh:
-						r.HandleMeshPacketInternal(packet.Msg)
+						r.handleMeshPacketInternal(packet.Msg)
 					case fromTransport:
-						r.HandleTransportPacketInternal(packet.Msg)
+						r.handleTransportPacketInternal(packet.Msg)
 					}
 				}
 			}
@@ -103,55 +103,61 @@ func (r *Router) Run() {
 
 // Packets handling methods
 func (r *Router) handleTunPacketInternal(packet *dgmessage.DatagramMessage) {
-	defer packet.Free()
 	peer, ex := r.routingTable.GetByIP(packet.HoleInfo.DstIP)
 	if !ex {
+		packet.Free()
 		return
 	}
-	// Check rate limits
 	if shaped, ok := peer.(*routingtable.ShapedRoute); ok {
-		if !shaped.IsAllowed(uint64(len(packet.Data))) {
-			return
-		}
-		if !shaped.PushLimited(packet.Data) {
-			log.Printf("failed to push packets to shaped connection")
+		err := shaped.PushLimited(packet)
+		if err != nil {
+			log.Printf("failed to push to shaped connection: %v", err)
+			packet.Free()
 		}
 	} else {
 		err := peer.SendDatagram(packet.Data)
 		if err != nil {
 			log.Printf("failed to send datagram from mesh %d: %v", len(packet.Data), err)
 		}
+		packet.Free()
 	}
 }
-func (r *Router) HandleMeshPacketInternal(packet *dgmessage.DatagramMessage) {
-	defer packet.Free()
-
+func (r *Router) handleMeshPacketInternal(packet *dgmessage.DatagramMessage) {
 	if packet.HoleInfo.Protocol != "" {
 		r.firewall.Holepunch(packet.HoleInfo, time.Minute)
 	}
 
 	peer, ex := r.routingTable.GetByIP(packet.HoleInfo.DstIP)
 	if !ex {
+		packet.Free()
 		return
 	}
 
-	// Check rate limits
 	if shaped, ok := peer.(*routingtable.ShapedRoute); ok {
-		if !shaped.IsAllowed(uint64(len(packet.Data))) {
-			return
-		}
-		if !shaped.PushLimited(packet.Data) {
-			log.Printf("failed to push packets to shaped connection")
+		err := shaped.PushLimited(packet)
+		if err != nil {
+			log.Printf("failed to push to shaped connection: %v", err)
+			packet.Free()
 		}
 	} else {
 		err := peer.SendDatagram(packet.Data)
 		if err != nil {
 			log.Printf("failed to send datagram from mesh %d: %v", len(packet.Data), err)
 		}
+		packet.Free()
 	}
 }
-func (r *Router) HandleTransportPacketInternal(packet *dgmessage.DatagramMessage) {
-	defer packet.Free()
+func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage) {
+	srcPeer, ex := r.routingTable.GetByIP(packet.HoleInfo.SrcIP)
+	// Check rate limits
+	if ex {
+		if shaped, ok := srcPeer.(*routingtable.ShapedRoute); ok {
+			if !shaped.IsAllowed(uint64(len(packet.Data))) {
+				packet.Free()
+				return
+			}
+		}
+	}
 
 	if packet.HoleInfo.DstIP == r.gatewayAddr || !r.globalNetwork.Contains(packet.HoleInfo.DstIP) {
 		r.toIface <- packet // TUN
@@ -165,16 +171,19 @@ func (r *Router) HandleTransportPacketInternal(packet *dgmessage.DatagramMessage
 		Protocol: packet.HoleInfo.Protocol,
 	}
 	if !r.firewall.RuleCheck(hi) {
+		packet.Free()
 		return
 	}
 	r.firewall.Holepunch(hi, time.Minute)
 
 	peer, ex := r.routingTable.GetByIP(packet.HoleInfo.DstIP)
 	if !ex {
+		packet.Free()
 		return
 	}
 	err := peer.SendDatagram(packet.Data)
 	if err != nil {
 		log.Printf("failed to send datagram to mesh: %v", err)
 	}
+	packet.Free()
 }

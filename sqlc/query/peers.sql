@@ -9,14 +9,17 @@ INSERT INTO peers (
     awg_private_key,
     awg_public_key
 ) VALUES (
-             sqlc.arg(type),
-             COALESCE((SELECT MAX(virtual_ip) + 1 FROM peers), 1),
-             sqlc.arg(expiration_date),
-             sqlc.arg(traffic_limit_gb),
-             sqlc.arg(speed_limit_mbps),
-             sqlc.arg(awg_private_key),
-             sqlc.arg(awg_public_key)
-         )
+    sqlc.arg(type),
+    COALESCE(
+        (SELECT MAX(innerp.virtual_ip) + 1 FROM peers as innerp WHERE innerp.virtual_ip >= sqlc.arg(min_virtual_ip)),
+        sqlc.arg(min_virtual_ip)
+    ),
+    sqlc.arg(expiration_date),
+    sqlc.arg(traffic_limit_gb),
+    sqlc.arg(speed_limit_mbps),
+    sqlc.arg(awg_private_key),
+    sqlc.arg(awg_public_key)
+)
 RETURNING *;
 
 -- name: GetPeerByID :one

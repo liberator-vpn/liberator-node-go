@@ -85,7 +85,7 @@ func New(
 
 	udpBind := conn.NewDefaultBind()
 
-	logger := amneziawgdevice.NewLogger(amneziawgdevice.LogLevelError, fmt.Sprintf("(%s-awg) ", nodeID))
+	logger := amneziawgdevice.NewLogger(amneziawgdevice.LogLevelVerbose, fmt.Sprintf("(%s-awg) ", nodeID))
 	ig.awgDevice = amneziawgdevice.NewDevice(ig.channelTun, udpBind, logger)
 
 	if err := ig.awgDevice.IpcSet(fmt.Sprintf("private_key=%s\nlisten_port=%d\n",

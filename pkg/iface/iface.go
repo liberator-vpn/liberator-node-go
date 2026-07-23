@@ -96,7 +96,31 @@ func NewTUN(
 		eg.Close()
 		return nil, fmt.Errorf("failed to up iface: %w", err)
 	}
+	/*
+		// Вычисляем сетевой адрес (обнуляем хостовую часть)
+		networkIP := eg.ipNet.IP.Mask(eg.ipNet.Mask)
+		network := &net.IPNet{
+			IP:   networkIP,
+			Mask: eg.ipNet.Mask,
+		}
 
+		route := &netlink.Route{
+			Family:    netlink.FAMILY_V4, // явно указываем IPv4
+			Dst:       network,           // теперь 10.8.0.0/16
+			LinkIndex: link.Attrs().Index,
+			Scope:     netlink.SCOPE_UNIVERSE,
+		}
+		if err := netlink.RouteAdd(route); err != nil {
+			// Проверяем, является ли ошибка "file exists"
+			if strings.Contains(err.Error(), "file exists") {
+				log.Printf("Route already exists, skipping: %v", err)
+				// Можно также попробовать заменить или просто проигнорировать
+			} else {
+				eg.Close()
+				return nil, fmt.Errorf("failed to add route: %w", err)
+			}
+		}
+	*/
 	/*
 		// 4. Включаем IP-форвардинг
 		if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0644); err != nil {
