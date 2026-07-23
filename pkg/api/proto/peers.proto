@@ -46,6 +46,8 @@ message Peer {
   uint64 to_peer_total = 7;
   string awg_private_key = 8;
   string awg_public_key = 9;
+  optional double traffic_limit_gb = 10;
+  optional double speed_limit_mbps = 11;
 }
 
 message ListPeersResponse {

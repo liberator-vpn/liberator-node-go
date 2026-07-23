@@ -214,6 +214,8 @@ type Peer struct {
 	ToPeerTotal    uint64                 `protobuf:"varint,7,opt,name=to_peer_total,json=toPeerTotal,proto3" json:"to_peer_total,omitempty"`
 	AwgPrivateKey  string                 `protobuf:"bytes,8,opt,name=awg_private_key,json=awgPrivateKey,proto3" json:"awg_private_key,omitempty"`
 	AwgPublicKey   string                 `protobuf:"bytes,9,opt,name=awg_public_key,json=awgPublicKey,proto3" json:"awg_public_key,omitempty"`
+	TrafficLimitGb *float64               `protobuf:"fixed64,10,opt,name=traffic_limit_gb,json=trafficLimitGb,proto3,oneof" json:"traffic_limit_gb,omitempty"`
+	SpeedLimitMbps *float64               `protobuf:"fixed64,11,opt,name=speed_limit_mbps,json=speedLimitMbps,proto3,oneof" json:"speed_limit_mbps,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -309,6 +311,20 @@ func (x *Peer) GetAwgPublicKey() string {
 		return x.AwgPublicKey
 	}
 	return ""
+}
+
+func (x *Peer) GetTrafficLimitGb() float64 {
+	if x != nil && x.TrafficLimitGb != nil {
+		return *x.TrafficLimitGb
+	}
+	return 0
+}
+
+func (x *Peer) GetSpeedLimitMbps() float64 {
+	if x != nil && x.SpeedLimitMbps != nil {
+		return *x.SpeedLimitMbps
+	}
+	return 0
 }
 
 type ListPeersResponse struct {
@@ -522,7 +538,7 @@ const file_peers_proto_rawDesc = "" +
 	"\x0fawg_private_key\x18\x03 \x01(\tR\rawgPrivateKey\x12$\n" +
 	"\x0eawg_public_key\x18\x04 \x01(\tR\fawgPublicKey\" \n" +
 	"\x0eGetPeerRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x04R\x02id\"\xe1\x02\n" +
+	"\x02id\x18\x01 \x01(\x04R\x02id\"\xe9\x03\n" +
 	"\x04Peer\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x1d\n" +
@@ -533,7 +549,12 @@ const file_peers_proto_rawDesc = "" +
 	"\x0ffrom_peer_total\x18\x06 \x01(\x04R\rfromPeerTotal\x12\"\n" +
 	"\rto_peer_total\x18\a \x01(\x04R\vtoPeerTotal\x12&\n" +
 	"\x0fawg_private_key\x18\b \x01(\tR\rawgPrivateKey\x12$\n" +
-	"\x0eawg_public_key\x18\t \x01(\tR\fawgPublicKey\"5\n" +
+	"\x0eawg_public_key\x18\t \x01(\tR\fawgPublicKey\x12-\n" +
+	"\x10traffic_limit_gb\x18\n" +
+	" \x01(\x01H\x00R\x0etrafficLimitGb\x88\x01\x01\x12-\n" +
+	"\x10speed_limit_mbps\x18\v \x01(\x01H\x01R\x0espeedLimitMbps\x88\x01\x01B\x13\n" +
+	"\x11_traffic_limit_gbB\x13\n" +
+	"\x11_speed_limit_mbps\"5\n" +
 	"\x11ListPeersResponse\x12 \n" +
 	"\x05peers\x18\x01 \x03(\v2\n" +
 	".grpc.PeerR\x05peers\"#\n" +
@@ -607,6 +628,7 @@ func file_peers_proto_init() {
 		return
 	}
 	file_peers_proto_msgTypes[0].OneofWrappers = []any{}
+	file_peers_proto_msgTypes[3].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

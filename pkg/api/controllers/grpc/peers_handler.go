@@ -101,14 +101,16 @@ func (h *PeersHandler) GenerateClientKey(ctx context.Context, req *pb.GenerateCl
 // Вспомогательная функция для маппинга внутренней структуры в структуру Protobuf
 func convertToPbPeer(p *model.Peer) *pb.Peer {
 	pbPeer := &pb.Peer{
-		Id:            p.ID,
-		Type:          p.Type,
-		VirtualIp:     p.VirtualIP,
-		LastSeen:      timestamppb.New(p.LastSeen),
-		FromPeerTotal: p.FromPeerTotal,
-		ToPeerTotal:   p.ToPeerTotal,
-		AwgPrivateKey: p.AwgPrivateKey,
-		AwgPublicKey:  p.AwgPublicKey,
+		Id:             p.ID,
+		Type:           p.Type,
+		VirtualIp:      p.VirtualIP,
+		LastSeen:       timestamppb.New(p.LastSeen),
+		FromPeerTotal:  p.FromPeerTotal,
+		ToPeerTotal:    p.ToPeerTotal,
+		AwgPrivateKey:  p.AwgPrivateKey,
+		AwgPublicKey:   p.AwgPublicKey,
+		TrafficLimitGb: p.TrafficLimitGb,
+		SpeedLimitMbps: p.SpeedLimitMbps,
 	}
 
 	if p.ExpirationDate != nil {
