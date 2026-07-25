@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v7.34.1
-// source: pkg/mesh/services/discovery/proto/discovery.proto
+// source: pkg/mesh/meshservice/proto/meshservice.proto
 
 package proto
 
@@ -20,14 +20,15 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	DiscoveryService_PullKnownPeers_FullMethodName = "/proto.DiscoveryService/PullKnownPeers"
+	DiscoveryService_SubscribePeers_FullMethodName = "/proto.DiscoveryService/SubscribePeers"
 )
 
 // DiscoveryServiceClient is the client API for DiscoveryService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type DiscoveryServiceClient interface {
-	PullKnownPeers(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListKnownPeersResponse, error)
+	// Узел подписывается на поток изменений от соседа
+	SubscribePeers(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PeerEvent], error)
 }
 
 type discoveryServiceClient struct {
@@ -38,21 +39,31 @@ func NewDiscoveryServiceClient(cc grpc.ClientConnInterface) DiscoveryServiceClie
 	return &discoveryServiceClient{cc}
 }
 
-func (c *discoveryServiceClient) PullKnownPeers(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListKnownPeersResponse, error) {
+func (c *discoveryServiceClient) SubscribePeers(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PeerEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListKnownPeersResponse)
-	err := c.cc.Invoke(ctx, DiscoveryService_PullKnownPeers_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &DiscoveryService_ServiceDesc.Streams[0], DiscoveryService_SubscribePeers_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[emptypb.Empty, PeerEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type DiscoveryService_SubscribePeersClient = grpc.ServerStreamingClient[PeerEvent]
 
 // DiscoveryServiceServer is the server API for DiscoveryService service.
 // All implementations must embed UnimplementedDiscoveryServiceServer
 // for forward compatibility.
 type DiscoveryServiceServer interface {
-	PullKnownPeers(context.Context, *emptypb.Empty) (*ListKnownPeersResponse, error)
+	// Узел подписывается на поток изменений от соседа
+	SubscribePeers(*emptypb.Empty, grpc.ServerStreamingServer[PeerEvent]) error
 	mustEmbedUnimplementedDiscoveryServiceServer()
 }
 
@@ -63,8 +74,8 @@ type DiscoveryServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedDiscoveryServiceServer struct{}
 
-func (UnimplementedDiscoveryServiceServer) PullKnownPeers(context.Context, *emptypb.Empty) (*ListKnownPeersResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method PullKnownPeers not implemented")
+func (UnimplementedDiscoveryServiceServer) SubscribePeers(*emptypb.Empty, grpc.ServerStreamingServer[PeerEvent]) error {
+	return status.Error(codes.Unimplemented, "method SubscribePeers not implemented")
 }
 func (UnimplementedDiscoveryServiceServer) mustEmbedUnimplementedDiscoveryServiceServer() {}
 func (UnimplementedDiscoveryServiceServer) testEmbeddedByValue()                          {}
@@ -87,23 +98,16 @@ func RegisterDiscoveryServiceServer(s grpc.ServiceRegistrar, srv DiscoveryServic
 	s.RegisterService(&DiscoveryService_ServiceDesc, srv)
 }
 
-func _DiscoveryService_PullKnownPeers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
-	if err := dec(in); err != nil {
-		return nil, err
+func _DiscoveryService_SubscribePeers_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(emptypb.Empty)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(DiscoveryServiceServer).PullKnownPeers(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: DiscoveryService_PullKnownPeers_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(DiscoveryServiceServer).PullKnownPeers(ctx, req.(*emptypb.Empty))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(DiscoveryServiceServer).SubscribePeers(m, &grpc.GenericServerStream[emptypb.Empty, PeerEvent]{ServerStream: stream})
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type DiscoveryService_SubscribePeersServer = grpc.ServerStreamingServer[PeerEvent]
 
 // DiscoveryService_ServiceDesc is the grpc.ServiceDesc for DiscoveryService service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -111,12 +115,13 @@ func _DiscoveryService_PullKnownPeers_Handler(srv interface{}, ctx context.Conte
 var DiscoveryService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "proto.DiscoveryService",
 	HandlerType: (*DiscoveryServiceServer)(nil),
-	Methods: []grpc.MethodDesc{
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
 		{
-			MethodName: "PullKnownPeers",
-			Handler:    _DiscoveryService_PullKnownPeers_Handler,
+			StreamName:    "SubscribePeers",
+			Handler:       _DiscoveryService_SubscribePeers_Handler,
+			ServerStreams: true,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
-	Metadata: "pkg/mesh/services/discovery/proto/discovery.proto",
+	Metadata: "pkg/mesh/meshservice/proto/meshservice.proto",
 }

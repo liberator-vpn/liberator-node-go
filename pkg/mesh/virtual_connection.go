@@ -1,6 +1,9 @@
 package mesh
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 type VirtualConnection struct {
 	Ctx       context.Context
@@ -20,5 +23,9 @@ func (vc *VirtualConnection) Context() context.Context {
 }
 
 func (vc *VirtualConnection) SendDatagram(data []byte) error {
-	return vc.Parent.peerStore.SendDatagram(vc.NodeID, data)
+	conn, ex := vc.Parent.peerStore.Get(vc.NodeID)
+	if !ex {
+		return fmt.Errorf("not found")
+	}
+	return conn.Connection.SendDatagram(data)
 }

@@ -6,69 +6,29 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
-	"errors"
 	"fmt"
-
-	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
-	"github.com/TexHik620953/liberator-node-go/internal/utils/peerstore"
-	"github.com/TexHik620953/liberator-node-go/internal/utils/quictransport"
-
 	"log"
-	"net"
 	"time"
 
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/services/discovery"
-	"github.com/TexHik620953/liberator-node-go/pkg/routingtable"
-
-	"github.com/quic-go/quic-go"
+	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
+	"github.com/TexHik620953/liberator-node-go/internal/utils/quictransport"
+	"github.com/TexHik620953/liberator-node-go/pkg/mesh/discovery"
+	"github.com/TexHik620953/liberator-node-go/pkg/mesh/orchestrator"
+	"github.com/TexHik620953/liberator-node-go/pkg/mesh/peerstore"
+	"github.com/TexHik620953/liberator-node-go/pkg/mesh/transport"
 	"google.golang.org/grpc"
 )
 
-func extractPeerId(cert *tls.Certificate) (string, error) {
-	if len(cert.Certificate) == 0 {
-		return "", fmt.Errorf("tls certificate contains no raw chain data")
-	}
-	var leafCert *x509.Certificate
-	var err error
-
-	// 2. Если встроенный Leaf отсутствует, парсим его из сырых байт первого элемента
-	if cert.Leaf != nil {
-		leafCert = cert.Leaf
-	} else {
-		leafCert, err = x509.ParseCertificate(cert.Certificate[0])
-		if err != nil {
-			return "", fmt.Errorf("failed to parse raw tls certificate: %w", err)
-		}
-	}
-	hash := sha256.Sum256(leafCert.RawSubjectPublicKeyInfo)
-	nodeId := hex.EncodeToString(hash[:])
-
-	return nodeId, nil
-}
-
 type MeshNode struct {
-	ctx context.Context
-	cfg appconfig.MeshConfig
-
-	router Router
-
-	cert         *tls.Certificate
-	serverCaPool *x509.CertPool
-	clientTls    *tls.Config
-
-	// This server listener
-	udpBind   *net.UDPConn
-	transport *quic.Transport
-	lis       *quic.Listener
-	nodeId    string
-
-	grpcServer *grpc.Server
-	grpcLis    *quictransport.BiStreamLis
-
-	peerStore *peerstore.PeerStore
-
-	discovery *discovery.DiscoveryService
-	//meshRouting *meshrouting.MeshRoutingService
+	ctx          context.Context
+	cfg          appconfig.MeshConfig
+	peerStore    *peerstore.PeerStore
+	connManager  transport.ConnectionManager
+	grpcServer   *grpc.Server
+	grpcLis      *quictransport.BiStreamLis
+	orchestrator *orchestrator.DiscoveryOrchestrator
+	localID      string
+	router       orchestrator.Router
 }
 
 func New(
@@ -76,326 +36,125 @@ func New(
 	cfg appconfig.MeshConfig,
 	rootCa *x509.Certificate,
 	nodeCert tls.Certificate,
-	router Router,
+	router orchestrator.Router,
 ) (*MeshNode, error) {
-	// Load certs
-
-	nodeId, err := extractPeerId(&nodeCert)
+	localID, err := extractPeerID(nodeCert)
 	if err != nil {
 		return nil, err
 	}
 
-	n := &MeshNode{
+	ps := peerstore.NewPeerStore()
+	if err := ps.Load(cfg.PeersStore); err != nil {
+		log.Printf("Failed to load peer store: %v", err)
+	}
+	ps.InsertMerge(&peerstore.PeerInfo{
+		Id:       localID,
+		LastSeen: time.Now(),
+	})
+
+	caPool := x509.NewCertPool()
+	caPool.AddCert(rootCa)
+	cm, err := transport.NewConnectionManager(cfg, nodeCert, caPool)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create connection manager: %w", err)
+	}
+
+	grpcServer := grpc.NewServer()
+	grpcLis := quictransport.NewBiStreamLis(ctx, cm.Addr())
+
+	// Discovery сервис (регистрируется автоматически)
+	_ = discovery.NewDiscoveryService(grpcServer, ps)
+
+	discoveryCli := discovery.NewDiscoveryClient()
+	orch := orchestrator.NewDiscoveryOrchestrator(ctx, localID, ps, cm, discoveryCli, router)
+
+	return &MeshNode{
 		ctx:          ctx,
 		cfg:          cfg,
-		cert:         &nodeCert,
-		serverCaPool: x509.NewCertPool(),
-		grpcServer:   grpc.NewServer(),
-		nodeId:       nodeId,
-		peerStore:    peerstore.NewPeerStore(),
+		peerStore:    ps,
+		connManager:  cm,
+		grpcServer:   grpcServer,
+		grpcLis:      grpcLis,
+		orchestrator: orch,
+		localID:      localID,
 		router:       router,
-	}
-	n.serverCaPool.AddCert(rootCa)
-
-	// Load peerstore from file if file exists
-	err = n.peerStore.Load(cfg.PeersStore)
-	if err != nil {
-		log.Printf("failed to load peerStore: %v", err)
-	}
-
-	//n.meshRouting, err = meshrouting.New(n.grpcServer, n.peerStore, nil, n)
-	//if err != nil {
-	//	return nil, fmt.Errorf("failed to create mesh rounting: %v", err)
-	//}
-	n.discovery = discovery.New(n.grpcServer, n.peerStore)
-	/*
-		n.ipInfo, err = ipapi.GetIpInfo()
-		if err != nil {
-			return nil, err
-		}*/
-	// Add self to nodes
-	n.peerStore.InsertMerge(&peerstore.PeerInfo{
-		Id:       n.nodeId,
-		LastSeen: time.Now(),
-		Address:  "",
-	})
-
-	addr, err := net.ResolveUDPAddr("udp", cfg.ListenAddr)
-	if err != nil {
-		return nil, err
-	}
-
-	n.udpBind, err = net.ListenUDP("udp", addr)
-	if err != nil {
-		return nil, err
-	}
-	n.transport = &quic.Transport{
-		Conn: n.udpBind,
-	}
-
-	n.clientTls = &tls.Config{
-		Certificates: []tls.Certificate{*n.cert},
-		NextProtos:   []string{"mesh"},
-
-		// 1. Отключаем дефолтную проверку по ServerName (так как мы его не знаем)
-		InsecureSkipVerify: true,
-		// 2. Пишем кастомную валидацию соединения
-		VerifyConnection: func(cs tls.ConnectionState) error {
-			if len(cs.PeerCertificates) == 0 {
-				return fmt.Errorf("target peer does not sent cert")
-			}
-
-			leafCert := cs.PeerCertificates[0]
-
-			// Вручную запускаем валидацию цепочки по нашему CA пуллу.
-			// Это защищает от Man-in-the-Middle атак.
-			_, err := leafCert.Verify(x509.VerifyOptions{
-				Roots:       n.serverCaPool,
-				CurrentTime: time.Now(),
-				KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-			})
-			if err != nil {
-				return fmt.Errorf("failed to verify peer cert: %w", err)
-			}
-			// Узел успешно прошел проверку! Запоминаем его логическое имя из сертификата
-			return nil
-		},
-	}
-	n.lis, err = n.transport.Listen(&tls.Config{
-		Certificates: []tls.Certificate{*n.cert},
-		NextProtos:   []string{"mesh"},
-		ClientAuth:   tls.RequireAnyClientCert,
-		VerifyConnection: func(cs tls.ConnectionState) error {
-			if len(cs.PeerCertificates) == 0 {
-				return fmt.Errorf("target peer does not sent cert")
-			}
-			leafCert := cs.PeerCertificates[0]
-			_, err := leafCert.Verify(x509.VerifyOptions{
-				Roots:       n.serverCaPool,
-				CurrentTime: time.Now(),
-				KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-			})
-			if err != nil {
-				return fmt.Errorf("failed to verify peer cert: %w", err)
-			}
-			return nil
-		},
-	}, &quic.Config{
-		MaxIncomingUniStreams: 0,
-		MaxIdleTimeout:        120 * time.Second,
-		KeepAlivePeriod:       15 * time.Second,
-		EnableDatagrams:       true,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	n.grpcLis = quictransport.NewBiStreamLis(ctx, n.lis.Addr())
-	log.Printf("created node with id: %s", n.nodeId)
-	return n, nil
-}
-func (n *MeshNode) meshConnect(addr string) (peerstore.WrappedConnection, error) {
-	udpAddr, err := net.ResolveUDPAddr("udp", addr)
-	if err != nil {
-		return nil, err
-	}
-	conn, err := n.transport.Dial(n.ctx, udpAddr, n.clientTls, &quic.Config{
-		MaxIncomingUniStreams: 0,
-		MaxIdleTimeout:        120 * time.Second,
-		KeepAlivePeriod:       15 * time.Second,
-		EnableDatagrams:       true,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return n.handleConnection(conn, false)
-}
-func (n *MeshNode) handleConnection(conn *quic.Conn, isIncoming bool) (peerstore.WrappedConnection, error) {
-	meshConn, err := wrapConnection(conn)
-	if err != nil {
-		return nil, err
-	}
-	if meshConn.ID() == n.nodeId {
-		meshConn.Close()
-		return nil, fmt.Errorf("cant connect to itself")
-	}
-
-	// Resolve collisions
-	peer, ex := n.peerStore.Get(meshConn.ID())
-	if ex && peer.Connected() {
-		localID := n.nodeId
-		remoteID := meshConn.ID()
-
-		if localID < remoteID {
-			if isIncoming {
-				meshConn.Close()
-				return peer.Connection, nil
-			}
-			peer.Connection.Close()
-			log.Printf("Dial won collision against %s. Replacing.", meshConn.ID())
-		} else {
-			if !isIncoming {
-				meshConn.Close()
-				return peer.Connection, nil
-			}
-			peer.Connected()
-			log.Printf("Incoming Accept won collision against %s. Replacing.", meshConn.ID())
-		}
-	} else {
-		log.Printf("New mesh connection from %s", meshConn.ID())
-	}
-
-	// Store to peers store
-	pi := &peerstore.PeerInfo{
-		Id:         meshConn.ID(),
-		LastSeen:   time.Now(),
-		Address:    meshConn.RemoteAddr().String(),
-		Connection: meshConn,
-	}
-	n.peerStore.InsertMerge(pi)
-
-	// Run connection
-	go n.runConnection(meshConn)
-
-	return meshConn, nil
+	}, nil
 }
 
-func (n *MeshNode) runConnection(wconn *wrappedConnection) {
-	ctx, cancel := context.WithCancel(wconn.conn.Context())
-	defer cancel()
-
-	// Link node context to this derived cancellation loop
-	go func() {
-		select {
-		case <-n.ctx.Done():
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-	for {
-		data, err := wconn.conn.ReceiveDatagram(ctx)
-		if err != nil {
-			select {
-			case <-n.ctx.Done():
-				// Expected shutdown: App/Node is shutting down
-				return
-			case <-wconn.conn.Context().Done():
-				// Expected disconnection: Peer disconnected, timed out, or connection failed
-				return
-			default:
-				// Unexpected QUIC protocol or frame reading error
-				if errors.Is(err, context.Canceled) {
-					return
-				}
-				fmt.Printf("QUIC datagram receive error: %v\n", err)
-				return
-			}
-		}
-		if len(data) == 0 {
-			continue
-		}
-		// Create message
-
-		msg, err := n.router.NewMessageCopyFrom(data)
-		if err != nil {
-			continue
-		}
-		n.router.HandleMeshPacket(msg)
-	}
+func (m *MeshNode) NodeID() string {
+	return m.localID
 }
 
 func (n *MeshNode) Run() {
-	// Grpc listener
-	go n.grpcServer.Serve(n.grpcLis)
-
-	// Services
-	go n.discovery.Run(n.ctx)
-	//go n.meshRouting.Run(n.ctx)
-
-	go n.connector()
-	// Connect to bootstrap nodes
+	// gRPC сервер
 	go func() {
-		for _, bn := range n.cfg.BootstrapAddrs {
-			_, err := n.meshConnect(bn)
-			if err != nil {
-				log.Printf("failed to connect to bootstrap node %s: %v", bn, err)
-			}
+		if err := n.grpcServer.Serve(n.grpcLis); err != nil {
+			log.Printf("gRPC server stopped: %v", err)
 		}
 	}()
-	// Save peers store every 30 seconds
-	go func() {
-		t := time.NewTicker(time.Second * 30)
-		defer t.Stop()
-		for {
-			select {
-			case <-n.ctx.Done():
-				return
-			case <-t.C:
-				err := n.peerStore.Save(n.cfg.PeersStore)
-				if err != nil {
-					log.Printf("failed to save peer store: %v", err)
-				}
-			}
+
+	// Оркестратор
+	n.orchestrator.Run()
+
+	// Подключаемся к бутстрап-узлам
+	go n.connectBootstrap()
+
+	// Периодическое сохранение
+	go n.saveLoop()
+
+	<-n.ctx.Done()
+	n.grpcServer.GracefulStop()
+	n.grpcLis.Close()
+	n.connManager.Close()
+}
+
+// connectBootstrap – подключается к бутстрап-узлам и передаёт соединения оркестратору
+func (n *MeshNode) connectBootstrap() {
+	for _, addr := range n.cfg.BootstrapAddrs {
+		ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
+		wconn, err := n.connManager.Dial(ctx, addr)
+		cancel()
+		if err != nil {
+			log.Printf("Failed to dial bootstrap %s: %v", addr, err)
+			continue
 		}
-	}()
-	// Accept connections
+		log.Printf("Connected to bootstrap %s (ID: %s)", addr, wconn.ID())
+		// Передаём соединение оркестратору для обработки
+		n.orchestrator.HandleConnection(wconn, false)
+	}
+}
+
+// saveLoop – сохраняет PeerStore каждые 30 секунд
+func (n *MeshNode) saveLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-n.ctx.Done():
-			n.lis.Close()
-			n.grpcLis.Close()
 			return
-		default:
-		}
-		conn, err := n.lis.Accept(n.ctx)
-
-		if err != nil {
-			if errors.Is(err, quic.ErrServerClosed) || errors.Is(err, context.Canceled) {
-				return
+		case <-ticker.C:
+			if err := n.peerStore.Save(n.cfg.PeersStore); err != nil {
+				log.Printf("Failed to save peer store: %v", err)
 			}
-			log.Printf("failed to accept connection: %v", err)
-			continue
 		}
-		go func() {
-			meshConn, err := n.handleConnection(conn, true)
-			if err != nil && meshConn != nil {
-				meshConn.Close()
-			}
-		}()
 	}
 }
-func (n *MeshNode) connector() {
-	ticker := time.NewTicker(time.Second * 10)
-	go func() {
-		for range ticker.C {
-			go func() {
-				for _, peer := range n.peerStore.List() {
-					if n.peerStore.Connected(peer.Id) {
-						continue
-					}
-					_, err := n.meshConnect(peer.Address)
-					if err == nil {
-						break
-					}
-				}
-			}()
+
+// extractPeerID – извлекает ID из сертификата
+func extractPeerID(cert tls.Certificate) (string, error) {
+	if len(cert.Certificate) == 0 {
+		return "", fmt.Errorf("no certificate data")
+	}
+	var leaf *x509.Certificate
+	if cert.Leaf != nil {
+		leaf = cert.Leaf
+	} else {
+		var err error
+		leaf, err = x509.ParseCertificate(cert.Certificate[0])
+		if err != nil {
+			return "", err
 		}
-	}()
-
-	<-n.ctx.Done()
-	ticker.Stop()
-}
-
-func (n *MeshNode) NodeID() string {
-	return n.nodeId
-}
-
-func (n *MeshNode) NewVirtualConnection(nodeID string, virtualIP uint32) (routingtable.RoutingObject, error) {
-
-	return &VirtualConnection{
-		Ctx:       n.ctx,
-		Parent:    n,
-		NodeID:    nodeID,
-		VirtualIp: virtualIP,
-	}, nil
+	}
+	hash := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
+	return hex.EncodeToString(hash[:]), nil
 }
