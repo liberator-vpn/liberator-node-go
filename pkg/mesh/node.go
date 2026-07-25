@@ -7,23 +7,165 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
 	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
-	"github.com/TexHik620953/liberator-node-go/internal/utils/quictransport"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/discovery"
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/orchestrator"
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/peerstore"
+	"github.com/TexHik620953/liberator-node-go/pkg/mesh/session"
+	"github.com/TexHik620953/liberator-node-go/pkg/mesh/topology"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/transport"
 	"google.golang.org/grpc"
 )
 
-// extractPeerID – извлекает ID из сертификата
-func extractPeerID(cert tls.Certificate) (string, error) {
-	if len(cert.Certificate) == 0 {
-		return "", fmt.Errorf("no certificate data")
+// MeshNode — публичный фасад библиотеки, управляющий жизненным циклом узла меш-сети.
+type MeshNode struct {
+	ctx        context.Context
+	cancel     context.CancelFunc
+	grpcServer *grpc.Server
+	localID    string
+
+	// Внутренние компоненты, скрытые от пользователя библиотеки внутри internal/
+	transport transport.NetworkTransport
+	repo      topology.PeerRepository
+	registry  session.Registry
+	engine    *session.SessionEngine
+	syncer    *discovery.DiscoverySyncer
+	pusher    *session.BiStreamLis
+}
+
+// New собирает граф зависимостей и возвращает готовую к запуску mesh-ноду.
+func New(ctx context.Context, cfg appconfig.MeshConfig, cert tls.Certificate, caPool *x509.CertPool) (*MeshNode, error) {
+	ctx, cancel := context.WithCancel(ctx)
+
+	// 1. Извлекаем собственный NodeID из предоставленного TLS-сертификата
+	localID, err := extractLocalPeerID(cert)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to extract local node ID: %w", err)
 	}
+
+	// 2. Инициализируем сетевой транспортный слой (quic-go mTLS)
+	quicTr, err := transport.NewQuicTransport(cfg.ListenAddr, cert, caPool)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to initialize transport: %w", err)
+	}
+
+	// 3. Настраиваем персистентность топологии на диске и репозиторий данных
+	var filePersister topology.FilePersister
+	if cfg.PeersStore != "" {
+		filePersister = topology.NewJsonFilePersister(cfg.PeersStore)
+	}
+	repo := topology.NewPeerRepository(ctx, filePersister)
+
+	// 4. Инициализируем слой сессий и виртуальный gRPC-листенер
+	pusher := session.NewBiStreamLis(ctx, quicTr.Addr())
+	reg := session.NewRegistry(localID)
+	engine := session.NewSessionEngine(reg, pusher, repo)
+
+	// 5. Разворачиваем gRPC сервер и регистрируем в нем DiscoveryService
+	grpcServer := grpc.NewServer()
+	discServer := discovery.NewDiscoveryServer(repo)
+
+	discovery.RegisterDiscoveryService(grpcServer, discServer)
+
+	// 6. Конструируем фоновый планировщик синхронизации
+	syncer := discovery.NewDiscoverySyncer(repo, reg, engine, quicTr, cfg.BootstrapAddrs, localID)
+
+	return &MeshNode{
+		ctx:        ctx,
+		cancel:     cancel,
+		grpcServer: grpcServer,
+		localID:    localID,
+		transport:  quicTr,
+		repo:       repo,
+		registry:   reg,
+		engine:     engine,
+		syncer:     syncer,
+		pusher:     pusher,
+	}, nil
+}
+
+func (n *MeshNode) CountPeers() int {
+	return n.repo.Count()
+}
+func (n *MeshNode) CountConnections() int {
+	return len(n.registry.ListActive())
+}
+func (n *MeshNode) ListenAddress() net.Addr {
+	return n.transport.Addr()
+}
+
+// Run запускает параллельные воркеры сетевого обмена и блокирует поток до отмены контекста.
+func (n *MeshNode) Run() error {
+	var wg sync.WaitGroup
+
+	// Поток 1: gRPC Server
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = n.grpcServer.Serve(n.pusher)
+	}()
+
+	// Поток 2: Accept Loop для входящих QUIC-соединений
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			conn, err := n.transport.Accept(n.ctx)
+			if err != nil {
+				return
+			}
+			if conn.ID() == n.localID {
+				_ = conn.Close()
+				continue
+			}
+			n.engine.HandleConnection(n.ctx, conn)
+		}
+	}()
+
+	// Поток 3: Планировщик Discovery и реактивная подписка listenForNewPeers
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		n.syncer.Start(n.ctx)
+	}()
+
+	// КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ:
+	// Даем горутине syncer.Start() пару миллисекунд, чтобы она успела вызвать repo.Subscribe()
+	// и гарантированно встала на прослушивание канала событий.
+	time.Sleep(10 * time.Millisecond)
+
+	// Ожидаем завершения работы приложения
+	<-n.ctx.Done()
+
+	// Graceful Shutdown
+	n.grpcServer.GracefulStop()
+	_ = n.pusher.Close()
+	_ = n.transport.Close()
+
+	wg.Wait()
+	return nil
+}
+
+// Close останавливает меш-ноду и высвобождает все ресурсы.
+func (n *MeshNode) Close() {
+	n.cancel()
+}
+
+// NodeID возвращает уникальный хэш-идентификатор текущего узла.
+func (n *MeshNode) NodeID() string {
+	return n.localID
+}
+
+// Хелпер для извлечения SHA-256 публичного ключа (SPKI) из локального сертификата
+func extractLocalPeerID(cert tls.Certificate) (string, error) {
+	if len(cert.Certificate) == 0 {
+		return "", fmt.Errorf("no certificate data provided")
+	}
+
 	var leaf *x509.Certificate
 	if cert.Leaf != nil {
 		leaf = cert.Leaf
@@ -31,97 +173,10 @@ func extractPeerID(cert tls.Certificate) (string, error) {
 		var err error
 		leaf, err = x509.ParseCertificate(cert.Certificate[0])
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("failed to parse x509 cert: %w", err)
 		}
 	}
+
 	hash := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
 	return hex.EncodeToString(hash[:]), nil
-}
-
-type MeshNode struct {
-	ctx          context.Context
-	cfg          appconfig.MeshConfig
-	peerStore    *peerstore.PeerStore
-	connManager  transport.ConnectionManager
-	grpcServer   *grpc.Server
-	grpcLis      *quictransport.BiStreamLis
-	orchestrator *orchestrator.DiscoveryOrchestrator
-	localID      string
-	router       orchestrator.Router
-}
-
-func New(
-	ctx context.Context,
-	cfg appconfig.MeshConfig,
-	rootCa *x509.Certificate,
-	nodeCert tls.Certificate,
-	router orchestrator.Router,
-) (*MeshNode, error) {
-	localID, err := extractPeerID(nodeCert)
-	if err != nil {
-		return nil, err
-	}
-
-	node := &MeshNode{
-		ctx:        ctx,
-		cfg:        cfg,
-		peerStore:  peerstore.NewPeerStore(ctx, cfg.PeersStore),
-		grpcServer: grpc.NewServer(),
-		localID:    localID,
-		router:     router,
-	}
-
-	node.peerStore.InsertMerge(&peerstore.PeerInfo{
-		Id:       localID,
-		LastSeen: time.Now(),
-	})
-
-	caPool := x509.NewCertPool()
-	caPool.AddCert(rootCa)
-	node.connManager, err = transport.NewConnectionManager(cfg, nodeCert, caPool)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create connection manager: %w", err)
-	}
-
-	node.grpcLis = quictransport.NewBiStreamLis(ctx, node.connManager.Addr())
-	discoveryCli := discovery.NewDiscoveryClient()
-	node.orchestrator = orchestrator.NewDiscoveryOrchestrator(ctx, localID, node.peerStore, node.connManager, discoveryCli, node.grpcLis, router)
-
-	discovery.RegisterDiscoveryService(node.grpcServer, node.peerStore)
-
-	// Передаем bootstrap ноды в peerStore
-	for _, addr := range cfg.BootstrapAddrs {
-		node.peerStore.InsertMerge(&peerstore.PeerInfo{
-			Address: addr,
-		})
-	}
-
-	return node, nil
-}
-
-func (m *MeshNode) NodeID() string {
-	return m.localID
-}
-func (m *MeshNode) ListenAddr() string {
-	return m.cfg.ListenAddr
-}
-func (m *MeshNode) ListConnections() []*peerstore.PeerInfo {
-	return m.peerStore.List()
-}
-
-func (n *MeshNode) Run() {
-	var wg sync.WaitGroup
-
-	wg.Go(func() {
-		n.grpcServer.Serve(n.grpcLis)
-	})
-
-	wg.Go(n.orchestrator.Run)
-
-	<-n.ctx.Done()
-	n.grpcServer.GracefulStop()
-	n.grpcLis.Close()
-	n.connManager.Close()
-
-	wg.Wait()
 }
