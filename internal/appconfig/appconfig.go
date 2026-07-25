@@ -33,7 +33,6 @@ type MeshConfig struct {
 	ListenAddr        string        `yaml:"listen_addr"`
 	BootstrapAddrs    []string      `yaml:"bootstrap_addrs"`
 	PeersStore        string        `yaml:"peers_store"`
-	DiscoveryInterval time.Duration `yaml:"discovery_interval"`
 	RTTUpdateInterval time.Duration `yaml:"rtt_update_interval"`
 }
 

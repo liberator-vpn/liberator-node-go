@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"maps"
 	"os"
 	"sync"
@@ -37,15 +38,68 @@ func (pi *PeerInfo) clone() *PeerInfo {
 }
 
 type PeerStore struct {
+	ctx      context.Context
+	filename string
+
 	store    map[string]*PeerInfo
 	storeMut sync.RWMutex
 	subs     map[chan *proto.PeerEvent]struct{}
 }
 
-func NewPeerStore() *PeerStore {
-	return &PeerStore{
-		store: map[string]*PeerInfo{},
-		subs:  make(map[chan *proto.PeerEvent]struct{}),
+func NewPeerStore(ctx context.Context, filename string) *PeerStore {
+	ps := &PeerStore{
+		ctx:      ctx,
+		filename: filename,
+		store:    map[string]*PeerInfo{},
+		subs:     make(map[chan *proto.PeerEvent]struct{}),
+	}
+
+	if filename != "" {
+		err := ps.load(filename)
+		if err != nil {
+			fmt.Printf("failed to load peer store: %v", err)
+		}
+		go ps.saveLoop()
+	}
+	return ps
+}
+
+func (ps *PeerStore) save(filename string) error {
+	ps.storeMut.RLock()
+	copyMap := maps.Clone(ps.store)
+	ps.storeMut.RUnlock()
+	data, err := json.Marshal(copyMap)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	return os.WriteFile(filename, data, 0644)
+}
+func (ps *PeerStore) load(filename string) error {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return fmt.Errorf("read file: %w", err)
+	}
+	var temp map[string]*PeerInfo
+	if err := json.Unmarshal(data, &temp); err != nil {
+		return fmt.Errorf("unmarshal: %w", err)
+	}
+	ps.storeMut.Lock()
+	ps.store = temp
+	ps.storeMut.Unlock()
+	return nil
+}
+func (ps *PeerStore) saveLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ps.ctx.Done():
+			return
+		case <-ticker.C:
+			if err := ps.save(ps.filename); err != nil {
+				log.Printf("Failed to save peer store: %v", err)
+			}
+		}
 	}
 }
 
@@ -200,30 +254,4 @@ func (ps *PeerStore) notifyLocked(ev *proto.PeerEvent) {
 		default:
 		}
 	}
-}
-
-func (ps *PeerStore) Save(filename string) error {
-	ps.storeMut.RLock()
-	copyMap := maps.Clone(ps.store)
-	ps.storeMut.RUnlock()
-	data, err := json.Marshal(copyMap)
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
-	}
-	return os.WriteFile(filename, data, 0644)
-}
-
-func (ps *PeerStore) Load(filename string) error {
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		return fmt.Errorf("read file: %w", err)
-	}
-	var temp map[string]*PeerInfo
-	if err := json.Unmarshal(data, &temp); err != nil {
-		return fmt.Errorf("unmarshal: %w", err)
-	}
-	ps.storeMut.Lock()
-	ps.store = temp
-	ps.storeMut.Unlock()
-	return nil
 }

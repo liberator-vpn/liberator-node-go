@@ -9,15 +9,16 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
+const SyncInterval = time.Second * 30
+
 type DiscoveryService struct {
 	proto.UnimplementedDiscoveryServiceServer
 	peerStore *peerstore.PeerStore
 }
 
-func NewDiscoveryService(grpcServer *grpc.Server, ps *peerstore.PeerStore) *DiscoveryService {
+func RegisterDiscoveryService(grpcServer *grpc.Server, ps *peerstore.PeerStore) {
 	svc := &DiscoveryService{peerStore: ps}
 	proto.RegisterDiscoveryServiceServer(grpcServer, svc)
-	return svc
 }
 
 func (s *DiscoveryService) buildSyncEvent() *proto.PeerEvent {
@@ -46,7 +47,7 @@ func (s *DiscoveryService) SubscribePeers(_ *emptypb.Empty, stream grpc.ServerSt
 	eventCh, unsubscribe := s.peerStore.Subscribe(ctx)
 	defer unsubscribe()
 
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(SyncInterval)
 	defer ticker.Stop()
 
 	for {

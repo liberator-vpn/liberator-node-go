@@ -19,8 +19,11 @@ type WrappedConnection interface {
 	RemoteAddr() net.Addr
 	Close()
 	GrpcClient() *grpc.ClientConn
+
 	SendDatagram(data []byte) error
-	ReceiveDatagram(ctx context.Context) ([]byte, error) // новый метод
+
+	ReceiveDatagram(ctx context.Context) ([]byte, error)
+	AcceptStream(ctx context.Context) (*quic.Stream, error)
 }
 
 // wrappedConnection – реализация
@@ -80,6 +83,11 @@ func (c *wrappedConnection) Close() {
 }
 func (c *wrappedConnection) GrpcClient() *grpc.ClientConn   { return c.grpcClient }
 func (c *wrappedConnection) SendDatagram(data []byte) error { return c.conn.SendDatagram(data) }
+
 func (c *wrappedConnection) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	return c.conn.ReceiveDatagram(ctx)
+}
+
+func (c *wrappedConnection) AcceptStream(ctx context.Context) (*quic.Stream, error) {
+	return c.conn.AcceptStream(ctx)
 }

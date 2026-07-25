@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/TexHik620953/liberator-node-go/internal/utils/dgmessage"
+	"github.com/TexHik620953/liberator-node-go/internal/utils/quictransport"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/discovery"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/discovery/proto"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/peerstore"
@@ -25,6 +27,7 @@ type DiscoveryOrchestrator struct {
 	connManager   transport.ConnectionManager
 	discoveryCli  discovery.DiscoveryClient
 	connectorTick time.Duration
+	grpcLis       *quictransport.BiStreamLis
 	router        Router
 }
 
@@ -34,6 +37,7 @@ func NewDiscoveryOrchestrator(
 	ps *peerstore.PeerStore,
 	cm transport.ConnectionManager,
 	dc discovery.DiscoveryClient,
+	grpcLis *quictransport.BiStreamLis,
 	router Router,
 ) *DiscoveryOrchestrator {
 	return &DiscoveryOrchestrator{
@@ -43,19 +47,19 @@ func NewDiscoveryOrchestrator(
 		connManager:   cm,
 		discoveryCli:  dc,
 		connectorTick: 10 * time.Second,
+		grpcLis:       grpcLis,
 		router:        router,
 	}
 }
 
 // Run запускает acceptLoop и connectorLoop
 func (o *DiscoveryOrchestrator) Run() {
-	go o.acceptLoop()
-	go o.connectorLoop()
-}
+	var wg sync.WaitGroup
 
-// HandleConnection – публичный метод для передачи нового соединения (из bootstrap)
-func (o *DiscoveryOrchestrator) HandleConnection(wconn transport.WrappedConnection, isIncoming bool) {
-	go o.handleNewConnection(wconn, isIncoming)
+	wg.Go(o.acceptLoop)
+	wg.Go(o.connectorLoop)
+
+	wg.Wait()
 }
 
 // acceptLoop – принимает входящие соединения
@@ -101,6 +105,7 @@ func (o *DiscoveryOrchestrator) connectorLoop() {
 	}
 }
 
+/*
 // tryConnect – попытка установить исходящее соединение
 func (o *DiscoveryOrchestrator) tryConnect(p *peerstore.PeerInfo) {
 	ctx, cancel := context.WithTimeout(o.ctx, 10*time.Second)
@@ -112,7 +117,7 @@ func (o *DiscoveryOrchestrator) tryConnect(p *peerstore.PeerInfo) {
 	}
 	o.HandleConnection(wconn, false)
 }
-
+*/
 // handleNewConnection – обрабатывает новое соединение (входящее или исходящее)
 func (o *DiscoveryOrchestrator) handleNewConnection(wconn transport.WrappedConnection, isIncoming bool) {
 	peerID := wconn.ID()
@@ -150,6 +155,7 @@ func (o *DiscoveryOrchestrator) handleNewConnection(wconn transport.WrappedConne
 
 	// Запускаем обработку датаграмм
 	go o.runDatagramReader(connCtx, wconn, cancel)
+	go o.runStreamAcceptor(connCtx, wconn, cancel)
 
 	// Запускаем подписку на события удалённого пира
 	go o.runDiscoverySubscription(connCtx, wconn, peerID)
@@ -186,6 +192,26 @@ func (o *DiscoveryOrchestrator) runDatagramReader(ctx context.Context, wconn tra
 		}
 
 		o.router.HandleMeshPacket(packet)
+	}
+}
+
+func (o *DiscoveryOrchestrator) runStreamAcceptor(ctx context.Context, wconn transport.WrappedConnection, cancel context.CancelFunc) {
+	defer cancel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		stream, err := wconn.AcceptStream(ctx)
+		if err != nil {
+			// Если ошибка не отмена контекста, логируем
+			if !errors.Is(err, context.Canceled) {
+				log.Printf("ReceiveDatagram error from %s: %v", wconn.ID(), err)
+			}
+			return
+		}
+		o.grpcLis.PushConnection(quictransport.NewBiStreamConn(stream, o.grpcLis.Addr(), wconn.RemoteAddr()))
 	}
 }
 

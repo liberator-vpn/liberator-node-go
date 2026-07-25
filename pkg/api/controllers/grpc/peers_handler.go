@@ -44,8 +44,10 @@ func (h *PeersHandler) CreatePeerAutoID(ctx context.Context, req *pb.CreatePeerA
 	}
 
 	return &pb.CreatePeerResponse{
-		Id:        domainPeer.ID,
-		VirtualIp: domainPeer.VirtualIP,
+		Id:            domainPeer.ID,
+		VirtualIp:     domainPeer.VirtualIP,
+		AwgPrivateKey: domainPeer.AwgPrivateKey,
+		AwgPublicKey:  domainPeer.AwgPrivateKey,
 	}, nil
 }
 func (h *PeersHandler) GetPeer(ctx context.Context, req *pb.GetPeerRequest) (*pb.Peer, error) {
