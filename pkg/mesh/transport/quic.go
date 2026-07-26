@@ -13,8 +13,6 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-var CanConnect func(addr1, addr2 string) bool
-
 type quicTransport struct {
 	transport  *quic.Transport
 	listener   *quic.Listener
@@ -101,9 +99,6 @@ func NewQuicTransport(listenAddr string, cert tls.Certificate, caPool *x509.Cert
 }
 
 func (t *quicTransport) Dial(ctx context.Context, addr string) (PeerConnection, error) {
-	if !CanConnect(t.localAddr.String(), addr) {
-		return nil, fmt.Errorf("network isolation: connection blocked by firewall matrix")
-	}
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return nil, err

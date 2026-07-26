@@ -240,7 +240,7 @@ func (ig *AWGTransport) watchPeers() {
 
 	ig.peersByIP.Foreach(func(_ uint32, peer *AWGPeer) {
 		if peer.expiration != nil {
-			if peer.expiration.After(now) {
+			if now.After(*peer.expiration) {
 				toDelete = append(toDelete, peer)
 			}
 		}

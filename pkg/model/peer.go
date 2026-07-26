@@ -20,7 +20,7 @@ type Peer struct {
 
 func (p *Peer) IsExpired() bool {
 	if p.ExpirationDate == nil {
-		return true
+		return false
 	}
 	if time.Now().After(*p.ExpirationDate) {
 		return true
