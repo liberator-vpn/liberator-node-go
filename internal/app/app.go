@@ -54,8 +54,8 @@ type App struct {
 	grpcServer *grpc.Server
 
 	// Certs
-	rootCa   *x509.Certificate
 	nodeCert tls.Certificate
+	rootPool *x509.CertPool
 
 	ipInfo *ipapi.IpInfo
 }
@@ -67,13 +67,17 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		routingTable: routingtable.New(),
 		firewall:     firewall.New(),
 		transports:   safemap.New[string, transport.Transport](),
+		rootPool:     x509.NewCertPool(),
 	}
 	var err error
 	// Load certs
-	app.rootCa, err = cert.ReadCertificateFromFile(cfg.Auth.RootCert)
+	rootCa, err := cert.ReadCertificateFromFile(cfg.Auth.RootCert)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load root cert: %v", err)
 	}
+
+	app.rootPool.AddCert(rootCa)
+
 	app.nodeCert, err = tls.LoadX509KeyPair(cfg.Auth.Cert, cfg.Auth.Key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load node cert: %v", err)
@@ -111,7 +115,7 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		return nil, fmt.Errorf("failed to create router: %v", err)
 	}
 
-	if app.node, err = mesh.New(ctx, cfg.Mesh, app.rootCa, app.nodeCert, app.router); err != nil {
+	if app.node, err = mesh.New(ctx, cfg.Mesh, app.nodeCert, app.rootPool, app.router); err != nil {
 		return nil, fmt.Errorf("failed to create mesh node: %v", err)
 	}
 

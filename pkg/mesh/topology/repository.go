@@ -19,14 +19,12 @@ func NewPeerRepository(ctx context.Context, disk FilePersister) PeerRepository {
 		disk:   disk,
 	}
 
-	if disk != nil {
-		if loaded, err := disk.Load(); err == nil {
-			repo.memory.peers = loaded
-		} else {
-			log.Printf("[Topology] Warning: failed to load peers from disk: %v", err)
-		}
-		go repo.startSaveLoop(ctx)
+	if loaded, err := disk.Load(); err == nil {
+		repo.memory.peers = loaded
+	} else {
+		log.Printf("[Topology] Warning: failed to load peers from disk: %v", err)
 	}
+	go repo.startSaveLoop(ctx)
 
 	return repo
 }

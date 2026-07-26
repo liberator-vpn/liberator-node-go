@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/discovery"
@@ -36,7 +35,7 @@ type MeshNode struct {
 }
 
 // New собирает граф зависимостей и возвращает готовую к запуску mesh-ноду.
-func New(ctx context.Context, cfg appconfig.MeshConfig, cert tls.Certificate, caPool *x509.CertPool) (*MeshNode, error) {
+func New(ctx context.Context, cfg appconfig.MeshConfig, cert tls.Certificate, caPool *x509.CertPool, router Router) (*MeshNode, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	// 1. Извлекаем собственный NodeID из предоставленного TLS-сертификата
@@ -54,10 +53,7 @@ func New(ctx context.Context, cfg appconfig.MeshConfig, cert tls.Certificate, ca
 	}
 
 	// 3. Настраиваем персистентность топологии на диске и репозиторий данных
-	var filePersister topology.FilePersister
-	if cfg.PeersStore != "" {
-		filePersister = topology.NewJsonFilePersister(cfg.PeersStore)
-	}
+	filePersister := topology.NewJsonFilePersister(cfg.PeersStore)
 	repo := topology.NewPeerRepository(ctx, filePersister)
 
 	// 4. Инициализируем слой сессий и виртуальный gRPC-листенер
@@ -99,19 +95,15 @@ func (n *MeshNode) ListenAddress() net.Addr {
 }
 
 // Run запускает параллельные воркеры сетевого обмена и блокирует поток до отмены контекста.
-func (n *MeshNode) Run() error {
+func (n *MeshNode) Run() {
 	var wg sync.WaitGroup
 
-	// Поток 1: gRPC Server
-	wg.Add(1)
-	go func() {
+	wg.Go(func() {
 		defer wg.Done()
 		_ = n.grpcServer.Serve(n.pusher)
-	}()
+	})
 
-	// Поток 2: Accept Loop для входящих QUIC-соединений
-	wg.Add(1)
-	go func() {
+	wg.Go(func() {
 		defer wg.Done()
 		for {
 			conn, err := n.transport.Accept(n.ctx)
@@ -124,30 +116,20 @@ func (n *MeshNode) Run() error {
 			}
 			n.engine.HandleConnection(n.ctx, conn)
 		}
-	}()
+	})
 
-	// Поток 3: Планировщик Discovery и реактивная подписка listenForNewPeers
-	wg.Add(1)
-	go func() {
+	wg.Go(func() {
 		defer wg.Done()
 		n.syncer.Start(n.ctx)
-	}()
+	})
 
-	// КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ:
-	// Даем горутине syncer.Start() пару миллисекунд, чтобы она успела вызвать repo.Subscribe()
-	// и гарантированно встала на прослушивание канала событий.
-	time.Sleep(10 * time.Millisecond)
-
-	// Ожидаем завершения работы приложения
 	<-n.ctx.Done()
 
-	// Graceful Shutdown
 	n.grpcServer.GracefulStop()
 	_ = n.pusher.Close()
 	_ = n.transport.Close()
 
 	wg.Wait()
-	return nil
 }
 
 // Close останавливает меш-ноду и высвобождает все ресурсы.
