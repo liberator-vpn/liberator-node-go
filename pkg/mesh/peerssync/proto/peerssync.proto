@@ -1,0 +1,24 @@
+syntax = "proto3";
+package proto;
+import "google/protobuf/empty.proto";
+option go_package = "./proto";
+//protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative pkg/mesh/peerssync/proto/peerssync.proto
+
+enum ClientEventType {
+    CLIENT_EVENT_SYNC         = 0;
+    CLIENT_EVENT_CONNECTED    = 1;
+    CLIENT_EVENT_DISCONNECTED = 2;
+}
+message ClientInfo {
+    string node_id       = 1;
+    uint32 virtual_ip    = 2;
+}
+message ClientEvent {
+    ClientEventType type = 1;
+    ClientInfo update  = 2;
+    repeated ClientInfo dump = 3;
+}
+service PeersSyncService {
+    // Узел подписывается на поток изменений от соседа
+    rpc SubscribeClients(google.protobuf.Empty) returns (stream ClientEvent);
+}

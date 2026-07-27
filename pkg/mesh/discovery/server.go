@@ -17,14 +17,11 @@ type DiscoveryServer struct {
 	repo topology.PeerRepository
 }
 
-// NewDiscoveryServer создает экземпляр gRPC-сервиса Discovery.
-func NewDiscoveryServer(repo topology.PeerRepository) *DiscoveryServer {
-	return &DiscoveryServer{repo: repo}
-}
-
-// RegisterDiscoveryService регистрирует сервис на gRPC-сервере библиотеки.
-func RegisterDiscoveryService(grpcServer *grpc.Server, srv *DiscoveryServer) {
+// NewDiscoveryServer создает экземпляр gRPC-сервиса Discovery и регистрирует его
+func RegisterDiscoveryService(grpcServer *grpc.Server, repo topology.PeerRepository) {
+	srv := &DiscoveryServer{repo: repo}
 	proto.RegisterDiscoveryServiceServer(grpcServer, srv)
+
 }
 
 func (s *DiscoveryServer) SubscribePeers(_ *emptypb.Empty, stream proto.DiscoveryService_SubscribePeersServer) error {

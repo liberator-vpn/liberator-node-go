@@ -11,8 +11,11 @@ type PeerConnection interface {
 	RemoteAddr() net.Addr
 	OpenStream(ctx context.Context) (net.Conn, error)
 	AcceptStream(ctx context.Context) (net.Conn, error)
+	SendDatagram(data []byte) error
+	RecvDatagram(ctx context.Context) ([]byte, error)
 	IsInitiator() bool
 	Close() error
+	Context() context.Context
 }
 
 // NetworkTransport — интерфейс для создания входящих и исходящих соединений ноды.

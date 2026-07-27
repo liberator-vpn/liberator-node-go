@@ -18,7 +18,7 @@ type DiscoverySyncer struct {
 	engine         *session.SessionEngine
 	transport      transport.NetworkTransport
 	bootstrapAddrs []string
-	localID        string // <--- Добавим локальный ID ноды для Tie-Breaking
+	localID        string
 }
 
 func NewDiscoverySyncer(

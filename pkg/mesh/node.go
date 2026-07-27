@@ -8,10 +8,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"runtime"
 	"sync"
 
 	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/discovery"
+	"github.com/TexHik620953/liberator-node-go/pkg/mesh/peerssync"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/session"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/topology"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/transport"
@@ -30,8 +32,12 @@ type MeshNode struct {
 	repo      topology.PeerRepository
 	registry  session.Registry
 	engine    *session.SessionEngine
-	syncer    *discovery.DiscoverySyncer
 	pusher    *session.BiStreamLis
+
+	discoverySyncer *discovery.DiscoverySyncer
+	peersSyncer     *peerssync.PeersSyncSyncer
+
+	toMeshClients chan peerssync.RemoteMessage
 }
 
 // New собирает граф зависимостей и возвращает готовую к запуску mesh-ноду.
@@ -59,28 +65,35 @@ func New(ctx context.Context, cfg appconfig.MeshConfig, cert tls.Certificate, ca
 	// 4. Инициализируем слой сессий и виртуальный gRPC-листенер
 	pusher := session.NewBiStreamLis(ctx, quicTr.Addr())
 	reg := session.NewRegistry(localID)
-	engine := session.NewSessionEngine(reg, pusher, repo)
+	engine := session.NewSessionEngine(reg, pusher, repo, router)
 
 	// 5. Разворачиваем gRPC сервер и регистрируем в нем DiscoveryService
 	grpcServer := grpc.NewServer()
-	discServer := discovery.NewDiscoveryServer(repo)
 
-	discovery.RegisterDiscoveryService(grpcServer, discServer)
-
+	// Discovery
+	discovery.RegisterDiscoveryService(grpcServer, repo)
 	// 6. Конструируем фоновый планировщик синхронизации
-	syncer := discovery.NewDiscoverySyncer(repo, reg, engine, quicTr, cfg.BootstrapAddrs, localID)
+	discoverySyncer := discovery.NewDiscoverySyncer(repo, reg, engine, quicTr, cfg.BootstrapAddrs, localID)
+
+	// PeersSync
+
+	toMeshClient := make(chan peerssync.RemoteMessage, 1000)
+	peerssync.RegisterPeersSyncServer(grpcServer, router)
+	peersSyncer := peerssync.NewPeersSyncSyncer(ctx, reg, router, localID, toMeshClient)
 
 	return &MeshNode{
-		ctx:        ctx,
-		cancel:     cancel,
-		grpcServer: grpcServer,
-		localID:    localID,
-		transport:  quicTr,
-		repo:       repo,
-		registry:   reg,
-		engine:     engine,
-		syncer:     syncer,
-		pusher:     pusher,
+		ctx:             ctx,
+		cancel:          cancel,
+		grpcServer:      grpcServer,
+		localID:         localID,
+		transport:       quicTr,
+		repo:            repo,
+		registry:        reg,
+		engine:          engine,
+		discoverySyncer: discoverySyncer,
+		peersSyncer:     peersSyncer,
+		pusher:          pusher,
+		toMeshClients:   toMeshClient,
 	}, nil
 }
 
@@ -99,12 +112,10 @@ func (n *MeshNode) Run() {
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
-		defer wg.Done()
 		_ = n.grpcServer.Serve(n.pusher)
 	})
 
 	wg.Go(func() {
-		defer wg.Done()
 		for {
 			conn, err := n.transport.Accept(n.ctx)
 			if err != nil {
@@ -119,9 +130,25 @@ func (n *MeshNode) Run() {
 	})
 
 	wg.Go(func() {
-		defer wg.Done()
-		n.syncer.Start(n.ctx)
+		n.discoverySyncer.Start(n.ctx)
 	})
+
+	wg.Go(func() {
+		n.peersSyncer.Start(n.ctx)
+	})
+
+	// Routines to send data to clients
+	for range runtime.GOMAXPROCS(0) {
+		wg.Go(func() {
+			for msg := range n.toMeshClients {
+				peer, ex := n.registry.Get(msg.TargetNodeID)
+				if !ex {
+					continue
+				}
+				peer.Conn.SendDatagram(msg.Data)
+			}
+		})
+	}
 
 	<-n.ctx.Done()
 

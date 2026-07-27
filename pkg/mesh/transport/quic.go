@@ -22,6 +22,7 @@ type quicTransport struct {
 }
 
 type quicPeerConnection struct {
+	ctx         context.Context
 	id          string
 	conn        *quic.Conn
 	isInitiator bool
@@ -134,6 +135,7 @@ func wrapConnection(qConn *quic.Conn, isInitiator bool) (PeerConnection, error) 
 	nodeID := hex.EncodeToString(hash[:])
 
 	return &quicPeerConnection{
+		ctx:         qConn.Context(),
 		id:          nodeID,
 		conn:        qConn,
 		isInitiator: isInitiator,
@@ -141,9 +143,16 @@ func wrapConnection(qConn *quic.Conn, isInitiator bool) (PeerConnection, error) 
 }
 
 // Реализация методов структуры quicPeerConnection
+func (pc *quicPeerConnection) SendDatagram(data []byte) error {
+	return pc.conn.SendDatagram(data)
+}
+func (pc *quicPeerConnection) RecvDatagram(ctx context.Context) ([]byte, error) {
+	return pc.conn.ReceiveDatagram(ctx)
+}
 
-func (pc *quicPeerConnection) ID() string           { return pc.id }
-func (pc *quicPeerConnection) RemoteAddr() net.Addr { return pc.conn.RemoteAddr() }
+func (pc *quicPeerConnection) Context() context.Context { return pc.ctx }
+func (pc *quicPeerConnection) ID() string               { return pc.id }
+func (pc *quicPeerConnection) RemoteAddr() net.Addr     { return pc.conn.RemoteAddr() }
 func (pc *quicPeerConnection) Close() error {
 	return pc.conn.CloseWithError(quic.ApplicationErrorCode(quic.NoError), "session closed")
 }

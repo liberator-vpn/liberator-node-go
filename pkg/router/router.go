@@ -30,6 +30,9 @@ type Router struct {
 	globalNetwork netutils.NativeIPNet
 
 	shardedWorkers []chan datagramMessageInfo
+
+	subs    map[chan RouterEvent]struct{}
+	subsMut sync.Mutex
 }
 
 func New(
@@ -68,6 +71,8 @@ func New(
 		globalNetwork: globalNetwork,
 
 		shardedWorkers: workers,
+
+		subs: make(map[chan RouterEvent]struct{}),
 	}
 	return br, nil
 }
