@@ -34,25 +34,25 @@ func NewPeersSyncSyncer(
 }
 
 func (ds *PeersSyncSyncer) Start(ctx context.Context) {
-	go func() {
-		sessionCh := ds.registry.SubscribeNewSessions(ctx)
-		for {
-			select {
-			case <-ctx.Done():
+	sessionCh := ds.registry.SubscribeNewSessions(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case s, ok := <-sessionCh:
+			if !ok {
 				return
-			case s, ok := <-sessionCh:
-				if !ok {
-					return
-				}
-				go ds.syncDiscoveryData(ctx, s)
 			}
+			go ds.syncPeerData(ctx, s)
 		}
-	}()
+	}
+
 }
 
-func (ds *PeersSyncSyncer) syncDiscoveryData(ctx context.Context, s *session.Session) {
+func (ds *PeersSyncSyncer) syncPeerData(ctx context.Context, s *session.Session) {
 	client := proto.NewPeersSyncServiceClient(s.GrpcClient)
 	stream, err := client.SubscribeClients(ctx, &emptypb.Empty{})
+
 	if err != nil {
 		return
 	}

@@ -78,10 +78,11 @@ func NewQuicTransport(listenAddr string, cert tls.Certificate, caPool *x509.Cert
 	}
 
 	quicConfig := &quic.Config{
-		MaxIncomingUniStreams: 0,
-		MaxIncomingStreams:    1000,
+		MaxIncomingUniStreams: 50,
+		MaxIncomingStreams:    200,
 		MaxIdleTimeout:        120 * time.Second,
 		KeepAlivePeriod:       15 * time.Second,
+		EnableDatagrams:       true,
 	}
 
 	listener, err := transport.Listen(serverTLS, quicConfig)

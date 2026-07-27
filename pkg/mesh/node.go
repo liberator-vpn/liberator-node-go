@@ -130,11 +130,11 @@ func (n *MeshNode) Run() {
 	})
 
 	wg.Go(func() {
-		n.discoverySyncer.Start(n.ctx)
+		n.peersSyncer.Start(n.ctx)
 	})
 
 	wg.Go(func() {
-		n.peersSyncer.Start(n.ctx)
+		n.discoverySyncer.Start(n.ctx)
 	})
 
 	// Routines to send data to clients

@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net"
 	"sync"
@@ -83,15 +85,19 @@ func (e *SessionEngine) HandleConnection(ctx context.Context, pc transport.PeerC
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
-		defer cancel()
+		defer func() {
+			cancel()
+		}()
 		for {
 			select {
 			case <-ctx.Done():
+				fmt.Println(123)
 				return
 			default:
 			}
 			stream, err := pc.AcceptStream(ctx)
 			if err != nil {
+				fmt.Println(123)
 				return
 			}
 			e.pusher.PushConnection(stream)
@@ -99,24 +105,31 @@ func (e *SessionEngine) HandleConnection(ctx context.Context, pc transport.PeerC
 	})
 
 	wg.Go(func() {
-		defer cancel()
+		defer func() {
+			cancel()
+		}()
 		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				data, err := pc.RecvDatagram(ctx)
-				if err != nil {
-					log.Printf("failed to recv datagram: %v", err)
-					continue
+			data, err := pc.RecvDatagram(ctx)
+			if err != nil {
+				if ctx.Err() != nil {
+					return // контекст завершён
 				}
-				msg, err := e.router.NewMessageCopyFrom(data)
-				if err != nil {
-					log.Printf("failed to recv datagram: %v", err)
-					continue
+				// Проверяем фатальные ошибки
+				if errors.Is(err, net.ErrClosed) {
+					log.Printf("datagram receiver exiting: %v", err)
+					return
 				}
-				e.router.HandleMeshPacket(msg)
+				// Иначе – временная ошибка (маловероятно для QUIC)
+				log.Printf("recv datagram error: %v, retrying...", err)
+				time.Sleep(100 * time.Millisecond)
+				continue
 			}
+			msg, err := e.router.NewMessageCopyFrom(data)
+			if err != nil {
+				log.Printf("failed to parse message: %v", err)
+				continue
+			}
+			e.router.HandleMeshPacket(msg)
 		}
 	})
 

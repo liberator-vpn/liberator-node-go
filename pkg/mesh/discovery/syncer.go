@@ -61,6 +61,10 @@ func (ds *DiscoverySyncer) Start(ctx context.Context) {
 				if !strings.HasPrefix(p.ID, "bootstrap:") && ds.localID < p.ID {
 					continue
 				}
+				// do not connect to ourself
+				if p.ID == ds.localID {
+					continue
+				}
 
 				go ds.connect(ctx, p.Address)
 			}
@@ -107,6 +111,10 @@ func (ds *DiscoverySyncer) listenForNewPeers(ctx context.Context) {
 			if ds.localID < ev.Update.Id {
 				continue
 			}
+			// do not connect to ourself
+			if ev.Update.Id == ds.localID {
+				continue
+			}
 
 			go ds.connect(ctx, ev.Update.Addr)
 		}
@@ -131,7 +139,7 @@ func (ds *DiscoverySyncer) listenForNewSessions(ctx context.Context) {
 }
 
 func (ds *DiscoverySyncer) connect(ctx context.Context, addr string) {
-	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	dialCtx, cancel := context.WithTimeout(ctx, 50*time.Second)
 	defer cancel()
 
 	pConn, err := ds.transport.Dial(dialCtx, addr)
