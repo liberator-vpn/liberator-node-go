@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -14,8 +15,11 @@ import (
 
 	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
 	"github.com/TexHik620953/liberator-node-go/internal/utils/cert"
+	"github.com/TexHik620953/liberator-node-go/internal/utils/dgmessage"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/transport"
+	"github.com/TexHik620953/liberator-node-go/pkg/router"
+	"github.com/TexHik620953/liberator-node-go/pkg/routingtable"
 )
 
 var rootPrivate []byte
@@ -90,6 +94,45 @@ type NodeMeta struct {
 	Role string
 }
 
+type filteredTransport struct {
+	transport.NetworkTransport
+}
+
+func (t *filteredTransport) Dial(ctx context.Context, addr string) (transport.PeerConnection, error) {
+	if !CanConnect(t.Addr().String(), addr) {
+		return nil, errors.New("connection blocked by test topology")
+	}
+	return t.NetworkTransport.Dial(ctx, addr)
+}
+
+type meshTestRouter struct{}
+
+func (meshTestRouter) SubscribeEvents(context.Context) (<-chan router.RouterEvent, context.CancelFunc) {
+	return make(chan router.RouterEvent), func() {}
+}
+
+func (meshTestRouter) DumpRoutingTable() []routingtable.RoutingTableRecordDump {
+	return nil
+}
+
+func (meshTestRouter) AddRemoteRoutingObject(routingtable.RoutingObject) error {
+	return nil
+}
+
+func (meshTestRouter) DeleteRemoteRoutingObject(uint32) error {
+	return nil
+}
+
+func (meshTestRouter) GetRemoteRoutingObject(uint32) (routingtable.RoutingObject, bool) {
+	return nil, false
+}
+
+func (meshTestRouter) NewMessageCopyFrom([]byte) (*dgmessage.DatagramMessage, error) {
+	return nil, errors.New("data plane is disabled in mesh test")
+}
+
+func (meshTestRouter) HandleMeshPacket(*dgmessage.DatagramMessage) {}
+
 func createNode(ctx context.Context, port int, bootstrapNodes []string) *mesh.MeshNode {
 	_, nodePrivate, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -108,21 +151,31 @@ func createNode(ctx context.Context, port int, bootstrapNodes []string) *mesh.Me
 		PrivateKey:  nodePrivate,
 		Leaf:        nil,
 	}
-	node, err := mesh.New(ctx, appconfig.MeshConfig{
+	cfg := appconfig.MeshConfig{
 		ListenAddr:        fmt.Sprintf(":%d", port),
 		BootstrapAddrs:    bootstrapNodes,
 		PeersStore:        "",
 		RTTUpdateInterval: 10 * time.Second,
-	}, nodeCertTLS, rootPool)
+	}
+	baseTransport, err := transport.NewQuicTransport(cfg.ListenAddr, nodeCertTLS, rootPool)
 	if err != nil {
+		panic(err)
+	}
+	node, err := mesh.NewWithTransport(
+		ctx,
+		cfg,
+		nodeCertTLS,
+		meshTestRouter{},
+		&filteredTransport{NetworkTransport: baseTransport},
+	)
+	if err != nil {
+		_ = baseTransport.Close()
 		panic(err)
 	}
 	return node
 }
 
 func main() {
-	transport.CanConnect = CanConnect
-
 	ctx := context.Background()
 	var err error
 
@@ -195,7 +248,8 @@ func main() {
 	fmt.Println("=== ТЕСТ ГЛУБОКОЙ РАЗВЕТВЛЕННОЙ СЕТИ ЗАПУЩЕН ===")
 	fmt.Printf("Всего создано нод: %d\n", len(nodeRegistry))
 	fmt.Printf("Ожидаемый результат: Peers должен сойтись к %d у всех (сеть знает про всех),\n", len(nodeRegistry))
-	fmt.Println("но Connections у листьев будет равен строго 1 (физический линк только к своему хабу).\n")
+	fmt.Println("но Connections у листьев будет равен строго 1 (физический линк только к своему хабу).")
+	fmt.Println()
 
 	// Цикл мониторинга
 	for {

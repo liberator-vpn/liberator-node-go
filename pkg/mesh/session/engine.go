@@ -2,8 +2,6 @@ package session
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"log"
 	"net"
 	"sync"
@@ -45,8 +43,6 @@ func (e *SessionEngine) HandleConnection(ctx context.Context, pc transport.PeerC
 
 	peerID := pc.ID()
 
-	// КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ 1: Мгновенно регистрируем пира в репозитории.
-	// LastSeen равен Now, ID и адрес известны. Аномалия Connections > Peers физически невозможна.
 	e.repo.InsertMerge(topology.PeerInfo{
 		ID:       peerID,
 		Address:  pc.RemoteAddr().String(),
@@ -73,31 +69,27 @@ func (e *SessionEngine) HandleConnection(ctx context.Context, pc transport.PeerC
 		GrpcClient: grpcClient,
 	}
 
-	// Вызов Add теперь отработает детерминированный Tie-Breaking
 	if err := e.registry.Add(s); err != nil {
 		_ = grpcClient.Close()
 		_ = pc.Close()
 		return
 	}
 
+	go e.runSession(ctx, s)
+}
+
+func (e *SessionEngine) runSession(ctx context.Context, s *Session) {
 	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer e.registry.Remove(s)
 
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
-		defer func() {
-			cancel()
-		}()
+		defer cancel()
 		for {
-			select {
-			case <-ctx.Done():
-				fmt.Println(123)
-				return
-			default:
-			}
-			stream, err := pc.AcceptStream(ctx)
+			stream, err := s.Conn.AcceptStream(ctx)
 			if err != nil {
-				fmt.Println(123)
 				return
 			}
 			e.pusher.PushConnection(stream)
@@ -105,24 +97,11 @@ func (e *SessionEngine) HandleConnection(ctx context.Context, pc transport.PeerC
 	})
 
 	wg.Go(func() {
-		defer func() {
-			cancel()
-		}()
+		defer cancel()
 		for {
-			data, err := pc.RecvDatagram(ctx)
+			data, err := s.Conn.RecvDatagram(ctx)
 			if err != nil {
-				if ctx.Err() != nil {
-					return // контекст завершён
-				}
-				// Проверяем фатальные ошибки
-				if errors.Is(err, net.ErrClosed) {
-					log.Printf("datagram receiver exiting: %v", err)
-					return
-				}
-				// Иначе – временная ошибка (маловероятно для QUIC)
-				log.Printf("recv datagram error: %v, retrying...", err)
-				time.Sleep(100 * time.Millisecond)
-				continue
+				return
 			}
 			msg, err := e.router.NewMessageCopyFrom(data)
 			if err != nil {
@@ -134,6 +113,4 @@ func (e *SessionEngine) HandleConnection(ctx context.Context, pc transport.PeerC
 	})
 
 	wg.Wait()
-	e.registry.Remove(peerID)
-
 }

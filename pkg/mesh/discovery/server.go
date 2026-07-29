@@ -27,14 +27,12 @@ func RegisterDiscoveryService(grpcServer *grpc.Server, repo topology.PeerReposit
 func (s *DiscoveryServer) SubscribePeers(_ *emptypb.Empty, stream proto.DiscoveryService_SubscribePeersServer) error {
 	ctx := stream.Context()
 
-	// 1. Сразу отправляем клиенту полный дамп сети (Event Sourcing: Snapshot)
+	eventCh, unsubscribe := s.repo.Subscribe(ctx)
+	defer unsubscribe()
+
 	if err := stream.Send(s.buildSyncEvent()); err != nil {
 		return err
 	}
-
-	// 2. Подписываемся на динамические изменения в репозитории топологии
-	eventCh, unsubscribe := s.repo.Subscribe(ctx)
-	defer unsubscribe()
 
 	ticker := time.NewTicker(SyncInterval)
 	defer ticker.Stop()
@@ -45,7 +43,6 @@ func (s *DiscoveryServer) SubscribePeers(_ *emptypb.Empty, stream proto.Discover
 			return ctx.Err()
 
 		case <-ticker.C:
-			// Периодически отправляем полный дамп для самовосстановления графа сети у соседа
 			if err := stream.Send(s.buildSyncEvent()); err != nil {
 				return err
 			}
@@ -54,7 +51,6 @@ func (s *DiscoveryServer) SubscribePeers(_ *emptypb.Empty, stream proto.Discover
 			if !ok {
 				return nil
 			}
-			// Транслируем дельту (JOINED, LEFT, UPDATED) в gRPC-стрим
 			if err := stream.Send(ev); err != nil {
 				return err
 			}
@@ -66,7 +62,6 @@ func (s *DiscoveryServer) buildSyncEvent() *proto.PeerEvent {
 	all := s.repo.List()
 	dump := make([]*proto.PeerInfo, 0, len(all))
 	for _, p := range all {
-		// ИСПРАВЛЕНИЕ: Никогда не экспортируем временные бутстрап-записи соседям по мешу
 		if strings.HasPrefix(p.ID, "bootstrap:") {
 			continue
 		}

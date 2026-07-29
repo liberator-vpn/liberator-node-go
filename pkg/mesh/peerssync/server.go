@@ -24,12 +24,12 @@ func RegisterPeersSyncServer(grpcServer *grpc.Server, router Router) {
 func (s *PeersSyncServer) SubscribeClients(_ *emptypb.Empty, stream grpc.ServerStreamingServer[proto.ClientEvent]) error {
 	ctx := stream.Context()
 
+	updateCh, unsubscribe := s.router.SubscribeEvents(ctx)
+	defer unsubscribe()
+
 	if err := stream.Send(s.buildSyncEvent()); err != nil {
 		return err
 	}
-
-	updateCh, unsubscribe := s.router.SubscribeEvents(ctx)
-	defer unsubscribe()
 
 	ticker := time.NewTicker(SyncInterval)
 	defer ticker.Stop()

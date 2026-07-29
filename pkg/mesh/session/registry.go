@@ -10,118 +10,124 @@ type sessionRegistry struct {
 	mu       sync.RWMutex
 	localID  string
 	sessions map[string]*Session
-	subsMu   sync.Mutex
-	subs     []chan *Session
+	subs     map[chan *Session]struct{}
+	closed   bool
 }
 
 func NewRegistry(localID string) Registry {
 	return &sessionRegistry{
 		localID:  localID,
 		sessions: make(map[string]*Session),
-		subs:     make([]chan *Session, 0),
+		subs:     make(map[chan *Session]struct{}),
 	}
 }
+
 func (r *sessionRegistry) Add(s *Session) error {
-	if s == nil || s.PeerID == "" {
+	if s == nil || s.PeerID == "" || s.Conn == nil {
 		return errors.New("invalid session data")
 	}
 
 	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return errors.New("session registry is closed")
+	}
+
 	old, exists := r.sessions[s.PeerID]
 	if exists {
-		// Обнаружено дублирующее соединение! Применяем детерминированный алгоритм выборки:
-		// Сравниваем ID нашей ноды с ID удаленной ноды
-		weAreBigger := r.localID > s.PeerID
-
-		if weAreBigger {
-			// Если мы главные — мы хотим, чтобы между нами жило только ИСХОДЯЩЕЕ соединение.
-			if s.Conn.IsInitiator() {
-				// Новое соединение является исходящим? Отлично, значит старое (входящее) надо закрыть и заменить.
-				r.mu.Unlock() // Выходим из мьютекса перед закрытием ресурсов
-				_ = old.GrpcClient.Close()
-				_ = old.Conn.Close()
-
-				r.mu.Lock()
-				r.sessions[s.PeerID] = s
-			} else {
-				// Новое соединение входящее? Но у нас уже есть наше исходящее. Отвергаем дубликат.
-				r.mu.Unlock()
-				return errors.New("duplicate connection rejected by tie-breaking rules (we keep outbound)")
-			}
-		} else {
-			// Если мы ведомые — мы хотим, чтобы между нами жило только ВХОДЯЩЕЕ соединение соседа.
-			if !s.Conn.IsInitiator() {
-				// Новое соединение входящее? Отлично, закрываем наше старое исходящее и берем это.
-				r.mu.Unlock()
-				_ = old.GrpcClient.Close()
-				_ = old.Conn.Close()
-
-				r.mu.Lock()
-				r.sessions[s.PeerID] = s
-			} else {
-				// Новое соединение исходящее? Но у соседа приоритет на входящее к нам. Отвергаем.
-				r.mu.Unlock()
-				return errors.New("duplicate connection rejected by tie-breaking rules (we keep inbound)")
-			}
+		keepOutbound := r.localID > s.PeerID
+		if s.Conn.IsInitiator() != keepOutbound {
+			r.mu.Unlock()
+			return errors.New("duplicate connection rejected by tie-breaking rules")
 		}
-	} else {
-		// Дубликатов нет, просто сохраняем сессию
-		r.sessions[s.PeerID] = s
 	}
-	r.mu.Unlock()
 
-	// Оповещаем подписчиков только если сессия успешно закрепилась
-	r.subsMu.Lock()
-	for _, ch := range r.subs {
+	r.sessions[s.PeerID] = s
+	for ch := range r.subs {
 		select {
 		case ch <- s:
 		default:
 		}
 	}
-	r.subsMu.Unlock()
+	r.mu.Unlock()
+
+	if exists {
+		closeSession(old)
+	}
 
 	return nil
 }
 
 func (r *sessionRegistry) SubscribeNewSessions(ctx context.Context) <-chan *Session {
-	ch := make(chan *Session, 100)
+	r.mu.Lock()
+	ch := make(chan *Session, len(r.sessions)+100)
+	if r.closed {
+		close(ch)
+		r.mu.Unlock()
+		return ch
+	}
+	for _, s := range r.sessions {
+		ch <- s
+	}
+	r.subs[ch] = struct{}{}
+	r.mu.Unlock()
 
-	r.subsMu.Lock()
-	r.subs = append(r.subs, ch)
-	r.subsMu.Unlock()
-
-	// Удаляем канал из подписчиков при отмене контекста
 	go func() {
 		<-ctx.Done()
-		r.subsMu.Lock()
-		for i, sub := range r.subs {
-			if sub == ch {
-				r.subs = append(r.subs[:i], r.subs[i+1:]...)
-				close(ch)
-				break
-			}
+		r.mu.Lock()
+		if _, exists := r.subs[ch]; exists {
+			delete(r.subs, ch)
+			close(ch)
 		}
-		r.subsMu.Unlock()
+		r.mu.Unlock()
 	}()
 
 	return ch
 }
 
-func (r *sessionRegistry) Remove(peerID string) {
-	if peerID == "" {
+func (r *sessionRegistry) Remove(s *Session) {
+	if s == nil || s.PeerID == "" {
 		return
 	}
 
 	r.mu.Lock()
-	s, exists := r.sessions[peerID]
-	if !exists {
+	current, exists := r.sessions[s.PeerID]
+	if !exists || current != s {
 		r.mu.Unlock()
 		return
 	}
-	delete(r.sessions, peerID)
+	delete(r.sessions, s.PeerID)
 	r.mu.Unlock()
 
-	// Корректно высвобождаем ресурсы сокетов за пределами мьютекса
+	closeSession(s)
+}
+
+func (r *sessionRegistry) Close() {
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return
+	}
+	r.closed = true
+
+	sessions := make([]*Session, 0, len(r.sessions))
+	for _, s := range r.sessions {
+		sessions = append(sessions, s)
+	}
+	clear(r.sessions)
+
+	for ch := range r.subs {
+		delete(r.subs, ch)
+		close(ch)
+	}
+	r.mu.Unlock()
+
+	for _, s := range sessions {
+		closeSession(s)
+	}
+}
+
+func closeSession(s *Session) {
 	if s.GrpcClient != nil {
 		_ = s.GrpcClient.Close()
 	}
@@ -135,10 +141,7 @@ func (r *sessionRegistry) Get(peerID string) (*Session, bool) {
 	defer r.mu.RUnlock()
 
 	s, exists := r.sessions[peerID]
-	if !exists {
-		return nil, false
-	}
-	return s, true
+	return s, exists
 }
 
 func (r *sessionRegistry) ListActive() []*Session {

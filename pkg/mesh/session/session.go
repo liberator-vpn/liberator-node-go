@@ -18,10 +18,11 @@ type Session struct {
 // Registry контролирует пул живых сессий с соседями в рантайме.
 type Registry interface {
 	Add(s *Session) error
-	Remove(peerID string)
+	Remove(s *Session)
 	Get(peerID string) (*Session, bool)
 	ListActive() []*Session
-	SubscribeNewSessions(ctx context.Context) <-chan *Session // <--- НОВЫЙ МЕТОД
+	SubscribeNewSessions(ctx context.Context) <-chan *Session
+	Close()
 }
 
 // StreamPusher — интерфейс для проброса виртуальных net.Conn стримов в grpc.Server.
