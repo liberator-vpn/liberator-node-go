@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -33,8 +34,9 @@ import (
 )
 
 type App struct {
-	ctx context.Context
-	cfg *appconfig.AppConfig
+	ctx    context.Context
+	cancel context.CancelFunc
+	cfg    *appconfig.AppConfig
 
 	db *sql.DB
 
@@ -61,14 +63,23 @@ type App struct {
 }
 
 func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
+	ctx, cancel := context.WithCancel(ctx)
 	app := &App{
 		ctx:          ctx,
+		cancel:       cancel,
 		cfg:          cfg,
 		routingTable: routingtable.New(),
 		firewall:     firewall.New(),
 		transports:   safemap.New[string, transport.Transport](),
 		rootPool:     x509.NewCertPool(),
 	}
+	initialized := false
+	defer func() {
+		if !initialized {
+			app.closeResources()
+		}
+	}()
+
 	var err error
 	// Load certs
 	rootCa, err := cert.ReadCertificateFromFile(cfg.Auth.RootCert)
@@ -120,7 +131,7 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	}
 
 	// Get current server ip and location
-	ipInfo, err := ipapi.GetIpInfo()
+	ipInfo, err := ipapi.GetIpInfo(ctx)
 	if err != nil {
 		log.Printf("failed to update err: %v", err)
 		ipInfo = &ipapi.IpInfo{
@@ -172,10 +183,18 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		app.transports.Set(name, trp)
 		app.peersManager.RegisterTransport(name, trp)
 	}
+	initialized = true
 	return app, nil
 }
 
-func (app *App) Run() error {
+func (app *App) Run() (runErr error) {
+	defer func() {
+		app.stopRuntime()
+		if err := app.db.Close(); runErr == nil && err != nil {
+			runErr = fmt.Errorf("failed to close database: %w", err)
+		}
+	}()
+
 	// Registering controllers
 	grpcctrl.RegisterFirewallService(app.grpcServer, app.firewallManager)
 	grpcctrl.RegisterPeerService(app.grpcServer, app.peersManager)
@@ -188,24 +207,58 @@ func (app *App) Run() error {
 		return fmt.Errorf("failed to start peers manager: %v", err)
 	}
 
-	var wg sync.WaitGroup
-	wg.Go(app.router.Run)
-	wg.Go(app.node.Run)
-	wg.Go(app.tunIface.Run)
+	var workers sync.WaitGroup
+	workers.Go(app.router.Run)
+	workers.Go(app.node.Run)
+	workers.Go(app.tunIface.Run)
 
 	app.transports.Foreach(func(_ string, t transport.Transport) {
-		wg.Go(t.Run)
+		workers.Go(t.Run)
 	})
 
+	serveErr := make(chan error, 1)
 	go func() {
-		if err := app.grpcServer.Serve(app.grpcLis); err != nil {
-			log.Fatalf("failed to start grpc server: %v", err)
-		}
+		serveErr <- app.grpcServer.Serve(app.grpcLis)
 	}()
 
-	wg.Wait()
-	app.grpcServer.Stop()
-	app.grpcLis.Close()
+	var grpcErr error
+	serveFinished := false
+	select {
+	case <-app.ctx.Done():
+	case grpcErr = <-serveErr:
+		serveFinished = true
+		app.cancel()
+	}
+
+	app.stopRuntime()
+	workers.Wait()
+
+	if !serveFinished {
+		grpcErr = <-serveErr
+	}
+	if grpcErr != nil && !errors.Is(grpcErr, grpc.ErrServerStopped) {
+		return fmt.Errorf("gRPC server stopped: %w", grpcErr)
+	}
 
 	return nil
+}
+
+func (app *App) stopRuntime() {
+	app.cancel()
+	if app.node != nil {
+		app.node.Close()
+	}
+	if app.grpcServer != nil {
+		app.grpcServer.Stop()
+	}
+	if app.grpcLis != nil {
+		_ = app.grpcLis.Close()
+	}
+}
+
+func (app *App) closeResources() {
+	app.stopRuntime()
+	if app.db != nil {
+		_ = app.db.Close()
+	}
 }

@@ -3,12 +3,14 @@ package discovery
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/discovery/proto"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/session"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/topology"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/transport"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -19,6 +21,9 @@ type DiscoverySyncer struct {
 	transport      transport.NetworkTransport
 	bootstrapAddrs []string
 	localID        string
+
+	dialMu  sync.Mutex
+	dialing map[string]struct{}
 }
 
 func NewDiscoverySyncer(
@@ -36,6 +41,7 @@ func NewDiscoverySyncer(
 		transport:      tr,
 		bootstrapAddrs: bootstrap,
 		localID:        localID,
+		dialing:        make(map[string]struct{}),
 	}
 }
 
@@ -44,7 +50,7 @@ func (ds *DiscoverySyncer) Start(ctx context.Context) {
 	go ds.listenForNewPeers(ctx)
 	go ds.connectToBootstrap(ctx)
 
-	ticker := time.NewTicker(5 * time.Second) // Уменьшим тикер для ускорения схождения теста
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -61,7 +67,6 @@ func (ds *DiscoverySyncer) Start(ctx context.Context) {
 				if !strings.HasPrefix(p.ID, "bootstrap:") && ds.localID < p.ID {
 					continue
 				}
-				// do not connect to ourself
 				if p.ID == ds.localID {
 					continue
 				}
@@ -74,7 +79,6 @@ func (ds *DiscoverySyncer) Start(ctx context.Context) {
 
 func (ds *DiscoverySyncer) connectToBootstrap(ctx context.Context) {
 	for _, addr := range ds.bootstrapAddrs {
-		// Дополнительная проверка безопасности: не подключаемся к собственному порту
 		if tAddr := ds.transport.Addr(); tAddr != nil && strings.Contains(tAddr.String(), addr) {
 			continue
 		}
@@ -98,7 +102,6 @@ func (ds *DiscoverySyncer) listenForNewPeers(ctx context.Context) {
 				continue
 			}
 
-			// ИСПРАВЛЕНИЕ: Локальные бутстрап-строки не должны триггерить сетевой Dial
 			if strings.HasPrefix(ev.Update.Id, "bootstrap:") {
 				continue
 			}
@@ -107,11 +110,9 @@ func (ds *DiscoverySyncer) listenForNewPeers(ctx context.Context) {
 				continue
 			}
 
-			// Проверка Tie-Breaking для реактивного коннекта
 			if ds.localID < ev.Update.Id {
 				continue
 			}
-			// do not connect to ourself
 			if ev.Update.Id == ds.localID {
 				continue
 			}
@@ -132,14 +133,18 @@ func (ds *DiscoverySyncer) listenForNewSessions(ctx context.Context) {
 			if !ok {
 				return
 			}
-			// Запускаем двусторонний gRPC-стрим для выкачивания топологии
 			go ds.syncDiscoveryData(ctx, s)
 		}
 	}
 }
 
 func (ds *DiscoverySyncer) connect(ctx context.Context, addr string) {
-	dialCtx, cancel := context.WithTimeout(ctx, 50*time.Second)
+	if addr == "" || !ds.startDial(addr) {
+		return
+	}
+	defer ds.finishDial(addr)
+
+	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	pConn, err := ds.transport.Dial(dialCtx, addr)
@@ -147,14 +152,29 @@ func (ds *DiscoverySyncer) connect(ctx context.Context, addr string) {
 		return
 	}
 
-	// Передаем в движок сессий — он сохранит её в реестр, что автоматически
-	// стриггерит событие в listenForNewSessions для запуска syncDiscoveryData
 	ds.engine.HandleConnection(ctx, pConn)
+}
+
+func (ds *DiscoverySyncer) startDial(addr string) bool {
+	ds.dialMu.Lock()
+	defer ds.dialMu.Unlock()
+
+	if _, exists := ds.dialing[addr]; exists {
+		return false
+	}
+	ds.dialing[addr] = struct{}{}
+	return true
+}
+
+func (ds *DiscoverySyncer) finishDial(addr string) {
+	ds.dialMu.Lock()
+	delete(ds.dialing, addr)
+	ds.dialMu.Unlock()
 }
 
 func (ds *DiscoverySyncer) syncDiscoveryData(ctx context.Context, s *session.Session) {
 	client := proto.NewDiscoveryServiceClient(s.GrpcClient)
-	stream, err := client.SubscribePeers(ctx, &emptypb.Empty{})
+	stream, err := client.SubscribePeers(ctx, &emptypb.Empty{}, grpc.WaitForReady(true))
 	if err != nil {
 		return
 	}
@@ -165,9 +185,9 @@ func (ds *DiscoverySyncer) syncDiscoveryData(ctx context.Context, s *session.Ses
 			return
 		}
 
-		if ev.Type == proto.PeerEventType_PEER_EVENT_SYNC {
+		switch ev.Type {
+		case proto.PeerEventType_PEER_EVENT_SYNC:
 			for _, p := range ev.Dump {
-				// ИСПРАВЛЕНИЕ: Строго запрещаем импорт временных bootstrap-строк от соседей
 				if strings.HasPrefix(p.Id, "bootstrap:") {
 					continue
 				}
@@ -177,8 +197,10 @@ func (ds *DiscoverySyncer) syncDiscoveryData(ctx context.Context, s *session.Ses
 					LastSeen: time.Unix(0, p.LastSeen),
 				})
 			}
-		} else if ev.Update != nil {
-			// ИСПРАВЛЕНИЕ: Строго запрещаем импорт дельт с временными bootstrap-строками
+		case proto.PeerEventType_PEER_EVENT_JOINED, proto.PeerEventType_PEER_EVENT_UPDATED:
+			if ev.Update == nil {
+				continue
+			}
 			if strings.HasPrefix(ev.Update.Id, "bootstrap:") {
 				continue
 			}
@@ -187,6 +209,10 @@ func (ds *DiscoverySyncer) syncDiscoveryData(ctx context.Context, s *session.Ses
 				Address:  ev.Update.Addr,
 				LastSeen: time.Unix(0, ev.Update.LastSeen),
 			})
+		case proto.PeerEventType_PEER_EVENT_LEFT:
+			if ev.Update != nil {
+				ds.repo.Remove(ev.Update.Id)
+			}
 		}
 	}
 }

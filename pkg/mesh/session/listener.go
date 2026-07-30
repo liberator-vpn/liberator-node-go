@@ -46,7 +46,6 @@ func (l *BiStreamLis) Accept() (net.Conn, error) {
 func (l *BiStreamLis) Close() error {
 	l.closeOnce.Do(func() {
 		l.cancel()
-		close(l.streamChan)
 	})
 	return nil
 }

@@ -1,28 +1,15 @@
 package ipapi
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 )
 
-/*
-	{
-		"status":"success",
-		"country":"Finland",
-		"countryCode":"FI",
-		"region":"18",
-		"regionName":"Uusimaa",
-		"city":"Helsinki",
-		"zip":"00201",
-		"lat":60.1719,
-		"lon":24.9347,
-		"timezone":"Europe/Helsinki",
-		"isp":"Chsl ONE LTD",
-		"org":"CHSL Helsinki",
-		"as":"AS210546 CHSL ONE LTD",
-		"query":"144.31.133.121"
-	}
-*/
+const ipInfoURL = "http://ip-api.com/json"
+
 type IpInfo struct {
 	Status      string  `json:"status"`
 	Country     string  `json:"country"`
@@ -40,22 +27,30 @@ type IpInfo struct {
 	Query       string  `json:"query"`
 }
 
-func GetIpInfo() (*IpInfo, error) {
-	rq, err := http.NewRequest(http.MethodGet, "http://ip-api.com/json", nil)
+func GetIpInfo(ctx context.Context) (*IpInfo, error) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	return getIpInfo(ctx, client, ipInfoURL)
+}
+
+func getIpInfo(ctx context.Context, client *http.Client, url string) (*IpInfo, error) {
+	rq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	client := http.Client{}
 
 	resp, err := client.Do(rq)
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("IP API returned %s", resp.Status)
+	}
 
 	var ipInfo IpInfo
 
-	if err = json.NewDecoder(resp.Body).Decode(&ipInfo); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&ipInfo); err != nil {
 		return nil, err
 	}
 	return &ipInfo, nil

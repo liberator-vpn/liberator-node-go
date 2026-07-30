@@ -6,6 +6,7 @@ import (
 
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/peerssync/proto"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/session"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -51,7 +52,7 @@ func (ds *PeersSyncSyncer) Start(ctx context.Context) {
 
 func (ds *PeersSyncSyncer) syncPeerData(ctx context.Context, s *session.Session) {
 	client := proto.NewPeersSyncServiceClient(s.GrpcClient)
-	stream, err := client.SubscribeClients(ctx, &emptypb.Empty{})
+	stream, err := client.SubscribeClients(ctx, &emptypb.Empty{}, grpc.WaitForReady(true))
 
 	if err != nil {
 		return

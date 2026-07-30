@@ -24,6 +24,7 @@ import (
 type MeshNode struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
+	closeOnce  sync.Once
 	grpcServer *grpc.Server
 	localID    string
 
@@ -42,40 +43,48 @@ type MeshNode struct {
 
 // New собирает граф зависимостей и возвращает готовую к запуску mesh-ноду.
 func New(ctx context.Context, cfg appconfig.MeshConfig, cert tls.Certificate, caPool *x509.CertPool, router Router) (*MeshNode, error) {
+	quicTr, err := transport.NewQuicTransport(cfg.ListenAddr, cert, caPool)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize transport: %w", err)
+	}
+	node, err := NewWithTransport(ctx, cfg, cert, router, quicTr)
+	if err != nil {
+		_ = quicTr.Close()
+		return nil, err
+	}
+	return node, nil
+}
+
+func NewWithTransport(
+	ctx context.Context,
+	cfg appconfig.MeshConfig,
+	cert tls.Certificate,
+	router Router,
+	networkTransport transport.NetworkTransport,
+) (*MeshNode, error) {
+	if networkTransport == nil {
+		return nil, fmt.Errorf("network transport is required")
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 
-	// 1. Извлекаем собственный NodeID из предоставленного TLS-сертификата
 	localID, err := extractLocalPeerID(cert)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to extract local node ID: %w", err)
 	}
 
-	// 2. Инициализируем сетевой транспортный слой (quic-go mTLS)
-	quicTr, err := transport.NewQuicTransport(cfg.ListenAddr, cert, caPool)
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("failed to initialize transport: %w", err)
-	}
-
-	// 3. Настраиваем персистентность топологии на диске и репозиторий данных
 	filePersister := topology.NewJsonFilePersister(cfg.PeersStore)
 	repo := topology.NewPeerRepository(ctx, filePersister)
 
-	// 4. Инициализируем слой сессий и виртуальный gRPC-листенер
-	pusher := session.NewBiStreamLis(ctx, quicTr.Addr())
+	pusher := session.NewBiStreamLis(ctx, networkTransport.Addr())
 	reg := session.NewRegistry(localID)
 	engine := session.NewSessionEngine(reg, pusher, repo, router)
 
-	// 5. Разворачиваем gRPC сервер и регистрируем в нем DiscoveryService
 	grpcServer := grpc.NewServer()
 
-	// Discovery
 	discovery.RegisterDiscoveryService(grpcServer, repo)
-	// 6. Конструируем фоновый планировщик синхронизации
-	discoverySyncer := discovery.NewDiscoverySyncer(repo, reg, engine, quicTr, cfg.BootstrapAddrs, localID)
-
-	// PeersSync
+	discoverySyncer := discovery.NewDiscoverySyncer(repo, reg, engine, networkTransport, cfg.BootstrapAddrs, localID)
 
 	toMeshClient := make(chan peerssync.RemoteMessage, 1000)
 	peerssync.RegisterPeersSyncServer(grpcServer, router)
@@ -86,7 +95,7 @@ func New(ctx context.Context, cfg appconfig.MeshConfig, cert tls.Certificate, ca
 		cancel:          cancel,
 		grpcServer:      grpcServer,
 		localID:         localID,
-		transport:       quicTr,
+		transport:       networkTransport,
 		repo:            repo,
 		registry:        reg,
 		engine:          engine,
@@ -109,6 +118,11 @@ func (n *MeshNode) ListenAddress() net.Addr {
 
 // Run запускает параллельные воркеры сетевого обмена и блокирует поток до отмены контекста.
 func (n *MeshNode) Run() {
+	if n.ctx.Err() != nil {
+		n.shutdown()
+		return
+	}
+
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
@@ -152,16 +166,23 @@ func (n *MeshNode) Run() {
 
 	<-n.ctx.Done()
 
-	n.grpcServer.GracefulStop()
-	_ = n.pusher.Close()
-	_ = n.transport.Close()
-
+	n.shutdown()
 	wg.Wait()
 }
 
 // Close останавливает меш-ноду и высвобождает все ресурсы.
 func (n *MeshNode) Close() {
-	n.cancel()
+	n.shutdown()
+}
+
+func (n *MeshNode) shutdown() {
+	n.closeOnce.Do(func() {
+		n.cancel()
+		_ = n.pusher.Close()
+		n.grpcServer.Stop()
+		n.registry.Close()
+		_ = n.transport.Close()
+	})
 }
 
 // NodeID возвращает уникальный хэш-идентификатор текущего узла.
