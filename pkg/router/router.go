@@ -40,14 +40,15 @@ func New(
 	cfg appconfig.RouterConfig,
 	routingTable routingtable.RoutingTable,
 	firewall firewall.FirewallEngine,
+	nodeCIDR, globalCIDR string,
 ) (*Router, error) {
 
-	gatewayAddr, network, err := netutils.NewNativeIPNet(cfg.CIDR)
+	gatewayAddr, network, err := netutils.NewNativeIPNet(nodeCIDR)
 	if err != nil {
 		return nil, fmt.Errorf("invalid CIDR: %w", err)
 	}
 
-	_, globalNetwork, err := netutils.NewNativeIPNet(cfg.GlobalCIRD)
+	_, globalNetwork, err := netutils.NewNativeIPNet(globalCIDR)
 	if err != nil {
 		return nil, fmt.Errorf("invalid global CIDR: %w", err)
 	}

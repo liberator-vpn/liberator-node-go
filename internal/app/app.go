@@ -92,13 +92,24 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load root cert: %v", err)
 	}
-
 	app.rootPool.AddCert(rootCa)
-
 	app.nodeCert, err = tls.LoadX509KeyPair(cfg.Auth.Cert, cfg.Auth.Key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load node cert: %v", err)
 	}
+	// Extract global cidr and current node cidr from cert
+	if app.nodeCert.Leaf == nil {
+		return nil, fmt.Errorf("node cert leaf empty: %v", err)
+	}
+	if len(app.nodeCert.Leaf.IPAddresses) == 0 {
+		return nil, fmt.Errorf("no ips in node cert: %v", err)
+	}
+	ip := app.nodeCert.Leaf.IPAddresses[0].To4()
+	nodeIP := ip.Mask(net.CIDRMask(16, 32))
+
+	// Addr here corresponds to gateway(vpn server host), dns server launched here
+	nodeNet := fmt.Sprintf("%s/%d", net.IPv4(nodeIP[0], nodeIP[1], nodeIP[2], 1), 16)
+	globalNet := fmt.Sprintf("%s/%d", ip.Mask(net.CIDRMask(8, 32)), 8)
 
 	// Grpc listener and server
 	app.grpcLis, err = net.Listen("tcp", cfg.Api.Grpc.ListenAddr)
@@ -133,10 +144,10 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 
 	// managers
 	app.firewallManager = firewallmanager.New(app.ctx, app.firewall, app.db)
-	app.peersManager = peersmanager.New(app.ctx, app.db, app.firewallManager, app.cfg.Router.CIDR)
+	app.peersManager = peersmanager.New(app.ctx, app.db, app.firewallManager, nodeNet)
 
 	// Network stuff
-	if app.router, err = router.New(ctx, cfg.Router, app.routingTable, app.firewall); err != nil {
+	if app.router, err = router.New(ctx, cfg.Router, app.routingTable, app.firewall, nodeNet, globalNet); err != nil {
 		return nil, fmt.Errorf("failed to create router: %v", err)
 	}
 
@@ -159,7 +170,7 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		ctx,
 		cfg.TunConfig,
 		app.router,
-		cfg.Router.CIDR,
+		nodeNet,
 	); err != nil {
 		return nil, fmt.Errorf("failed to create tun iface: %w", err)
 	}

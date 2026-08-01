@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"net"
 	"time"
 )
 
@@ -44,6 +45,7 @@ func IssueNodeCertificate(
 	nodeName string, // Имя ноды (например, "node-1.mesh")
 	caCert *x509.Certificate, // Сертификат корневого CA из первого метода
 	caPrivKey ed25519.PrivateKey, // Приватный ключ корневого CA для подписи
+	nodeIP net.IP,
 ) (*x509.Certificate, error) {
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
@@ -65,7 +67,8 @@ func IssueNodeCertificate(
 		},
 		// Обязательно заполняем DNSNames, чтобы TLS-клиенты могли проверить
 		// соответствие хоста без флага InsecureSkipVerify
-		DNSNames: []string{nodeName},
+		DNSNames:    []string{nodeName},
+		IPAddresses: []net.IP{nodeIP},
 	}
 
 	// Подписываем сертификат ноды ключом CA (передаем caCert как родителя)

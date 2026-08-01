@@ -24,8 +24,6 @@ type TUNConfig struct {
 // RouterConfig описывает один мост (bridge) со своим ingress/egress и сетевой конфигурацией
 type RouterConfig struct {
 	Transports map[string]map[string]any `yaml:"transports"`
-	GlobalCIRD string                    `yaml:"global_cidr"`
-	CIDR       string                    `yaml:"cidr"`
 }
 
 // MeshConfig для кластеризации (обнаружение пиров)
