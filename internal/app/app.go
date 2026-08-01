@@ -110,13 +110,13 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		Certificates: []tls.Certificate{app.nodeCert},
 		NextProtos:   []string{"nodectl"},
 	})),
-		grpc.UnaryInterceptor(UnaryAuthInterceptor(cfg.Auth.JWTSecret)),
+		grpc.UnaryInterceptor(grpcctrl.UnaryAuthInterceptor(cfg.Auth.JWTSecret)),
 	)
 
 	app.httpMux = http.NewServeMux()
 	app.httpServer = &http.Server{
 		Addr:    cfg.Api.Http.ListenAddr,
-		Handler: HTTPAuthMiddleware(cfg.Auth.JWTSecret, app.httpMux),
+		Handler: httpctrl.HTTPAuthMiddleware(cfg.Auth.JWTSecret, app.httpMux),
 	}
 
 	// Db
