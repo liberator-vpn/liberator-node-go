@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -26,6 +27,9 @@ type quicPeerConnection struct {
 	id          string
 	conn        *quic.Conn
 	isInitiator bool
+
+	totalSent atomic.Uint64
+	totalRecv atomic.Uint64
 }
 
 // NewQuicTransport инициализирует UDP-сокет, QUIC-транспорт и TLS конфигурации.
@@ -145,10 +149,23 @@ func wrapConnection(qConn *quic.Conn, isInitiator bool) (PeerConnection, error) 
 
 // Реализация методов структуры quicPeerConnection
 func (pc *quicPeerConnection) SendDatagram(data []byte) error {
+	pc.totalSent.Add(uint64(len(data)))
 	return pc.conn.SendDatagram(data)
 }
 func (pc *quicPeerConnection) RecvDatagram(ctx context.Context) ([]byte, error) {
-	return pc.conn.ReceiveDatagram(ctx)
+	data, err := pc.conn.ReceiveDatagram(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pc.totalRecv.Add(uint64(len(data)))
+	return data, nil
+}
+
+func (pc *quicPeerConnection) TotalSent() uint64 {
+	return pc.totalSent.Load()
+}
+func (pc *quicPeerConnection) TotalRecv() uint64 {
+	return pc.totalRecv.Load()
 }
 
 func (pc *quicPeerConnection) Context() context.Context { return pc.ctx }

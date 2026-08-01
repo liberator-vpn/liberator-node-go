@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"sync"
 
 	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
@@ -31,6 +32,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	grpcctrl "github.com/TexHik620953/liberator-node-go/pkg/api/controllers/grpc"
+	httpctrl "github.com/TexHik620953/liberator-node-go/pkg/api/controllers/http"
 )
 
 type App struct {
@@ -52,8 +54,13 @@ type App struct {
 	tunIface   *iface.TUNIface
 	transports safemap.Safemap[string, transport.Transport]
 
+	// Grpc
 	grpcLis    net.Listener
 	grpcServer *grpc.Server
+
+	// Http
+	httpMux    *http.ServeMux
+	httpServer *http.Server
 
 	// Certs
 	nodeCert tls.Certificate
@@ -79,7 +86,6 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 			app.closeResources()
 		}
 	}()
-
 	var err error
 	// Load certs
 	rootCa, err := cert.ReadCertificateFromFile(cfg.Auth.RootCert)
@@ -103,7 +109,15 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	app.grpcServer = grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{
 		Certificates: []tls.Certificate{app.nodeCert},
 		NextProtos:   []string{"nodectl"},
-	})))
+	})),
+		grpc.UnaryInterceptor(UnaryAuthInterceptor(cfg.Auth.JWTSecret)),
+	)
+
+	app.httpMux = http.NewServeMux()
+	app.httpServer = &http.Server{
+		Addr:    cfg.Api.Http.ListenAddr,
+		Handler: HTTPAuthMiddleware(cfg.Auth.JWTSecret, app.httpMux),
+	}
 
 	// Db
 	if app.db, err = sql.Open("sqlite3", app.cfg.Database.File); err != nil {
@@ -200,6 +214,8 @@ func (app *App) Run() (runErr error) {
 	grpcctrl.RegisterPeerService(app.grpcServer, app.peersManager)
 	grpcctrl.RegisterNodeService(app.grpcServer, app.node.NodeID(), *app.ipInfo, app.transports)
 
+	httpctrl.RegisterMeshNodeService(app.httpMux, app.node)
+
 	if err := app.firewallManager.Run(); err != nil {
 		return fmt.Errorf("failed to start firewall manager: %v", err)
 	}
@@ -216,9 +232,17 @@ func (app *App) Run() (runErr error) {
 		workers.Go(t.Run)
 	})
 
-	serveErr := make(chan error, 1)
+	serveErr := make(chan error, 2)
 	go func() {
 		serveErr <- app.grpcServer.Serve(app.grpcLis)
+	}()
+	go func() {
+		err := app.httpServer.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- fmt.Errorf("HTTP server error: %w", err)
+			return
+		}
+		serveErr <- nil
 	}()
 
 	var grpcErr error

@@ -16,6 +16,9 @@ type PeerConnection interface {
 	IsInitiator() bool
 	Close() error
 	Context() context.Context
+
+	TotalSent() uint64
+	TotalRecv() uint64
 }
 
 // NetworkTransport — интерфейс для создания входящих и исходящих соединений ноды.

@@ -49,8 +49,13 @@ type DatabaseConfig struct {
 type GrpcConfig struct {
 	ListenAddr string `yaml:"listen_addr"`
 }
+
+type HttpConfig struct {
+	ListenAddr string `yaml:"listen_addr"`
+}
 type ApiConfig struct {
 	Grpc GrpcConfig `yaml:"grpc"`
+	Http HttpConfig `yaml:"http"`
 }
 
 // AppConfig общая структура конфигурации
