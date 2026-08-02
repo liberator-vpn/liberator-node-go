@@ -3,16 +3,16 @@ name: Build and Release Node
 on:
   push:
     tags:
-      - 'v*' # Triggers on release tags like v1.0.0
+      - 'v*' # Запуск при пуше тегов версии, например v1.0.4
 
 jobs:
   build:
-    name: Build Linux Binary
+    name: Build Linux Binary with CGO
     runs-on: ubuntu-latest
     
     permissions:
-      contents: write
-      
+      contents: write 
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -23,19 +23,32 @@ jobs:
           go-version: '1.26.2'
           cache: true
 
+      - name: Install CGO Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc g++ libc6-dev gcc-multilib
+
       - name: Configure Git and Go for Private Modules
         run: |
           go env -w GOPRIVATE="://github.com*"
-          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@://github.com".insteadOf "https://://github.com"
 
       - name: Download Go Dependencies
         run: |
           go mod download
           go mod tidy
 
-      - name: Build Node Binary
+      - name: Build Node Binary with SQLite Support
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o liberator-node cmd/node/main.go
+          # Включаем CGO_ENABLED=1 для компиляции драйвера sqlite3
+          # Флаги -ldflags="-s -w" отключают дебаг-символы, уменьшая размер бинарника в 2 раза
+          # Флаг -extldflags "-static" опционален, но делает бинарник максимально переносимым
+          export CGO_ENABLED=1
+          export GOOS=linux
+          export GOARCH=amd64
+          export CC=x86_64-linux-gnu-gcc
+          
+          go build -ldflags="-s -w" -o liberator-node cmd/node/main.go
 
       - name: Create GitHub Release
         id: create_release
