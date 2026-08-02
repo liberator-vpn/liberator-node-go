@@ -3,7 +3,7 @@ name: Build and Release Node
 on:
   push:
     tags:
-      - 'v*' # Запуск только при пуше тегов версии, например v1.0.0
+      - 'v*' # Triggers on release tags like v1.0.0
 
 jobs:
   build:
@@ -16,13 +16,26 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.2' # Укажите вашу версию Go
+          go-version: '1.26.2' # Using your targeted Go version
           cache: true
+
+      - name: Configure Git and Go for Private Modules
+        run: |
+          # Force Go to bypass the public proxy server for your private modules
+          go env -w GOPRIVATE="://github.com*"
+          
+          # Force Git to pass the runner's automatically generated GITHUB_TOKEN via HTTPS header 
+          # instead of prompting for an interactive terminal username/password
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@://github.com".insteadOf "https://://github.com"
+
+      - name: Download Go Dependencies
+        run: |
+          go mod download
+          go mod tidy
 
       - name: Build Node Binary
         run: |
-          # Включаем экстремальную оптимизацию, отключая CGO и отладочные символы (символы весят много)
-          # Собираем строго под архитектуру ваших VDS: Linux x86_64
+          # Extreme performance optimization flags without debug overhead mapping
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o liberator-node cmd/node/main.go
 
       - name: Create GitHub Release
@@ -33,4 +46,4 @@ jobs:
           draft: false
           prerelease: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Токен создается гитхабом автоматически
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
