@@ -178,11 +178,11 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	// Build transports
 	for name, iconf := range cfg.Router.Transports {
 		if app.transports.Exists(name) {
-			return nil, fmt.Errorf("duplicated ingress name: %s", name)
+			return nil, fmt.Errorf("duplicated transport name: %s", name)
 		}
 		typ, ex := iconf["type"]
 		if !ex {
-			return nil, fmt.Errorf("type for ingress %s is not provided", name)
+			return nil, fmt.Errorf("type for transport %s is not provided", name)
 		}
 
 		var trp transport.Transport
@@ -190,7 +190,7 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		case "awg":
 			icfg, err := awg.ParseConfig(iconf)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse ingress %s config: %v", name, err)
+				return nil, fmt.Errorf("failed to parse transport %s config: %v", name, err)
 			}
 
 			trp, err = awg.New(
@@ -200,10 +200,10 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 				app.node.NodeID(),
 			)
 			if err != nil {
-				return nil, fmt.Errorf("failed to create ingress %s: %w", name, err)
+				return nil, fmt.Errorf("failed to create transport %s: %w", name, err)
 			}
 		default:
-			return nil, fmt.Errorf("unknown ingress type: %s", typ)
+			return nil, fmt.Errorf("unknown transport type: %s", typ)
 		}
 		app.transports.Set(name, trp)
 		app.peersManager.RegisterTransport(name, trp)

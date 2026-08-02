@@ -130,7 +130,7 @@ func New(
 		return nil, fmt.Errorf("failed to bring up AWG device: %w", err)
 	}
 
-	log.Printf("[%s] AmneziaWG Ingress started on port %d", nodeID, cfg.ListenPort)
+	log.Printf("[%s] AmneziaWG Transport started on port %d", nodeID, cfg.ListenPort)
 	return ig, nil
 }
 
@@ -143,7 +143,7 @@ func (ig *AWGTransport) Run() {
 	for {
 		select {
 		case <-ig.ctx.Done():
-			log.Printf("[%s] Shutting down AWG Ingress...", ig.nodeID)
+			log.Printf("[%s] Shutting down AWG Transport...", ig.nodeID)
 			ig.awgDevice.Close()
 			fmt.Println("transport exit")
 			return
@@ -206,7 +206,7 @@ func (ig *AWGTransport) ExistsPeer(ip uint32) bool {
 	return ig.peersByIP.Exists(ip)
 }
 
-// KickPeer реализует интерфейс для IngressManager
+// KickPeer реализует интерфейс для Transport
 func (ig *AWGTransport) KickPeer(ip uint32) bool {
 	peer, exists := ig.peersByIP.Get(ip)
 	if !exists {
@@ -267,6 +267,6 @@ func (ig *AWGTransport) writePacket(data []byte) error {
 	case ig.in <- data:
 		return nil
 	case <-ig.ctx.Done():
-		return fmt.Errorf("ingress is closed")
+		return fmt.Errorf("transport is closed")
 	}
 }

@@ -350,7 +350,7 @@ func (eg *TUNIface) readLoop(batchSize int) {
 
 				msg, err := eg.router.NewMessageCopyFrom(flatBuffer[flatStart:flatEnd])
 				if err != nil {
-					log.Printf("invalid egress datagram message: %v", err)
+					log.Printf("invalid interface datagram message: %v", err)
 					continue
 				}
 

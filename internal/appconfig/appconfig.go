@@ -21,7 +21,7 @@ type TUNConfig struct {
 	MTU          int    `yaml:"mtu"`
 }
 
-// RouterConfig описывает один мост (bridge) со своим ingress/egress и сетевой конфигурацией
+// RouterConfig
 type RouterConfig struct {
 	Transports map[string]map[string]any `yaml:"transports"`
 }

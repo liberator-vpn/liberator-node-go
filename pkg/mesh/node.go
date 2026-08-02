@@ -154,12 +154,17 @@ func (n *MeshNode) Run() {
 	// Routines to send data to clients
 	for range runtime.GOMAXPROCS(0) {
 		wg.Go(func() {
-			for msg := range n.toMeshClients {
-				peer, ex := n.registry.Get(msg.TargetNodeID)
-				if !ex {
-					continue
+			for {
+				select {
+				case <-n.ctx.Done():
+					return
+				case msg := <-n.toMeshClients:
+					peer, ex := n.registry.Get(msg.TargetNodeID)
+					if !ex {
+						continue
+					}
+					peer.Conn.SendDatagram(msg.Data)
 				}
-				peer.Conn.SendDatagram(msg.Data)
 			}
 		})
 	}
@@ -168,6 +173,7 @@ func (n *MeshNode) Run() {
 
 	n.shutdown()
 	wg.Wait()
+	fmt.Println("node exit")
 }
 
 // Close останавливает меш-ноду и высвобождает все ресурсы.
