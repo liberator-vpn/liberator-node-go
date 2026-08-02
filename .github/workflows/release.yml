@@ -23,7 +23,7 @@ jobs:
         run: |
           # Включаем экстремальную оптимизацию, отключая CGO и отладочные символы (символы весят много)
           # Собираем строго под архитектуру ваших VDS: Linux x86_64
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o liberator-node cmd/app/main.go
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o liberator-node cmd/node/main.go
 
       - name: Create GitHub Release
         id: create_release
