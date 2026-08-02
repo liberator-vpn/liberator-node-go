@@ -12,19 +12,19 @@ type MeshNode interface {
 	GetConnectivity() []model.ConnectivityState
 }
 
-type StatsHandler struct {
+type MeshHandler struct {
 	node MeshNode
 }
 
 func RegisterMeshNodeService(mux *http.ServeMux, node MeshNode) {
-	sh := &StatsHandler{
+	sh := &MeshHandler{
 		node: node,
 	}
 
 	mux.HandleFunc("/mesh/connectivity", sh.handleConnectivity)
 }
 
-func (sh *StatsHandler) handleConnectivity(w http.ResponseWriter, r *http.Request) {
+func (sh *MeshHandler) handleConnectivity(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return

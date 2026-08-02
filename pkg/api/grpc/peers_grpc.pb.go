@@ -24,8 +24,8 @@ const (
 	PeerService_GetPeer_FullMethodName           = "/grpc.PeerService/GetPeer"
 	PeerService_ListPeers_FullMethodName         = "/grpc.PeerService/ListPeers"
 	PeerService_DeletePeer_FullMethodName        = "/grpc.PeerService/DeletePeer"
-	PeerService_GenerateClientKey_FullMethodName = "/grpc.PeerService/GenerateClientKey"
 	PeerService_ProlongPeer_FullMethodName       = "/grpc.PeerService/ProlongPeer"
+	PeerService_GenerateClientKey_FullMethodName = "/grpc.PeerService/GenerateClientKey"
 )
 
 // PeerServiceClient is the client API for PeerService service.
@@ -36,8 +36,8 @@ type PeerServiceClient interface {
 	GetPeer(ctx context.Context, in *GetPeerRequest, opts ...grpc.CallOption) (*Peer, error)
 	ListPeers(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListPeersResponse, error)
 	DeletePeer(ctx context.Context, in *DeletePeerRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	GenerateClientKey(ctx context.Context, in *GenerateClientKeyRequest, opts ...grpc.CallOption) (*GenerateClientKeyResponse, error)
 	ProlongPeer(ctx context.Context, in *ProlongPeerRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	GenerateClientKey(ctx context.Context, in *GenerateClientKeyRequest, opts ...grpc.CallOption) (*GenerateClientKeyResponse, error)
 }
 
 type peerServiceClient struct {
@@ -88,20 +88,20 @@ func (c *peerServiceClient) DeletePeer(ctx context.Context, in *DeletePeerReques
 	return out, nil
 }
 
-func (c *peerServiceClient) GenerateClientKey(ctx context.Context, in *GenerateClientKeyRequest, opts ...grpc.CallOption) (*GenerateClientKeyResponse, error) {
+func (c *peerServiceClient) ProlongPeer(ctx context.Context, in *ProlongPeerRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GenerateClientKeyResponse)
-	err := c.cc.Invoke(ctx, PeerService_GenerateClientKey_FullMethodName, in, out, cOpts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, PeerService_ProlongPeer_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *peerServiceClient) ProlongPeer(ctx context.Context, in *ProlongPeerRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *peerServiceClient) GenerateClientKey(ctx context.Context, in *GenerateClientKeyRequest, opts ...grpc.CallOption) (*GenerateClientKeyResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, PeerService_ProlongPeer_FullMethodName, in, out, cOpts...)
+	out := new(GenerateClientKeyResponse)
+	err := c.cc.Invoke(ctx, PeerService_GenerateClientKey_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -116,8 +116,8 @@ type PeerServiceServer interface {
 	GetPeer(context.Context, *GetPeerRequest) (*Peer, error)
 	ListPeers(context.Context, *emptypb.Empty) (*ListPeersResponse, error)
 	DeletePeer(context.Context, *DeletePeerRequest) (*emptypb.Empty, error)
-	GenerateClientKey(context.Context, *GenerateClientKeyRequest) (*GenerateClientKeyResponse, error)
 	ProlongPeer(context.Context, *ProlongPeerRequest) (*emptypb.Empty, error)
+	GenerateClientKey(context.Context, *GenerateClientKeyRequest) (*GenerateClientKeyResponse, error)
 	mustEmbedUnimplementedPeerServiceServer()
 }
 
@@ -140,11 +140,11 @@ func (UnimplementedPeerServiceServer) ListPeers(context.Context, *emptypb.Empty)
 func (UnimplementedPeerServiceServer) DeletePeer(context.Context, *DeletePeerRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeletePeer not implemented")
 }
-func (UnimplementedPeerServiceServer) GenerateClientKey(context.Context, *GenerateClientKeyRequest) (*GenerateClientKeyResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GenerateClientKey not implemented")
-}
 func (UnimplementedPeerServiceServer) ProlongPeer(context.Context, *ProlongPeerRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method ProlongPeer not implemented")
+}
+func (UnimplementedPeerServiceServer) GenerateClientKey(context.Context, *GenerateClientKeyRequest) (*GenerateClientKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GenerateClientKey not implemented")
 }
 func (UnimplementedPeerServiceServer) mustEmbedUnimplementedPeerServiceServer() {}
 func (UnimplementedPeerServiceServer) testEmbeddedByValue()                     {}
@@ -239,24 +239,6 @@ func _PeerService_DeletePeer_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
-func _PeerService_GenerateClientKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GenerateClientKeyRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(PeerServiceServer).GenerateClientKey(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: PeerService_GenerateClientKey_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PeerServiceServer).GenerateClientKey(ctx, req.(*GenerateClientKeyRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _PeerService_ProlongPeer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ProlongPeerRequest)
 	if err := dec(in); err != nil {
@@ -271,6 +253,24 @@ func _PeerService_ProlongPeer_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PeerServiceServer).ProlongPeer(ctx, req.(*ProlongPeerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PeerService_GenerateClientKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GenerateClientKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PeerServiceServer).GenerateClientKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PeerService_GenerateClientKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PeerServiceServer).GenerateClientKey(ctx, req.(*GenerateClientKeyRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -299,12 +299,12 @@ var PeerService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _PeerService_DeletePeer_Handler,
 		},
 		{
-			MethodName: "GenerateClientKey",
-			Handler:    _PeerService_GenerateClientKey_Handler,
-		},
-		{
 			MethodName: "ProlongPeer",
 			Handler:    _PeerService_ProlongPeer_Handler,
+		},
+		{
+			MethodName: "GenerateClientKey",
+			Handler:    _PeerService_GenerateClientKey_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

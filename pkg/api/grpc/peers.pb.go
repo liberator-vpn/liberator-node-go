@@ -627,9 +627,9 @@ const file_peers_proto_rawDesc = "" +
 	".grpc.Peer\x12<\n" +
 	"\tListPeers\x12\x16.google.protobuf.Empty\x1a\x17.grpc.ListPeersResponse\x12=\n" +
 	"\n" +
-	"DeletePeer\x12\x17.grpc.DeletePeerRequest\x1a\x16.google.protobuf.Empty\x12T\n" +
-	"\x11GenerateClientKey\x12\x1e.grpc.GenerateClientKeyRequest\x1a\x1f.grpc.GenerateClientKeyResponse\x12?\n" +
-	"\vProlongPeer\x12\x18.grpc.ProlongPeerRequest\x1a\x16.google.protobuf.EmptyB=Z;github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
+	"DeletePeer\x12\x17.grpc.DeletePeerRequest\x1a\x16.google.protobuf.Empty\x12?\n" +
+	"\vProlongPeer\x12\x18.grpc.ProlongPeerRequest\x1a\x16.google.protobuf.Empty\x12T\n" +
+	"\x11GenerateClientKey\x12\x1e.grpc.GenerateClientKeyRequest\x1a\x1f.grpc.GenerateClientKeyResponseB=Z;github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
 
 var (
 	file_peers_proto_rawDescOnce sync.Once
@@ -667,14 +667,14 @@ var file_peers_proto_depIdxs = []int32{
 	3,  // 6: grpc.PeerService.GetPeer:input_type -> grpc.GetPeerRequest
 	10, // 7: grpc.PeerService.ListPeers:input_type -> google.protobuf.Empty
 	6,  // 8: grpc.PeerService.DeletePeer:input_type -> grpc.DeletePeerRequest
-	7,  // 9: grpc.PeerService.GenerateClientKey:input_type -> grpc.GenerateClientKeyRequest
-	0,  // 10: grpc.PeerService.ProlongPeer:input_type -> grpc.ProlongPeerRequest
+	0,  // 9: grpc.PeerService.ProlongPeer:input_type -> grpc.ProlongPeerRequest
+	7,  // 10: grpc.PeerService.GenerateClientKey:input_type -> grpc.GenerateClientKeyRequest
 	2,  // 11: grpc.PeerService.CreatePeerAutoID:output_type -> grpc.CreatePeerResponse
 	4,  // 12: grpc.PeerService.GetPeer:output_type -> grpc.Peer
 	5,  // 13: grpc.PeerService.ListPeers:output_type -> grpc.ListPeersResponse
 	10, // 14: grpc.PeerService.DeletePeer:output_type -> google.protobuf.Empty
-	8,  // 15: grpc.PeerService.GenerateClientKey:output_type -> grpc.GenerateClientKeyResponse
-	10, // 16: grpc.PeerService.ProlongPeer:output_type -> google.protobuf.Empty
+	10, // 15: grpc.PeerService.ProlongPeer:output_type -> google.protobuf.Empty
+	8,  // 16: grpc.PeerService.GenerateClientKey:output_type -> grpc.GenerateClientKeyResponse
 	11, // [11:17] is the sub-list for method output_type
 	5,  // [5:11] is the sub-list for method input_type
 	5,  // [5:5] is the sub-list for extension type_name

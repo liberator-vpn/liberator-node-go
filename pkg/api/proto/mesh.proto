@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+import "google/protobuf/empty.proto";
+
+package grpc;
+option go_package = "github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpc";
+
+service MeshService {
+    rpc ListConnectedNodes(google.protobuf.Empty) returns(ListNodesResponse);
+}
+
+
+message ConnectedNodeInfo {
+  string id = 1;
+  string address = 2;
+}
+message ListNodesResponse {
+  repeated ConnectedNodeInfo nodes =1;
+}

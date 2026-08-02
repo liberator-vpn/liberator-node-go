@@ -226,6 +226,7 @@ func (app *App) Run() (runErr error) {
 	grpcctrl.RegisterNodeService(app.grpcServer, app.node.NodeID(), *app.ipInfo, app.transports)
 
 	httpctrl.RegisterMeshNodeService(app.httpMux, app.node)
+	httpctrl.RegisterRouterService(app.httpMux, app.router)
 
 	if err := app.firewallManager.Run(); err != nil {
 		return fmt.Errorf("failed to start firewall manager: %v", err)

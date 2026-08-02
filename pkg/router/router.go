@@ -7,12 +7,14 @@ import (
 	"math"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
 	"github.com/TexHik620953/liberator-node-go/internal/utils/dgmessage"
 	"github.com/TexHik620953/liberator-node-go/internal/utils/netutils"
 	"github.com/TexHik620953/liberator-node-go/pkg/firewall"
+	"github.com/TexHik620953/liberator-node-go/pkg/model"
 	"github.com/TexHik620953/liberator-node-go/pkg/routingtable"
 )
 
@@ -33,6 +35,11 @@ type Router struct {
 
 	subs    map[chan RouterEvent]struct{}
 	subsMut sync.Mutex
+
+	// Stats
+	totalFromPeers atomic.Uint64
+	totalFromIface atomic.Uint64
+	totalFromMesh  atomic.Uint64
 }
 
 func New(
@@ -109,6 +116,7 @@ func (r *Router) Run() {
 
 // Packets handling methods
 func (r *Router) handleTunPacketInternal(packet *dgmessage.DatagramMessage) {
+	r.totalFromIface.Add(uint64(len(packet.Data)))
 	peer, ex := r.routingTable.GetByIP(packet.HoleInfo.DstIP)
 	if !ex {
 		packet.Free()
@@ -129,6 +137,7 @@ func (r *Router) handleTunPacketInternal(packet *dgmessage.DatagramMessage) {
 	}
 }
 func (r *Router) handleMeshPacketInternal(packet *dgmessage.DatagramMessage) {
+	r.totalFromMesh.Add(uint64(len(packet.Data)))
 	if packet.HoleInfo.Protocol != "" {
 		r.firewall.Holepunch(packet.HoleInfo, time.Minute)
 	}
@@ -154,6 +163,7 @@ func (r *Router) handleMeshPacketInternal(packet *dgmessage.DatagramMessage) {
 	}
 }
 func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage) {
+	r.totalFromPeers.Add(uint64(len(packet.Data)))
 	srcPeer, ex := r.routingTable.GetByIP(packet.HoleInfo.SrcIP)
 	// Check rate limits
 	if ex {
@@ -192,4 +202,12 @@ func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage
 		log.Printf("failed to send datagram to mesh: %v", err)
 	}
 	packet.Free()
+}
+
+func (r *Router) GetStats() model.RouterStats {
+	return model.RouterStats{
+		TotalFromIface: r.totalFromIface.Load(),
+		TotalFromMesh:  r.totalFromMesh.Load(),
+		TotalFromPeers: r.totalFromPeers.Load(),
+	}
 }
