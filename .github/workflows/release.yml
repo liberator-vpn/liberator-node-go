@@ -9,6 +9,10 @@ jobs:
   build:
     name: Build Linux Binary
     runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+      
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -16,17 +20,13 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.2' # Using your targeted Go version
+          go-version: '1.26.2'
           cache: true
 
       - name: Configure Git and Go for Private Modules
         run: |
-          # Force Go to bypass the public proxy server for your private modules
           go env -w GOPRIVATE="://github.com*"
-          
-          # Force Git to pass the runner's automatically generated GITHUB_TOKEN via HTTPS header 
-          # instead of prompting for an interactive terminal username/password
-          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@://github.com".insteadOf "https://://github.com"
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Download Go Dependencies
         run: |
@@ -35,7 +35,6 @@ jobs:
 
       - name: Build Node Binary
         run: |
-          # Extreme performance optimization flags without debug overhead mapping
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o liberator-node cmd/node/main.go
 
       - name: Create GitHub Release
