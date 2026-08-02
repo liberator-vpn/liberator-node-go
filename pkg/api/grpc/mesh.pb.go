@@ -26,6 +26,8 @@ type ConnectedNodeInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Address       string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+	TotalRecv     uint64                 `protobuf:"varint,3,opt,name=total_recv,json=totalRecv,proto3" json:"total_recv,omitempty"`
+	TotalSent     uint64                 `protobuf:"varint,4,opt,name=total_sent,json=totalSent,proto3" json:"total_sent,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -72,6 +74,20 @@ func (x *ConnectedNodeInfo) GetAddress() string {
 		return x.Address
 	}
 	return ""
+}
+
+func (x *ConnectedNodeInfo) GetTotalRecv() uint64 {
+	if x != nil {
+		return x.TotalRecv
+	}
+	return 0
+}
+
+func (x *ConnectedNodeInfo) GetTotalSent() uint64 {
+	if x != nil {
+		return x.TotalSent
+	}
+	return 0
 }
 
 type ListNodesResponse struct {
@@ -123,10 +139,14 @@ var File_mesh_proto protoreflect.FileDescriptor
 const file_mesh_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"mesh.proto\x12\x04grpc\x1a\x1bgoogle/protobuf/empty.proto\"=\n" +
+	"mesh.proto\x12\x04grpc\x1a\x1bgoogle/protobuf/empty.proto\"{\n" +
 	"\x11ConnectedNodeInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
-	"\aaddress\x18\x02 \x01(\tR\aaddress\"B\n" +
+	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x1d\n" +
+	"\n" +
+	"total_recv\x18\x03 \x01(\x04R\ttotalRecv\x12\x1d\n" +
+	"\n" +
+	"total_sent\x18\x04 \x01(\x04R\ttotalSent\"B\n" +
 	"\x11ListNodesResponse\x12-\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x17.grpc.ConnectedNodeInfoR\x05nodes2T\n" +
 	"\vMeshService\x12E\n" +

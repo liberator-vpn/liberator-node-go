@@ -13,6 +13,8 @@ service MeshService {
 message ConnectedNodeInfo {
   string id = 1;
   string address = 2;
+  uint64 total_recv = 3;
+  uint64 total_sent = 4;
 }
 message ListNodesResponse {
   repeated ConnectedNodeInfo nodes =1;

@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+import "google/protobuf/empty.proto";
+
+package grpc;
+option go_package = "github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpc";
+
+service RouterService {
+    rpc GetStats(google.protobuf.Empty) returns(RouterStats);
+}
+
+
+message RouterStats {
+  uint64 total_from_iface = 1;
+  uint64 total_from_mesh = 2;
+  uint64 total_from_peers = 3;
+}

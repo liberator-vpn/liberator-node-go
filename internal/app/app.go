@@ -225,6 +225,8 @@ func (app *App) Run() (runErr error) {
 	grpcctrl.RegisterPeerService(app.grpcServer, app.peersManager)
 	grpcctrl.RegisterNodeService(app.grpcServer, app.node.NodeID(), *app.ipInfo, app.transports)
 
+	grpcctrl.RegisterRouterService(app.grpcServer, app.router)
+
 	httpctrl.RegisterMeshNodeService(app.httpMux, app.node)
 	httpctrl.RegisterRouterService(app.httpMux, app.router)
 
