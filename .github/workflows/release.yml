@@ -1,0 +1,36 @@
+name: Build and Release Node
+
+on:
+  push:
+    tags:
+      - 'v*' # Запуск только при пуше тегов версии, например v1.0.0
+
+jobs:
+  build:
+    name: Build Linux Binary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.2' # Укажите вашу версию Go
+          cache: true
+
+      - name: Build Node Binary
+        run: |
+          # Включаем экстремальную оптимизацию, отключая CGO и отладочные символы (символы весят много)
+          # Собираем строго под архитектуру ваших VDS: Linux x86_64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o liberator-node cmd/app/main.go
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: liberator-node
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Токен создается гитхабом автоматически
