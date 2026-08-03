@@ -15,14 +15,14 @@ import (
 type NodeHandler struct {
 	pb.UnimplementedNodeServiceServer
 	nodeID     string
-	ipInfo     ipapi.IpInfo
+	ipInfo     ipapi.IPInfo
 	transports safemap.Safemap[string, transport.Transport]
 }
 
 func RegisterNodeService(
 	server *grpc.Server,
 	nodeID string,
-	ipInfo ipapi.IpInfo,
+	ipInfo ipapi.IPInfo,
 	transports safemap.Safemap[string, transport.Transport]) {
 	handler := &NodeHandler{
 		nodeID:     nodeID,

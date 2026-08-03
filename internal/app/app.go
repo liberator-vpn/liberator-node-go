@@ -66,7 +66,7 @@ type App struct {
 	nodeCert tls.Certificate
 	rootPool *x509.CertPool
 
-	ipInfo *ipapi.IpInfo
+	ipInfo *ipapi.IPInfo
 }
 
 func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
@@ -159,7 +159,7 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	ipInfo, err := ipapi.GetIpInfo(ctx)
 	if err != nil {
 		log.Printf("failed to update err: %v", err)
-		ipInfo = &ipapi.IpInfo{
+		ipInfo = &ipapi.IPInfo{
 			CountryCode: "UNKNOWN",
 		}
 	}
