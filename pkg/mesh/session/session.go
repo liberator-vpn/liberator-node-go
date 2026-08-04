@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"net"
+	"time"
 
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/transport"
 	"google.golang.org/grpc"
@@ -13,6 +14,9 @@ type Session struct {
 	PeerID     string
 	Conn       transport.PeerConnection
 	GrpcClient *grpc.ClientConn
+
+	// AddedAt проставляет Registry.Add, по нему отличается коллизия dial'ов от переподключения.
+	AddedAt time.Time
 }
 
 // Registry контролирует пул живых сессий с соседями в рантайме.

@@ -84,9 +84,11 @@ func NewQuicTransport(listenAddr string, cert tls.Certificate, caPool *x509.Cert
 	quicConfig := &quic.Config{
 		MaxIncomingUniStreams: 50,
 		MaxIncomingStreams:    200,
-		MaxIdleTimeout:        120 * time.Second,
-		KeepAlivePeriod:       15 * time.Second,
-		EnableDatagrams:       true,
+		// Зомби-соединение (пир пропал молча, NAT перепривязался) держит сессию в реестре
+		// и блокирует дозвоны до самого таймаута, поэтому он короткий: 3 пропущенных keepalive.
+		MaxIdleTimeout:  30 * time.Second,
+		KeepAlivePeriod: 10 * time.Second,
+		EnableDatagrams: true,
 	}
 
 	listener, err := transport.Listen(serverTLS, quicConfig)

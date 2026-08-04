@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/transport"
 )
@@ -105,6 +106,44 @@ func TestAddResolvesSimultaneousDialSymmetrically(t *testing.T) {
 				if !ok || s.Conn.ID() != "x" {
 					t.Fatalf("%s node kept %v, want x", name, s.Conn.ID())
 				}
+			}
+		})
+	}
+}
+
+// Пир перезапустился: наша сторона еще считает QUIC-соединение живым (о смерти она узнает
+// только по idle timeout), но сам факт нового входящего означает, что у пира сессии нет.
+func TestAddAcceptsReconnectOfEstablishedSession(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		localID string
+		peerID  string
+	}{
+		{"higher id", highID, lowID},
+		{"lower id", lowID, highID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewRegistry(tc.localID)
+			zombie := session(tc.peerID, newFakeConn("zombie", false))
+			if err := r.Add(zombie); err != nil {
+				t.Fatalf("first add: %v", err)
+			}
+			zombie.AddedAt = time.Now().Add(-time.Hour)
+
+			// Наш собственный лишний дозвон живую сессию по-прежнему не трогает.
+			if err := r.Add(session(tc.peerID, newFakeConn("our-dial", true))); err == nil {
+				t.Fatal("our own duplicate dial must be rejected")
+			}
+			if got, _ := r.Get(tc.peerID); got != zombie {
+				t.Fatal("live session must survive our own duplicate dial")
+			}
+
+			fresh := session(tc.peerID, newFakeConn("reconnect", false))
+			if err := r.Add(fresh); err != nil {
+				t.Fatalf("peer reconnect must be accepted: %v", err)
+			}
+			if got, _ := r.Get(tc.peerID); got != fresh {
+				t.Fatal("reconnect must replace the zombie session")
 			}
 		})
 	}

@@ -5,7 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
+
+// Окно, внутри которого встречные соединения считаются коллизией одновременного dial'а,
+// а не переподключением пира. Дозвон ограничен таймаутом в 5 секунд, так что разъехаться
+// сильнее пара соединений не может.
+const collisionWindow = 10 * time.Second
 
 type sessionRegistry struct {
 	mu       sync.RWMutex
@@ -39,19 +45,28 @@ func (r *sessionRegistry) Add(s *Session) error {
 
 	old, exists := r.sessions[s.PeerID]
 	if exists && old.Conn.Context().Err() == nil {
-		// Живую сессию не рвём. Дубликат вытесняет её только если старая идет в
-		// проигрышном направлении, а новая — в выигрышном по tie-break.
-		// Обе ноды считают предикат по одной и той же паре соединений, поэтому
-		// сходятся на одном коннекте — том, где инициатор это нода со старшим ID.
-		// Повтор того же направления (лишний dial) всегда отвергается.
-		keepOutbound := r.localID > s.PeerID
-		if old.Conn.IsInitiator() == keepOutbound || s.Conn.IsInitiator() != keepOutbound {
+		if time.Since(old.AddedAt) < collisionWindow {
+			// Встречный dial: обе ноды набрали друг друга почти одновременно.
+			// Решаем детерминированно — выживает соединение, инициированное нодой
+			// со старшим ID. Обе стороны считают предикат по одной и той же паре
+			// соединений, поэтому приходят к одному ответу.
+			keepOutbound := r.localID > s.PeerID
+			if old.Conn.IsInitiator() == keepOutbound || s.Conn.IsInitiator() != keepOutbound {
+				r.mu.Unlock()
+				return errors.New("duplicate connection rejected by tie-breaking rules")
+			}
+		} else if s.Conn.IsInitiator() {
+			// Наш лишний дозвон до пира, с которым сессия уже есть.
 			r.mu.Unlock()
-			return errors.New("duplicate connection rejected by tie-breaking rules")
+			return errors.New("duplicate outbound connection rejected")
 		}
+		// Иначе: пир заново к нам постучался спустя время после установки сессии.
+		// Он не стал бы этого делать, считая сессию живой, значит он перезапустился,
+		// а наша копия — зомби (QUIC узнает об этом только по MaxIdleTimeout).
 	}
 
 	fmt.Printf("new connection: %s\n", s.Conn.RemoteAddr().String())
+	s.AddedAt = time.Now()
 	r.sessions[s.PeerID] = s
 	for ch := range r.subs {
 		select {
