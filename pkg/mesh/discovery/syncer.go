@@ -201,16 +201,22 @@ func (ds *DiscoverySyncer) finishDial(addr string) {
 }
 
 func (ds *DiscoverySyncer) syncDiscoveryData(ctx context.Context, s *session.Session) {
+	session.RunWhileConnected(ctx, s, "discovery", func() error {
+		return ds.streamDiscoveryData(ctx, s)
+	})
+}
+
+func (ds *DiscoverySyncer) streamDiscoveryData(ctx context.Context, s *session.Session) error {
 	client := proto.NewDiscoveryServiceClient(s.GrpcClient)
 	stream, err := client.SubscribePeers(ctx, &emptypb.Empty{}, grpc.WaitForReady(true))
 	if err != nil {
-		return
+		return err
 	}
 
 	for {
 		ev, err := stream.Recv()
 		if err != nil {
-			return
+			return err
 		}
 
 		switch ev.Type {

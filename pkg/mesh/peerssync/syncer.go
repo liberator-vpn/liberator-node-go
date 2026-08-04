@@ -53,17 +53,23 @@ func (ds *PeersSyncSyncer) Start(ctx context.Context) {
 }
 
 func (ds *PeersSyncSyncer) syncPeerRulesData(ctx context.Context, s *session.Session) {
+	session.RunWhileConnected(ctx, s, "rules", func() error {
+		return ds.streamPeerRulesData(ctx, s)
+	})
+}
+
+func (ds *PeersSyncSyncer) streamPeerRulesData(ctx context.Context, s *session.Session) error {
 	client := proto.NewPeersSyncServiceClient(s.GrpcClient)
 	stream, err := client.SubscribeClientsRules(ctx, &emptypb.Empty{}, grpc.WaitForReady(true))
 
 	if err != nil {
-		return
+		return err
 	}
 
 	for {
 		ev, err := stream.Recv()
 		if err != nil {
-			return
+			return err
 		}
 
 		switch ev.Type {
@@ -155,17 +161,23 @@ func (ds *PeersSyncSyncer) deleteRemoteRuleObject(ev *proto.ClientRule) {
 }
 
 func (ds *PeersSyncSyncer) syncPeerData(ctx context.Context, s *session.Session) {
+	session.RunWhileConnected(ctx, s, "clients", func() error {
+		return ds.streamPeerData(ctx, s)
+	})
+}
+
+func (ds *PeersSyncSyncer) streamPeerData(ctx context.Context, s *session.Session) error {
 	client := proto.NewPeersSyncServiceClient(s.GrpcClient)
 	stream, err := client.SubscribeClients(ctx, &emptypb.Empty{}, grpc.WaitForReady(true))
 
 	if err != nil {
-		return
+		return err
 	}
 
 	for {
 		ev, err := stream.Recv()
 		if err != nil {
-			return
+			return err
 		}
 
 		switch ev.Type {

@@ -56,7 +56,14 @@ type firewallEngineImpl struct {
 	nextShortID     uint16
 	nodeIDMu        sync.Mutex
 
-	holes sync.Map // map[string]time.Time | Активные дырки (stateful): ключ -> время истечения
+	holes sync.Map // map[string]hole | Активные дырки (stateful)
+}
+
+// hole — разрешенный поток. HoleInfo храним, чтобы дырку можно было перепроверить
+// по правилам после того, как правило удалили.
+type hole struct {
+	expire time.Time
+	info   dgmessage.HoleInfo
 }
 
 func New() FirewallEngine {
@@ -136,27 +143,43 @@ func (fw *firewallEngineImpl) RemoveRule(index PortRuleIndex) bool {
 	ruleID := makeGlobalKey(shortNodeID, index.RuleID)
 
 	fw.rulesMu.Lock()
-	defer fw.rulesMu.Unlock()
-
 	rule, ok := fw.rulesByID[ruleID]
+	if ok {
+		delete(fw.rulesByID, ruleID)
+
+		ids := fw.rulesByAddr[rule.Address]
+		for i, id := range ids {
+			if id == ruleID {
+				fw.rulesByAddr[rule.Address] = append(ids[:i], ids[i+1:]...)
+				break
+			}
+		}
+		if len(fw.rulesByAddr[rule.Address]) == 0 {
+			delete(fw.rulesByAddr, rule.Address)
+		}
+	}
+	fw.rulesMu.Unlock()
+
 	if !ok {
 		return false
 	}
 
-	delete(fw.rulesByID, ruleID)
-
-	ids := fw.rulesByAddr[rule.Address]
-	for i, id := range ids {
-		if id == ruleID {
-			fw.rulesByAddr[rule.Address] = append(ids[:i], ids[i+1:]...)
-			break
-		}
-	}
-	if len(fw.rulesByAddr[rule.Address]) == 0 {
-		delete(fw.rulesByAddr, rule.Address)
-	}
-
+	fw.dropUnauthorizedHoles()
 	return true
+}
+
+// dropUnauthorizedHoles выкидывает дырки, которые больше не разрешены ни одним правилом.
+// Без этого удаление правила не останавливает уже идущий поток: дырка живет минуту и
+// продлевается каждым пакетом в любую сторону, то есть держится вечно, пока трафик идет.
+// ponytail: полный проход по дыркам, но удаление правила это редкая операция control plane.
+func (fw *firewallEngineImpl) dropUnauthorizedHoles() {
+	fw.holes.Range(func(key, val any) bool {
+		h, ok := val.(hole)
+		if !ok || !fw.rulesAllow(h.info) {
+			fw.holes.Delete(key)
+		}
+		return true
+	})
 }
 
 // RuleCheck проверяет, разрешён ли пакет на основе правил и активных дырок.
@@ -167,13 +190,18 @@ func (fw *firewallEngineImpl) RuleCheck(holeInfo dgmessage.HoleInfo) bool {
 	// 1. Проверяем активную дырку (stateful)
 	flowKey := makeFlowKey(holeInfo.SrcIP, holeInfo.DstIP, holeInfo.SrcPort, holeInfo.DstPort, holeInfo.Protocol)
 	if val, ok := fw.holes.Load(flowKey); ok {
-		if expire, ok := val.(time.Time); ok && time.Now().Before(expire) {
+		if h, ok := val.(hole); ok && time.Now().Before(h.expire) {
 			return true
 		} else {
 			fw.holes.Delete(flowKey)
 		}
 	}
 
+	return fw.rulesAllow(holeInfo)
+}
+
+// rulesAllow проверяет пакет только по правилам, без учета дырок.
+func (fw *firewallEngineImpl) rulesAllow(holeInfo dgmessage.HoleInfo) bool {
 	fw.rulesMu.RLock()
 	defer fw.rulesMu.RUnlock()
 
@@ -225,8 +253,10 @@ func (fw *firewallEngineImpl) RuleCheck(holeInfo dgmessage.HoleInfo) bool {
 // Вызывается после успешной проверки правил для первого пакета.
 func (fw *firewallEngineImpl) Holepunch(holeInfo dgmessage.HoleInfo, duration time.Duration) {
 	flowKey := makeFlowKey(holeInfo.SrcIP, holeInfo.DstIP, holeInfo.SrcPort, holeInfo.DstPort, holeInfo.Protocol)
-	expire := time.Now().Add(duration)
-	fw.holes.Store(flowKey, expire)
+	fw.holes.Store(flowKey, hole{
+		expire: time.Now().Add(duration),
+		info:   holeInfo,
+	})
 }
 
 // Вспомогательная функция для создания канонического ключа (упорядочиваем IP и порты)
