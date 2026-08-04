@@ -15,8 +15,8 @@ func (r *Router) AddRoutingObject(obj routingtable.RoutingObject) error {
 	if err != nil {
 		return err
 	}
-	r.notify(RouterEvent{
-		Type:      EventType_ClientConnected,
+	r.notifyRoutingEvent(RouterEvent{
+		Type:      RouterEventType_ClientAdded,
 		VirtualIP: obj.GetVirtualIP(),
 		NodeID:    obj.GetNodeID(),
 	})
@@ -39,8 +39,8 @@ func (r *Router) DeleteRoutingObject(ip uint32) error {
 		return err
 	}
 
-	r.notify(RouterEvent{
-		Type:      EventType_ClientDisconnected,
+	r.notifyRoutingEvent(RouterEvent{
+		Type:      RouterEventType_ClientRemoved,
 		VirtualIP: ip,
 		NodeID:    nodeID,
 	})

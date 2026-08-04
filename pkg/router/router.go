@@ -33,8 +33,11 @@ type Router struct {
 
 	shardedWorkers []chan datagramMessageInfo
 
-	subs    map[chan RouterEvent]struct{}
-	subsMut sync.Mutex
+	routingsubs   map[chan RouterEvent]struct{}
+	routingSubsMu sync.Mutex
+
+	firewallsubs   map[chan FirewallEvent]struct{}
+	firewallSubsMu sync.Mutex
 
 	// Stats
 	totalFromPeers atomic.Uint64
@@ -45,8 +48,6 @@ type Router struct {
 func New(
 	ctx context.Context,
 	cfg appconfig.RouterConfig,
-	routingTable routingtable.RoutingTable,
-	firewall firewall.FirewallEngine,
 	nodeCIDR, globalCIDR string,
 ) (*Router, error) {
 
@@ -70,8 +71,8 @@ func New(
 		ctx:         ctx,
 		packetsPool: dgmessage.NewDGMessagePool(math.MaxUint16),
 
-		routingTable: routingTable,
-		firewall:     firewall,
+		routingTable: routingtable.New(),
+		firewall:     firewall.New(),
 		toIface:      make(chan *dgmessage.DatagramMessage, 1000),
 
 		gatewayAddr:   gatewayAddr,
@@ -80,7 +81,8 @@ func New(
 
 		shardedWorkers: workers,
 
-		subs: make(map[chan RouterEvent]struct{}),
+		routingsubs:  make(map[chan RouterEvent]struct{}),
+		firewallsubs: make(map[chan FirewallEvent]struct{}),
 	}
 	return br, nil
 }

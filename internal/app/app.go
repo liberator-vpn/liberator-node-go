@@ -17,11 +17,9 @@ import (
 
 	"github.com/TexHik620953/liberator-node-go/internal/utils/cert"
 	"github.com/TexHik620953/liberator-node-go/internal/utils/safemap"
-	"github.com/TexHik620953/liberator-node-go/pkg/firewall"
 	"github.com/TexHik620953/liberator-node-go/pkg/iface"
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh"
 	"github.com/TexHik620953/liberator-node-go/pkg/router"
-	"github.com/TexHik620953/liberator-node-go/pkg/routingtable"
 	"github.com/TexHik620953/liberator-node-go/pkg/services/firewallmanager"
 	"github.com/TexHik620953/liberator-node-go/pkg/services/peersmanager"
 	"github.com/TexHik620953/liberator-node-go/pkg/transport"
@@ -41,9 +39,6 @@ type App struct {
 	cfg    *appconfig.AppConfig
 
 	db *sql.DB
-
-	routingTable routingtable.RoutingTable
-	firewall     firewall.FirewallEngine
 
 	firewallManager *firewallmanager.Firewallmanager
 	peersManager    *peersmanager.PeersManager
@@ -72,13 +67,11 @@ type App struct {
 func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	app := &App{
-		ctx:          ctx,
-		cancel:       cancel,
-		cfg:          cfg,
-		routingTable: routingtable.New(),
-		firewall:     firewall.New(),
-		transports:   safemap.New[string, transport.Transport](),
-		rootPool:     x509.NewCertPool(),
+		ctx:        ctx,
+		cancel:     cancel,
+		cfg:        cfg,
+		transports: safemap.New[string, transport.Transport](),
+		rootPool:   x509.NewCertPool(),
 	}
 	initialized := false
 	defer func() {
@@ -142,18 +135,18 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		return nil, fmt.Errorf("failed to migrate database: %v", err)
 	}
 
-	// managers
-	app.firewallManager = firewallmanager.New(app.ctx, app.firewall, app.db)
-	app.peersManager = peersmanager.New(app.ctx, app.db, app.firewallManager, nodeNet)
-
 	// Network stuff
-	if app.router, err = router.New(ctx, cfg.Router, app.routingTable, app.firewall, nodeNet, globalNet); err != nil {
+	if app.router, err = router.New(ctx, cfg.Router, nodeNet, globalNet); err != nil {
 		return nil, fmt.Errorf("failed to create router: %v", err)
 	}
 
 	if app.node, err = mesh.New(ctx, cfg.Mesh, app.nodeCert, app.rootPool, app.router); err != nil {
 		return nil, fmt.Errorf("failed to create mesh node: %v", err)
 	}
+
+	// managers
+	app.firewallManager = firewallmanager.New(app.ctx, app.router, app.db, app.node.NodeID())
+	app.peersManager = peersmanager.New(app.ctx, app.db, app.firewallManager, nodeNet)
 
 	// Get current server ip and location
 	ipInfo, err := ipapi.GetIpInfo(ctx)

@@ -90,6 +90,7 @@ func NewTUN(
 		if err != nil {
 			return nil, fmt.Errorf("failed to get default out interface: %v", err)
 		}
+		log.Printf("[TUN] Autodetected primary outbound network interface: %s", cfg.IfaceOutName)
 	}
 
 	// 1. Создаём TUN-интерфейс

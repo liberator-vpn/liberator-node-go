@@ -8,9 +8,26 @@ import (
 	"github.com/TexHik620953/liberator-node-go/internal/utils/dgmessage"
 )
 
+type RuleDump struct {
+	NodeID string
+	RuleID uint64
+
+	Address        uint32
+	TargetAddress  *uint32
+	Protocol       string
+	PortRangeStart uint16
+	PortRangeEnd   *uint16
+}
+
+type PortRuleIndex struct {
+	NodeID string
+	RuleID uint64
+}
+
 // Protocol - tcp/udp/both
 type PortRule struct {
-	ID             uint64
+	index PortRuleIndex
+
 	Address        uint32
 	TargetAddress  *uint32
 	Protocol       string // tcp/udp/both-
@@ -19,11 +36,15 @@ type PortRule struct {
 }
 
 type FirewallEngine interface {
+	// Hot path
 	RuleCheck(hi dgmessage.HoleInfo) bool
 	Holepunch(hi dgmessage.HoleInfo, dur time.Duration)
 
-	RemoveRule(ruleID uint64) bool
-	AddRule(PortRule) bool
+	// Controll plane
+	AddRule(index PortRuleIndex, rule PortRule) bool
+	ExistsRule(index PortRuleIndex) bool
+	RemoveRule(index PortRuleIndex) bool
+	DumpRules() []RuleDump
 }
 
 type firewallEngineImpl struct {
@@ -31,34 +52,89 @@ type firewallEngineImpl struct {
 	rulesByID   map[uint64]PortRule
 	rulesMu     sync.RWMutex
 
+	shortIdByNodeId map[string]uint16
+	nextShortID     uint16
+	nodeIDMu        sync.Mutex
+
 	holes sync.Map // map[string]time.Time | Активные дырки (stateful): ключ -> время истечения
 }
 
 func New() FirewallEngine {
 	return &firewallEngineImpl{
-		rulesByAddr: make(map[uint32][]uint64),
-		rulesByID:   make(map[uint64]PortRule),
+		rulesByAddr:     make(map[uint32][]uint64),
+		rulesByID:       make(map[uint64]PortRule),
+		shortIdByNodeId: make(map[string]uint16),
 	}
 }
 
-func (fw *firewallEngineImpl) AddRule(rule PortRule) bool {
-	if rule.ID == 0 {
+func (fw *firewallEngineImpl) AddRule(index PortRuleIndex, rule PortRule) bool {
+	if len(index.NodeID) == 0 {
 		return false
 	}
+	shortNodeID := fw.getOrCreateShortID(index.NodeID)
+	ruleID := makeGlobalKey(shortNodeID, index.RuleID)
 
 	fw.rulesMu.Lock()
 	defer fw.rulesMu.Unlock()
 
-	if _, ex := fw.rulesByID[rule.ID]; ex {
+	if _, ex := fw.rulesByID[ruleID]; ex {
 		return false
 	}
 
-	fw.rulesByID[rule.ID] = rule
-	fw.rulesByAddr[rule.Address] = append(fw.rulesByAddr[rule.Address], rule.ID)
+	rule.index = index
+	fw.rulesByID[ruleID] = rule
+	fw.rulesByAddr[rule.Address] = append(fw.rulesByAddr[rule.Address], ruleID)
 	return true
 }
 
-func (fw *firewallEngineImpl) RemoveRule(ruleID uint64) bool {
+func (fw *firewallEngineImpl) ExistsRule(index PortRuleIndex) bool {
+	shortNodeID, ex := fw.getShortID(index.NodeID)
+	if !ex {
+		return false
+	}
+	ruleID := makeGlobalKey(shortNodeID, index.RuleID)
+
+	fw.rulesMu.Lock()
+	defer fw.rulesMu.Unlock()
+
+	_, ex = fw.rulesByID[ruleID]
+	return ex
+}
+
+func (fw *firewallEngineImpl) DumpRules() []RuleDump {
+	fw.rulesMu.RLock()
+	defer fw.rulesMu.RUnlock()
+	r := make([]RuleDump, 0, len(fw.rulesByID))
+	for _, rule := range fw.rulesByID {
+		dump := RuleDump{
+			NodeID:         rule.index.NodeID,
+			RuleID:         rule.index.RuleID,
+			Address:        rule.Address,
+			TargetAddress:  rule.TargetAddress,
+			Protocol:       rule.Protocol,
+			PortRangeStart: rule.PortRangeStart,
+			PortRangeEnd:   rule.PortRangeEnd,
+		}
+		if rule.TargetAddress != nil {
+			val := *rule.TargetAddress
+			dump.TargetAddress = &val
+		}
+		if rule.PortRangeEnd != nil {
+			val := *rule.PortRangeEnd
+			dump.PortRangeEnd = &val
+		}
+		r = append(r, dump)
+	}
+	return r
+}
+
+func (fw *firewallEngineImpl) RemoveRule(index PortRuleIndex) bool {
+	shortNodeID, ex := fw.getShortID(index.NodeID)
+	if !ex {
+		return false
+	}
+	ruleID := makeGlobalKey(shortNodeID, index.RuleID)
+
 	fw.rulesMu.Lock()
 	defer fw.rulesMu.Unlock()
 
@@ -87,22 +163,22 @@ func (fw *firewallEngineImpl) RemoveRule(ruleID uint64) bool {
 // Если есть активная дырка для этого потока – возвращает true без проверки правил.
 // Иначе проверяет правила пользователя-отправителя.
 // holeInfo должен содержать SrcIP, DstIP, SrcPort, DstPort (как net.IP) и Protocol (string).
-func (r *firewallEngineImpl) RuleCheck(holeInfo dgmessage.HoleInfo) bool {
+func (fw *firewallEngineImpl) RuleCheck(holeInfo dgmessage.HoleInfo) bool {
 	// 1. Проверяем активную дырку (stateful)
 	flowKey := makeFlowKey(holeInfo.SrcIP, holeInfo.DstIP, holeInfo.SrcPort, holeInfo.DstPort, holeInfo.Protocol)
-	if val, ok := r.holes.Load(flowKey); ok {
+	if val, ok := fw.holes.Load(flowKey); ok {
 		if expire, ok := val.(time.Time); ok && time.Now().Before(expire) {
 			return true
 		} else {
-			r.holes.Delete(flowKey)
+			fw.holes.Delete(flowKey)
 		}
 	}
 
-	r.rulesMu.RLock()
-	defer r.rulesMu.RUnlock()
+	fw.rulesMu.RLock()
+	defer fw.rulesMu.RUnlock()
 
 	// 2. Находим получателя
-	rulesIds, ex := r.rulesByAddr[holeInfo.DstIP]
+	rulesIds, ex := fw.rulesByAddr[holeInfo.DstIP]
 	if !ex {
 		return false
 	}
@@ -110,7 +186,7 @@ func (r *firewallEngineImpl) RuleCheck(holeInfo dgmessage.HoleInfo) bool {
 	// 4. Для ICMP – проверяем только TargetUser
 	if holeInfo.Protocol == "icmp" {
 		for _, ruleId := range rulesIds {
-			rule := r.rulesByID[ruleId]
+			rule := fw.rulesByID[ruleId]
 			if rule.TargetAddress == nil || *rule.TargetAddress == holeInfo.SrcIP {
 				return true
 			}
@@ -122,7 +198,7 @@ func (r *firewallEngineImpl) RuleCheck(holeInfo dgmessage.HoleInfo) bool {
 	dstPort := holeInfo.DstPort
 
 	for _, ruleId := range rulesIds {
-		rule := r.rulesByID[ruleId]
+		rule := fw.rulesByID[ruleId]
 		// Проверяем, что правило разрешает именно этому отправителю (srcUserID)
 		if rule.TargetAddress != nil && *rule.TargetAddress != holeInfo.SrcIP {
 			continue
@@ -147,13 +223,14 @@ func (r *firewallEngineImpl) RuleCheck(holeInfo dgmessage.HoleInfo) bool {
 
 // Holepunch создаёт (или обновляет) дырку для данного потока на заданное время.
 // Вызывается после успешной проверки правил для первого пакета.
-func (r *firewallEngineImpl) Holepunch(holeInfo dgmessage.HoleInfo, duration time.Duration) {
+func (fw *firewallEngineImpl) Holepunch(holeInfo dgmessage.HoleInfo, duration time.Duration) {
 	flowKey := makeFlowKey(holeInfo.SrcIP, holeInfo.DstIP, holeInfo.SrcPort, holeInfo.DstPort, holeInfo.Protocol)
 	expire := time.Now().Add(duration)
-	r.holes.Store(flowKey, expire)
+	fw.holes.Store(flowKey, expire)
 }
 
 // Вспомогательная функция для создания канонического ключа (упорядочиваем IP и порты)
+// TODO: move this to fixed size struct key to avoid allocs
 func makeFlowKey(srcIP, dstIP uint32, srcPort, dstPort uint16, protocol string) string {
 
 	// Для ICMP порты не учитываем
@@ -171,4 +248,29 @@ func makeFlowKey(srcIP, dstIP uint32, srcPort, dstPort uint16, protocol string) 
 	} else {
 		return fmt.Sprintf("%d|%d|%d|%d|%s", dstIP, srcIP, dstPort, srcPort, protocol)
 	}
+}
+
+func (fw *firewallEngineImpl) getShortID(nodeHash string) (uint16, bool) {
+	fw.nodeIDMu.Lock()
+	defer fw.nodeIDMu.Unlock()
+
+	id, exists := fw.shortIdByNodeId[nodeHash]
+	return id, exists
+}
+
+func (fw *firewallEngineImpl) getOrCreateShortID(nodeHash string) uint16 {
+	fw.nodeIDMu.Lock()
+	defer fw.nodeIDMu.Unlock()
+
+	if id, exists := fw.shortIdByNodeId[nodeHash]; exists {
+		return id
+	}
+
+	// Регистрируем новую ноду, инкрементируя счетчик
+	fw.nextShortID++
+	fw.shortIdByNodeId[nodeHash] = fw.nextShortID
+	return fw.nextShortID
+}
+func makeGlobalKey(shortID uint16, localRuleID uint64) uint64 {
+	return (uint64(shortID) << 48) | (localRuleID & 0x0000FFFFFFFFFFFF)
 }

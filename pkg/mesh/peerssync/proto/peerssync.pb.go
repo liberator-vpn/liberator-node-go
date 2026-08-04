@@ -25,22 +25,22 @@ const (
 type ClientEventType int32
 
 const (
-	ClientEventType_CLIENT_EVENT_SYNC         ClientEventType = 0
-	ClientEventType_CLIENT_EVENT_CONNECTED    ClientEventType = 1
-	ClientEventType_CLIENT_EVENT_DISCONNECTED ClientEventType = 2
+	ClientEventType_CLIENT_EVENT_SYNC    ClientEventType = 0
+	ClientEventType_CLIENT_EVENT_ADDED   ClientEventType = 1
+	ClientEventType_CLIENT_EVENT_REMOVED ClientEventType = 2
 )
 
 // Enum value maps for ClientEventType.
 var (
 	ClientEventType_name = map[int32]string{
 		0: "CLIENT_EVENT_SYNC",
-		1: "CLIENT_EVENT_CONNECTED",
-		2: "CLIENT_EVENT_DISCONNECTED",
+		1: "CLIENT_EVENT_ADDED",
+		2: "CLIENT_EVENT_REMOVED",
 	}
 	ClientEventType_value = map[string]int32{
-		"CLIENT_EVENT_SYNC":         0,
-		"CLIENT_EVENT_CONNECTED":    1,
-		"CLIENT_EVENT_DISCONNECTED": 2,
+		"CLIENT_EVENT_SYNC":    0,
+		"CLIENT_EVENT_ADDED":   1,
+		"CLIENT_EVENT_REMOVED": 2,
 	}
 )
 
@@ -69,6 +69,55 @@ func (x ClientEventType) Number() protoreflect.EnumNumber {
 // Deprecated: Use ClientEventType.Descriptor instead.
 func (ClientEventType) EnumDescriptor() ([]byte, []int) {
 	return file_pkg_mesh_peerssync_proto_peerssync_proto_rawDescGZIP(), []int{0}
+}
+
+type ClientRuleEventType int32
+
+const (
+	ClientRuleEventType_CLIENT_RULE_EVENT_SYNC    ClientRuleEventType = 0
+	ClientRuleEventType_CLIENT_RULE_EVENT_ADDED   ClientRuleEventType = 1
+	ClientRuleEventType_CLIENT_RULE_EVENT_REMOVED ClientRuleEventType = 2
+)
+
+// Enum value maps for ClientRuleEventType.
+var (
+	ClientRuleEventType_name = map[int32]string{
+		0: "CLIENT_RULE_EVENT_SYNC",
+		1: "CLIENT_RULE_EVENT_ADDED",
+		2: "CLIENT_RULE_EVENT_REMOVED",
+	}
+	ClientRuleEventType_value = map[string]int32{
+		"CLIENT_RULE_EVENT_SYNC":    0,
+		"CLIENT_RULE_EVENT_ADDED":   1,
+		"CLIENT_RULE_EVENT_REMOVED": 2,
+	}
+)
+
+func (x ClientRuleEventType) Enum() *ClientRuleEventType {
+	p := new(ClientRuleEventType)
+	*p = x
+	return p
+}
+
+func (x ClientRuleEventType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ClientRuleEventType) Descriptor() protoreflect.EnumDescriptor {
+	return file_pkg_mesh_peerssync_proto_peerssync_proto_enumTypes[1].Descriptor()
+}
+
+func (ClientRuleEventType) Type() protoreflect.EnumType {
+	return &file_pkg_mesh_peerssync_proto_peerssync_proto_enumTypes[1]
+}
+
+func (x ClientRuleEventType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ClientRuleEventType.Descriptor instead.
+func (ClientRuleEventType) EnumDescriptor() ([]byte, []int) {
+	return file_pkg_mesh_peerssync_proto_peerssync_proto_rawDescGZIP(), []int{1}
 }
 
 type ClientInfo struct {
@@ -183,6 +232,158 @@ func (x *ClientEvent) GetDump() []*ClientInfo {
 	return nil
 }
 
+type ClientRule struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	NodeId         string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Id             uint64                 `protobuf:"varint,2,opt,name=id,proto3" json:"id,omitempty"`
+	Addr           uint32                 `protobuf:"varint,3,opt,name=addr,proto3" json:"addr,omitempty"`
+	TargetAddr     *uint32                `protobuf:"varint,4,opt,name=target_addr,json=targetAddr,proto3,oneof" json:"target_addr,omitempty"`
+	Protocol       string                 `protobuf:"bytes,5,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	PortRangeStart uint32                 `protobuf:"varint,6,opt,name=port_range_start,json=portRangeStart,proto3" json:"port_range_start,omitempty"`
+	PortRangeEnd   *uint32                `protobuf:"varint,7,opt,name=port_range_end,json=portRangeEnd,proto3,oneof" json:"port_range_end,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ClientRule) Reset() {
+	*x = ClientRule{}
+	mi := &file_pkg_mesh_peerssync_proto_peerssync_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientRule) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientRule) ProtoMessage() {}
+
+func (x *ClientRule) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_mesh_peerssync_proto_peerssync_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientRule.ProtoReflect.Descriptor instead.
+func (*ClientRule) Descriptor() ([]byte, []int) {
+	return file_pkg_mesh_peerssync_proto_peerssync_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ClientRule) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *ClientRule) GetId() uint64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *ClientRule) GetAddr() uint32 {
+	if x != nil {
+		return x.Addr
+	}
+	return 0
+}
+
+func (x *ClientRule) GetTargetAddr() uint32 {
+	if x != nil && x.TargetAddr != nil {
+		return *x.TargetAddr
+	}
+	return 0
+}
+
+func (x *ClientRule) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
+}
+
+func (x *ClientRule) GetPortRangeStart() uint32 {
+	if x != nil {
+		return x.PortRangeStart
+	}
+	return 0
+}
+
+func (x *ClientRule) GetPortRangeEnd() uint32 {
+	if x != nil && x.PortRangeEnd != nil {
+		return *x.PortRangeEnd
+	}
+	return 0
+}
+
+type ClientRuleEvent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Type          ClientRuleEventType    `protobuf:"varint,1,opt,name=type,proto3,enum=proto.ClientRuleEventType" json:"type,omitempty"`
+	Update        *ClientRule            `protobuf:"bytes,2,opt,name=update,proto3" json:"update,omitempty"`
+	Dump          []*ClientRule          `protobuf:"bytes,3,rep,name=dump,proto3" json:"dump,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClientRuleEvent) Reset() {
+	*x = ClientRuleEvent{}
+	mi := &file_pkg_mesh_peerssync_proto_peerssync_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientRuleEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientRuleEvent) ProtoMessage() {}
+
+func (x *ClientRuleEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_mesh_peerssync_proto_peerssync_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientRuleEvent.ProtoReflect.Descriptor instead.
+func (*ClientRuleEvent) Descriptor() ([]byte, []int) {
+	return file_pkg_mesh_peerssync_proto_peerssync_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ClientRuleEvent) GetType() ClientRuleEventType {
+	if x != nil {
+		return x.Type
+	}
+	return ClientRuleEventType_CLIENT_RULE_EVENT_SYNC
+}
+
+func (x *ClientRuleEvent) GetUpdate() *ClientRule {
+	if x != nil {
+		return x.Update
+	}
+	return nil
+}
+
+func (x *ClientRuleEvent) GetDump() []*ClientRule {
+	if x != nil {
+		return x.Dump
+	}
+	return nil
+}
+
 var File_pkg_mesh_peerssync_proto_peerssync_proto protoreflect.FileDescriptor
 
 const file_pkg_mesh_peerssync_proto_peerssync_proto_rawDesc = "" +
@@ -196,13 +397,34 @@ const file_pkg_mesh_peerssync_proto_peerssync_proto_rawDesc = "" +
 	"\vClientEvent\x12*\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x16.proto.ClientEventTypeR\x04type\x12)\n" +
 	"\x06update\x18\x02 \x01(\v2\x11.proto.ClientInfoR\x06update\x12%\n" +
-	"\x04dump\x18\x03 \x03(\v2\x11.proto.ClientInfoR\x04dump*c\n" +
+	"\x04dump\x18\x03 \x03(\v2\x11.proto.ClientInfoR\x04dump\"\x83\x02\n" +
+	"\n" +
+	"ClientRule\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x0e\n" +
+	"\x02id\x18\x02 \x01(\x04R\x02id\x12\x12\n" +
+	"\x04addr\x18\x03 \x01(\rR\x04addr\x12$\n" +
+	"\vtarget_addr\x18\x04 \x01(\rH\x00R\n" +
+	"targetAddr\x88\x01\x01\x12\x1a\n" +
+	"\bprotocol\x18\x05 \x01(\tR\bprotocol\x12(\n" +
+	"\x10port_range_start\x18\x06 \x01(\rR\x0eportRangeStart\x12)\n" +
+	"\x0eport_range_end\x18\a \x01(\rH\x01R\fportRangeEnd\x88\x01\x01B\x0e\n" +
+	"\f_target_addrB\x11\n" +
+	"\x0f_port_range_end\"\x93\x01\n" +
+	"\x0fClientRuleEvent\x12.\n" +
+	"\x04type\x18\x01 \x01(\x0e2\x1a.proto.ClientRuleEventTypeR\x04type\x12)\n" +
+	"\x06update\x18\x02 \x01(\v2\x11.proto.ClientRuleR\x06update\x12%\n" +
+	"\x04dump\x18\x03 \x03(\v2\x11.proto.ClientRuleR\x04dump*Z\n" +
 	"\x0fClientEventType\x12\x15\n" +
-	"\x11CLIENT_EVENT_SYNC\x10\x00\x12\x1a\n" +
-	"\x16CLIENT_EVENT_CONNECTED\x10\x01\x12\x1d\n" +
-	"\x19CLIENT_EVENT_DISCONNECTED\x10\x022T\n" +
+	"\x11CLIENT_EVENT_SYNC\x10\x00\x12\x16\n" +
+	"\x12CLIENT_EVENT_ADDED\x10\x01\x12\x18\n" +
+	"\x14CLIENT_EVENT_REMOVED\x10\x02*m\n" +
+	"\x13ClientRuleEventType\x12\x1a\n" +
+	"\x16CLIENT_RULE_EVENT_SYNC\x10\x00\x12\x1b\n" +
+	"\x17CLIENT_RULE_EVENT_ADDED\x10\x01\x12\x1d\n" +
+	"\x19CLIENT_RULE_EVENT_REMOVED\x10\x022\x9f\x01\n" +
 	"\x10PeersSyncService\x12@\n" +
-	"\x10SubscribeClients\x12\x16.google.protobuf.Empty\x1a\x12.proto.ClientEvent0\x01B\tZ\a./protob\x06proto3"
+	"\x10SubscribeClients\x12\x16.google.protobuf.Empty\x1a\x12.proto.ClientEvent0\x01\x12I\n" +
+	"\x15SubscribeClientsRules\x12\x16.google.protobuf.Empty\x1a\x16.proto.ClientRuleEvent0\x01B\tZ\a./protob\x06proto3"
 
 var (
 	file_pkg_mesh_peerssync_proto_peerssync_proto_rawDescOnce sync.Once
@@ -216,25 +438,33 @@ func file_pkg_mesh_peerssync_proto_peerssync_proto_rawDescGZIP() []byte {
 	return file_pkg_mesh_peerssync_proto_peerssync_proto_rawDescData
 }
 
-var file_pkg_mesh_peerssync_proto_peerssync_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_pkg_mesh_peerssync_proto_peerssync_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_pkg_mesh_peerssync_proto_peerssync_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_pkg_mesh_peerssync_proto_peerssync_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_pkg_mesh_peerssync_proto_peerssync_proto_goTypes = []any{
-	(ClientEventType)(0),  // 0: proto.ClientEventType
-	(*ClientInfo)(nil),    // 1: proto.ClientInfo
-	(*ClientEvent)(nil),   // 2: proto.ClientEvent
-	(*emptypb.Empty)(nil), // 3: google.protobuf.Empty
+	(ClientEventType)(0),     // 0: proto.ClientEventType
+	(ClientRuleEventType)(0), // 1: proto.ClientRuleEventType
+	(*ClientInfo)(nil),       // 2: proto.ClientInfo
+	(*ClientEvent)(nil),      // 3: proto.ClientEvent
+	(*ClientRule)(nil),       // 4: proto.ClientRule
+	(*ClientRuleEvent)(nil),  // 5: proto.ClientRuleEvent
+	(*emptypb.Empty)(nil),    // 6: google.protobuf.Empty
 }
 var file_pkg_mesh_peerssync_proto_peerssync_proto_depIdxs = []int32{
 	0, // 0: proto.ClientEvent.type:type_name -> proto.ClientEventType
-	1, // 1: proto.ClientEvent.update:type_name -> proto.ClientInfo
-	1, // 2: proto.ClientEvent.dump:type_name -> proto.ClientInfo
-	3, // 3: proto.PeersSyncService.SubscribeClients:input_type -> google.protobuf.Empty
-	2, // 4: proto.PeersSyncService.SubscribeClients:output_type -> proto.ClientEvent
-	4, // [4:5] is the sub-list for method output_type
-	3, // [3:4] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	2, // 1: proto.ClientEvent.update:type_name -> proto.ClientInfo
+	2, // 2: proto.ClientEvent.dump:type_name -> proto.ClientInfo
+	1, // 3: proto.ClientRuleEvent.type:type_name -> proto.ClientRuleEventType
+	4, // 4: proto.ClientRuleEvent.update:type_name -> proto.ClientRule
+	4, // 5: proto.ClientRuleEvent.dump:type_name -> proto.ClientRule
+	6, // 6: proto.PeersSyncService.SubscribeClients:input_type -> google.protobuf.Empty
+	6, // 7: proto.PeersSyncService.SubscribeClientsRules:input_type -> google.protobuf.Empty
+	3, // 8: proto.PeersSyncService.SubscribeClients:output_type -> proto.ClientEvent
+	5, // 9: proto.PeersSyncService.SubscribeClientsRules:output_type -> proto.ClientRuleEvent
+	8, // [8:10] is the sub-list for method output_type
+	6, // [6:8] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_pkg_mesh_peerssync_proto_peerssync_proto_init() }
@@ -242,13 +472,14 @@ func file_pkg_mesh_peerssync_proto_peerssync_proto_init() {
 	if File_pkg_mesh_peerssync_proto_peerssync_proto != nil {
 		return
 	}
+	file_pkg_mesh_peerssync_proto_peerssync_proto_msgTypes[2].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_mesh_peerssync_proto_peerssync_proto_rawDesc), len(file_pkg_mesh_peerssync_proto_peerssync_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   2,
+			NumEnums:      2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

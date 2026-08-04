@@ -20,7 +20,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PeersSyncService_SubscribeClients_FullMethodName = "/proto.PeersSyncService/SubscribeClients"
+	PeersSyncService_SubscribeClients_FullMethodName      = "/proto.PeersSyncService/SubscribeClients"
+	PeersSyncService_SubscribeClientsRules_FullMethodName = "/proto.PeersSyncService/SubscribeClientsRules"
 )
 
 // PeersSyncServiceClient is the client API for PeersSyncService service.
@@ -29,6 +30,7 @@ const (
 type PeersSyncServiceClient interface {
 	// Узел подписывается на поток изменений от соседа
 	SubscribeClients(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ClientEvent], error)
+	SubscribeClientsRules(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ClientRuleEvent], error)
 }
 
 type peersSyncServiceClient struct {
@@ -58,12 +60,32 @@ func (c *peersSyncServiceClient) SubscribeClients(ctx context.Context, in *empty
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PeersSyncService_SubscribeClientsClient = grpc.ServerStreamingClient[ClientEvent]
 
+func (c *peersSyncServiceClient) SubscribeClientsRules(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ClientRuleEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &PeersSyncService_ServiceDesc.Streams[1], PeersSyncService_SubscribeClientsRules_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[emptypb.Empty, ClientRuleEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PeersSyncService_SubscribeClientsRulesClient = grpc.ServerStreamingClient[ClientRuleEvent]
+
 // PeersSyncServiceServer is the server API for PeersSyncService service.
 // All implementations must embed UnimplementedPeersSyncServiceServer
 // for forward compatibility.
 type PeersSyncServiceServer interface {
 	// Узел подписывается на поток изменений от соседа
 	SubscribeClients(*emptypb.Empty, grpc.ServerStreamingServer[ClientEvent]) error
+	SubscribeClientsRules(*emptypb.Empty, grpc.ServerStreamingServer[ClientRuleEvent]) error
 	mustEmbedUnimplementedPeersSyncServiceServer()
 }
 
@@ -76,6 +98,9 @@ type UnimplementedPeersSyncServiceServer struct{}
 
 func (UnimplementedPeersSyncServiceServer) SubscribeClients(*emptypb.Empty, grpc.ServerStreamingServer[ClientEvent]) error {
 	return status.Error(codes.Unimplemented, "method SubscribeClients not implemented")
+}
+func (UnimplementedPeersSyncServiceServer) SubscribeClientsRules(*emptypb.Empty, grpc.ServerStreamingServer[ClientRuleEvent]) error {
+	return status.Error(codes.Unimplemented, "method SubscribeClientsRules not implemented")
 }
 func (UnimplementedPeersSyncServiceServer) mustEmbedUnimplementedPeersSyncServiceServer() {}
 func (UnimplementedPeersSyncServiceServer) testEmbeddedByValue()                          {}
@@ -109,6 +134,17 @@ func _PeersSyncService_SubscribeClients_Handler(srv interface{}, stream grpc.Ser
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PeersSyncService_SubscribeClientsServer = grpc.ServerStreamingServer[ClientEvent]
 
+func _PeersSyncService_SubscribeClientsRules_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(emptypb.Empty)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(PeersSyncServiceServer).SubscribeClientsRules(m, &grpc.GenericServerStream[emptypb.Empty, ClientRuleEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PeersSyncService_SubscribeClientsRulesServer = grpc.ServerStreamingServer[ClientRuleEvent]
+
 // PeersSyncService_ServiceDesc is the grpc.ServiceDesc for PeersSyncService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -120,6 +156,11 @@ var PeersSyncService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "SubscribeClients",
 			Handler:       _PeersSyncService_SubscribeClients_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "SubscribeClientsRules",
+			Handler:       _PeersSyncService_SubscribeClientsRules_Handler,
 			ServerStreams: true,
 		},
 	},
