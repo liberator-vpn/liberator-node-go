@@ -65,6 +65,8 @@ type TUNIface struct {
 	ifce  tun.Device
 	ipNet *net.IPNet
 	ipt   *iptables.IPTables
+
+	closeOnce sync.Once
 }
 
 const tun_iface_offset = 10
@@ -272,11 +274,20 @@ func getDefaultInterface() (string, error) {
 	return "", fmt.Errorf("failed to get default iface")
 }
 
-// Close удаляет интерфейс и очищает правила iptables.
+// Close удаляет интерфейс и очищает правила iptables. Идемпотентен: вызывается и из Run,
+// и из шатдауна приложения, и из аварийных веток NewTUN.
 func (eg *TUNIface) Close() error {
+	var err error
+	eg.closeOnce.Do(func() { err = eg.close() })
+	return err
+}
+
+func (eg *TUNIface) close() error {
 	var errs []string
 
-	eg.ifce.Close()
+	if eg.ifce != nil {
+		eg.ifce.Close()
+	}
 
 	// Удаляем правила iptables
 	if eg.ipt != nil && eg.ipNet != nil && eg.cfg.IfaceOutName != "" {
@@ -316,6 +327,11 @@ func (eg *TUNIface) Close() error {
 }
 func (eg *TUNIface) Run() {
 	var wg sync.WaitGroup
+
+	// readLoop висит в блокирующем read() и про ctx не знает: разбудить его может
+	// только закрытие устройства (fd неблокирующий, read вернет os.ErrClosed).
+	stopWatch := context.AfterFunc(eg.ctx, func() { _ = eg.ifce.Close() })
+	defer stopWatch()
 
 	batchSize := eg.ifce.BatchSize()
 
@@ -378,13 +394,14 @@ func (eg *TUNIface) readLoop(batchSize int) {
 
 		go func(idx int, count int, sizes []int) {
 			defer locks[idx].Unlock()
-			for i := 0; i < n; i++ {
+			for i := 0; i < count; i++ {
 				if sizes[i] <= 0 {
 					continue
 				}
 
+				// sizes[i] это длина самого пакета, лежащего уже после offset.
 				flatStart := (idx * batchSize * maxPacketLen) + (i * maxPacketLen) + tun_iface_offset
-				flatEnd := flatStart + sizes[i] + tun_iface_offset
+				flatEnd := flatStart + sizes[i]
 
 				msg, err := eg.router.NewMessageCopyFrom(flatBuffer[flatStart:flatEnd])
 				if err != nil {

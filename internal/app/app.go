@@ -285,6 +285,15 @@ func (app *App) stopRuntime() {
 	if app.grpcLis != nil {
 		_ = app.grpcLis.Close()
 	}
+	if app.httpServer != nil {
+		_ = app.httpServer.Close()
+	}
+	// TUN и правила iptables переживают процесс, поэтому их надо снять на любом выходе.
+	if app.tunIface != nil {
+		if err := app.tunIface.Close(); err != nil {
+			log.Printf("failed to close tun iface: %v", err)
+		}
+	}
 }
 
 func (app *App) closeResources() {

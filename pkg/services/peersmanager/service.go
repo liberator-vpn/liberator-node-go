@@ -138,15 +138,18 @@ func (pm *PeersManager) Run() error {
 	}()
 
 	// Add missing peers
-	t := time.NewTicker(time.Second * 30)
 	go func() {
-		select {
-		case <-pm.ctx.Done():
-			return
-		case <-t.C:
-			err = pm.syncPeers()
-			if err != nil {
-				fmt.Printf("failed to sync peers: %v", err)
+		t := time.NewTicker(time.Second * 30)
+		defer t.Stop()
+
+		for {
+			select {
+			case <-pm.ctx.Done():
+				return
+			case <-t.C:
+				if err := pm.syncPeers(); err != nil {
+					log.Printf("failed to sync peers: %v", err)
+				}
 			}
 		}
 	}()

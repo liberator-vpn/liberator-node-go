@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/TexHik620953/liberator-node-go/internal/utils/safemap"
@@ -23,6 +24,9 @@ type ChannelTun struct {
 	router transport.Router
 	mtu    int
 
+	events    chan tun.Event
+	closeOnce sync.Once
+
 	peers safemap.Safemap[uint32, *AWGPeer] // IP -> Peer (нужно для обновления lastSeen)
 }
 
@@ -33,6 +37,7 @@ func NewChannelTun(ctx context.Context, in <-chan []byte, router transport.Route
 		ctx:    ctx,
 		in:     in,
 		router: router,
+		events: make(chan tun.Event, 1),
 		peers:  safemap.New[uint32, *AWGPeer](),
 		mtu:    mtu,
 	}
@@ -40,13 +45,17 @@ func NewChannelTun(ctx context.Context, in <-chan []byte, router transport.Route
 
 func (t *ChannelTun) File() *os.File        { return nil }
 func (t *ChannelTun) Name() (string, error) { return "liberator-awg-channel", nil }
-func (t *ChannelTun) Close() error          { return nil }
 func (t *ChannelTun) BatchSize() int        { return 128 }
 
-func (t *ChannelTun) Events() <-chan tun.Event {
-	ch := make(chan tun.Event, 1)
-	return ch
+// Close закрывает канал событий: Device.Close() ждет RoutineTUNEventReader, а тот
+// висит в range по Events(). Раньше здесь на каждый вызов отдавался новый канал,
+// который никто не закрывал, и awgDevice.Close() не возвращался никогда.
+func (t *ChannelTun) Close() error {
+	t.closeOnce.Do(func() { close(t.events) })
+	return nil
 }
+
+func (t *ChannelTun) Events() <-chan tun.Event { return t.events }
 
 func (t *ChannelTun) MTU() (int, error) { return t.mtu, nil }
 
