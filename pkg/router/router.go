@@ -177,8 +177,19 @@ func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage
 		}
 	}
 
-	if packet.HoleInfo.DstIP == r.gatewayAddr || !r.globalNetwork.Contains(packet.HoleInfo.DstIP) {
-		r.toIface <- packet // TUN
+	if packet.HoleInfo.DstIP == r.gatewayAddr {
+		r.toIface <- packet // TUN (локальные сервисы ноды: DNS и т.п.)
+		return
+	}
+	if !r.globalNetwork.Contains(packet.HoleInfo.DstIP) {
+		// Выход в интернет. Режем зарезервированные диапазоны, чтобы клиент не мог
+		// достучаться до loopback, LAN хостовой машины и облачных metadata-эндпоинтов
+		// (169.254.169.254 — кража кредов инстанса).
+		if isForbiddenEgress(packet.HoleInfo.DstIP) {
+			packet.Free()
+			return
+		}
+		r.toIface <- packet // TUN → интернет через NAT
 		return
 	}
 	hi := dgmessage.HoleInfo{
@@ -204,6 +215,32 @@ func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage
 		log.Printf("failed to send datagram to mesh: %v", err)
 	}
 	packet.Free()
+}
+
+// isForbiddenEgress отсекает адреса, куда VPN-клиент не должен уметь ходить наружу:
+// this-network, loopback, link-local (включая облачный metadata 169.254.169.254),
+// приватные сети хоста (RFC1918), multicast и reserved. Мешевые адреса сюда не
+// попадают — они отсекаются раньше по globalNetwork.Contains.
+// ponytail: денйлист захардкожен. Если деплою нужен доступ клиента в LAN — вынести в конфиг.
+func isForbiddenEgress(ip uint32) bool {
+	switch {
+	case ip>>24 == 0x00: // 0.0.0.0/8
+		return true
+	case ip>>24 == 0x7F: // 127.0.0.0/8 loopback
+		return true
+	case ip>>24 == 0x0A: // 10.0.0.0/8
+		return true
+	case ip>>16 == 0xA9FE: // 169.254.0.0/16 link-local + cloud metadata
+		return true
+	case ip>>16 == 0xC0A8: // 192.168.0.0/16
+		return true
+	case ip >= 0xAC100000 && ip <= 0xAC1FFFFF: // 172.16.0.0/12
+		return true
+	case ip >= 0xE0000000: // 224.0.0.0/4 multicast + 240.0.0.0/4 reserved + broadcast
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *Router) GetStats() model.RouterStats {

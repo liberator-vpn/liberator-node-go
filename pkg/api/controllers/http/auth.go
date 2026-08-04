@@ -24,15 +24,18 @@ func HTTPAuthMiddleware(jwtSecret string, next http.Handler) http.Handler {
 
 		tokenString := parts[1]
 
-		token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-			}
+		claims := jwt.MapClaims{}
+		token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
 			return []byte(jwtSecret), nil
-		})
+		}, jwt.WithValidMethods([]string{"HS256", "HS384", "HS512"}))
 
 		if err != nil || !token.Valid {
-			respondWithError(w, http.StatusUnauthorized, fmt.Sprintf("invalid or expired token: %v", err))
+			respondWithError(w, http.StatusUnauthorized, "invalid or expired token")
+			return
+		}
+		// Токен без exp валиден вечно и не отзывается — не принимаем такие.
+		if _, ok := claims["exp"]; !ok {
+			respondWithError(w, http.StatusUnauthorized, "token must have an expiration")
 			return
 		}
 

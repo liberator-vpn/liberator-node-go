@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
@@ -64,6 +65,18 @@ type App struct {
 	ipInfo *ipapi.IPInfo
 }
 
+// validateJWTSecret отбраковывает пустые, слишком короткие и заведомо дефолтные секреты.
+func validateJWTSecret(secret string) error {
+	if len(secret) < 16 {
+		return fmt.Errorf("auth.jwt_secret must be at least 16 chars; generate a random one")
+	}
+	weak := map[string]struct{}{"sraka": {}, "secret": {}, "changeme": {}, "password": {}}
+	if _, bad := weak[strings.ToLower(secret)]; bad {
+		return fmt.Errorf("auth.jwt_secret is a known weak/default value; set a random secret")
+	}
+	return nil
+}
+
 func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	app := &App{
@@ -80,6 +93,11 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		}
 	}()
 	var err error
+	// Весь control plane (gRPC/HTTP) держится только на этом секрете — отказываемся
+	// стартовать со слабым/дефолтным, иначе admin-токен подделывается за секунды.
+	if err := validateJWTSecret(cfg.Auth.JWTSecret); err != nil {
+		return nil, err
+	}
 	// Load certs
 	rootCa, err := cert.ReadCertificateFromFile(cfg.Auth.RootCert)
 	if err != nil {

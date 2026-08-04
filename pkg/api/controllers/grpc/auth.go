@@ -2,7 +2,6 @@ package grpc
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/golang-jwt/jwt/v4"
@@ -37,16 +36,18 @@ func UnaryAuthInterceptor(jwtSecret string) grpc.UnaryServerInterceptor {
 
 		tokenString := parts[1]
 
-		token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-			}
+		claims := jwt.MapClaims{}
+		token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
 			return []byte(jwtSecret), nil
-		})
+		}, jwt.WithValidMethods([]string{"HS256", "HS384", "HS512"}))
 
 		// Если токен просрочен, подпись неверна или сам токен сломан
 		if err != nil || !token.Valid {
-			return nil, status.Errorf(codes.Unauthenticated, "invalid or expired token: %v", err)
+			return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
+		}
+		// Токен без exp валиден вечно и не отзывается — не принимаем такие.
+		if _, ok := claims["exp"]; !ok {
+			return nil, status.Error(codes.Unauthenticated, "token must have an expiration")
 		}
 		return handler(ctx, req)
 	}

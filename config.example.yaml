@@ -1,0 +1,57 @@
+auth:
+  # Сгенерировать случайный секрет, напр.: openssl rand -hex 32
+  # Минимум 16 символов, иначе нода не стартует.
+  jwt_secret: "CHANGE_ME_random_secret_min_16_chars"
+  cert: "./node.crt"
+  key: "./node.key"
+  root_cert: "./root.crt"
+
+tun:
+  mtu: 1376 # Всегда должен быть меньше наименьшего транспорта
+  iface_in_name: "liberator"
+  iface_out_name: ""
+router:
+  transports:
+    awg:
+      type: "awg"
+
+      mtu: 1376
+      listen_port: 2200
+      # Приватный ключ сервера AmneziaWG (32 байта hex). Сгенерировать свой, не переиспользовать.
+      private_key: "CHANGE_ME_32byte_hex_private_key"
+      watchdog_interval: "30s"
+
+      h1: "1245955480-1579617642"
+      h2: "1827874969-1854585193"
+      h3: "2137919667-2143439009"
+      h4: "2147159423-2147402519"
+
+      jc: 5
+      jmin: 70
+      jmax: 120
+
+      s1: 48
+      s2: 27
+      s3: 30
+      s4: 7
+
+mesh:
+  listen_addr: ":9000"
+  bootstrap_addrs:
+    - "144.31.133.121:9000"
+  peers_store: "peers.json"
+  discovery_interval: 30s
+  rtt_update_interval: 10s
+
+database:
+  file: "./database.sqlite"
+
+metrics:
+  listen_addr: ":9090"
+
+
+api:
+  grpc:
+    listen_addr: ":9001"
+  http:
+    listen_addr: ":8080"

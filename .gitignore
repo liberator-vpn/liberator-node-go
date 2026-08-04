@@ -1,4 +1,9 @@
 certs/
 dev/
 
+# Содержат секреты (jwt_secret, awg private_key) и рантайм-состояние — не коммитим.
+config.yaml
+peers.json
+*.sqlite
+
 __debug_bin*
