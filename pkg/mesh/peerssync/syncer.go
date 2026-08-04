@@ -68,9 +68,7 @@ func (ds *PeersSyncSyncer) syncPeerRulesData(ctx context.Context, s *session.Ses
 
 		switch ev.Type {
 		case proto.ClientRuleEventType_CLIENT_RULE_EVENT_SYNC:
-			for _, v := range ev.Dump {
-				ds.syncRuleObject(v)
-			}
+			ds.syncRules(s.PeerID, ev.Dump)
 		case proto.ClientRuleEventType_CLIENT_RULE_EVENT_ADDED:
 			if ev.Update == nil {
 				continue
@@ -84,6 +82,32 @@ func (ds *PeersSyncSyncer) syncPeerRulesData(ctx context.Context, s *session.Ses
 		}
 	}
 }
+
+// syncRules сверяет дамп пира с локальной копией: добавляет недостающие правила и убирает лишние.
+// Авторитет по правилу — нода-владелец, поэтому удаляем только правила самого пира: правила
+// третьих нод он мог просто ещё не узнать, а свои собственные мы знаем лучше него.
+func (ds *PeersSyncSyncer) syncRules(peerID string, dump []*proto.ClientRule) {
+	alive := make(map[uint64]struct{}, len(dump))
+	for _, ev := range dump {
+		if ev.NodeId == peerID {
+			alive[ev.Id] = struct{}{}
+		}
+		ds.syncRuleObject(ev)
+	}
+
+	for _, local := range ds.router.DumpRules() {
+		if local.NodeID != peerID {
+			continue
+		}
+		if _, ok := alive[local.RuleID]; ok {
+			continue
+		}
+		if !ds.router.RemoveRemoteRule(firewall.PortRuleIndex{NodeID: peerID, RuleID: local.RuleID}) {
+			log.Printf("failed to delete stale remote rule")
+		}
+	}
+}
+
 func (ds *PeersSyncSyncer) syncRuleObject(ev *proto.ClientRule) {
 	ex := ds.router.ExistsRule(firewall.PortRuleIndex{
 		NodeID: ev.NodeId,
@@ -94,6 +118,12 @@ func (ds *PeersSyncSyncer) syncRuleObject(ev *proto.ClientRule) {
 	}
 }
 func (ds *PeersSyncSyncer) addRemoteRuleObject(ev *proto.ClientRule) {
+	if ev.NodeId == ds.localID {
+		// Свои правила заводим только сами: иначе пир с устаревшим дампом
+		// воскрешает уже удаленное нами правило и снова открывает порт.
+		return
+	}
+
 	var portRangeEnd *uint16
 	if ev.PortRangeEnd != nil {
 		v := uint16(*ev.PortRangeEnd)
@@ -140,9 +170,7 @@ func (ds *PeersSyncSyncer) syncPeerData(ctx context.Context, s *session.Session)
 
 		switch ev.Type {
 		case proto.ClientEventType_CLIENT_EVENT_SYNC:
-			for _, v := range ev.Dump {
-				ds.syncPeerObject(v)
-			}
+			ds.syncClients(s.PeerID, ev.Dump)
 		case proto.ClientEventType_CLIENT_EVENT_ADDED:
 			if ev.Update == nil {
 				continue
@@ -156,10 +184,40 @@ func (ds *PeersSyncSyncer) syncPeerData(ctx context.Context, s *session.Session)
 		}
 	}
 }
+
+// syncClients — то же самое для таблицы маршрутизации: авторитет по клиенту это нода,
+// на которой он сидит, поэтому чистим только клиентов самого пира.
+func (ds *PeersSyncSyncer) syncClients(peerID string, dump []*proto.ClientInfo) {
+	alive := make(map[uint32]struct{}, len(dump))
+	for _, ev := range dump {
+		if ev.NodeId == peerID {
+			alive[ev.VirtualIp] = struct{}{}
+		}
+		ds.syncPeerObject(ev)
+	}
+
+	for _, local := range ds.router.DumpRoutingTable() {
+		if local.NodeID != peerID {
+			continue
+		}
+		if _, ok := alive[local.VirtualIP]; ok {
+			continue
+		}
+		if err := ds.router.DeleteRemoteRoutingObject(local.VirtualIP); err != nil {
+			log.Printf("failed to delete stale remote routing object: %v", err)
+		}
+	}
+}
+
 func (ds *PeersSyncSyncer) syncPeerObject(ev *proto.ClientInfo) {
 	obj, ex := ds.router.GetRemoteRoutingObject(ev.VirtualIp)
 	if !ex {
 		ds.addRemoteRoutingObject(ev)
+		return
+	}
+
+	if obj.GetNodeID() == ds.localID {
+		// Своего клиента чужим дампом не перетираем, иначе он перестанет получать трафик.
 		return
 	}
 
@@ -169,6 +227,11 @@ func (ds *PeersSyncSyncer) syncPeerObject(ev *proto.ClientInfo) {
 	}
 }
 func (ds *PeersSyncSyncer) addRemoteRoutingObject(ev *proto.ClientInfo) {
+	if ev.NodeId == ds.localID {
+		// Свой клиент сидит локально, удаленный дубликат увел бы его трафик в меш.
+		return
+	}
+
 	obj := newRemoteClient(ds.ctx, ev.VirtualIp, ev.NodeId, ds.toMeshClient)
 	if err := ds.router.AddRemoteRoutingObject(obj); err != nil {
 		log.Printf("failed to add remote routing object: %v", err)
