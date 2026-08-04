@@ -31,6 +31,7 @@ func New(
 		ctx:      ctx,
 		firewall: firewall,
 		db:       repos.New(db),
+		nodeID:   nodeID,
 	}
 }
 
