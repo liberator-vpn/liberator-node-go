@@ -36,17 +36,25 @@ func NewSessionEngine(reg Registry, pusher StreamPusher, repo topology.PeerRepos
 	}
 }
 
-func (e *SessionEngine) HandleConnection(ctx context.Context, pc transport.PeerConnection, incoming bool) {
-
+// HandleConnection принимает и входящие, и исходящие соединения: направление
+// уже несет сам pc (IsInitiator), а коллизии разруливает registry.Add.
+func (e *SessionEngine) HandleConnection(ctx context.Context, pc transport.PeerConnection) {
 	if pc == nil {
 		return
 	}
 
 	peerID := pc.ID()
 
+	// Адрес запоминаем только для соединений, которые открыли мы: там RemoteAddr —
+	// это адрес, по которому мы только что успешно дозвонились. У входящих RemoteAddr —
+	// source-адрес пира, за NAT он эфемерный и недозвонимый (мусор в peerstore).
+	addr := ""
+	if pc.IsInitiator() {
+		addr = pc.RemoteAddr().String()
+	}
 	e.repo.InsertMerge(topology.PeerInfo{
 		ID:       peerID,
-		Address:  pc.RemoteAddr().String(),
+		Address:  addr,
 		LastSeen: time.Now(),
 	})
 

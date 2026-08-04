@@ -58,47 +58,88 @@ func (s *inMemoryState) InsertMerge(update PeerInfo) bool {
 	s.mu.Lock()
 	existing, ok := s.peers[update.ID]
 	if !ok {
-		s.peers[update.ID] = update.Clone()
-		s.mu.Unlock()
-
-		s.notify(&proto.PeerEvent{
-			Type: proto.PeerEventType_PEER_EVENT_JOINED,
-			Update: &proto.PeerInfo{
-				Id:       update.ID,
-				Addr:     update.Address,
-				LastSeen: update.LastSeen.UnixNano(),
-			},
-		})
-		return true
+		existing = update.Clone()
+		s.peers[update.ID] = existing
+	} else {
+		changed := false
+		if update.LastSeen.After(existing.LastSeen) {
+			existing.LastSeen = update.LastSeen
+			changed = true
+		}
+		if update.Address != "" && update.Address != existing.Address {
+			existing.Address = update.Address
+			changed = true
+		}
+		if !changed {
+			s.mu.Unlock()
+			return false
+		}
 	}
 
-	changed := false
-	if update.LastSeen.After(existing.LastSeen) {
-		existing.LastSeen = update.LastSeen
-		changed = true
+	dropped, lost := s.resolveAddressConflict(existing)
+	if lost {
+		delete(s.peers, existing.ID)
 	}
-	if update.Address != "" && update.Address != existing.Address {
-		existing.Address = update.Address
-		changed = true
-	}
-
-	if !changed {
-		s.mu.Unlock()
-		return false
-	}
-
 	event := &proto.PeerEvent{
-		Type: proto.PeerEventType_PEER_EVENT_UPDATED,
-		Update: &proto.PeerInfo{
-			Id:       existing.ID,
-			Addr:     existing.Address,
-			LastSeen: existing.LastSeen.UnixNano(),
-		},
+		Type:   proto.PeerEventType_PEER_EVENT_UPDATED,
+		Update: peerInfoToProto(existing),
+	}
+	switch {
+	case lost && !ok:
+		s.mu.Unlock()
+		return false // мусор из gossip, даже не заводим запись
+	case lost:
+		event.Type = proto.PeerEventType_PEER_EVENT_LEFT
+	case !ok:
+		event.Type = proto.PeerEventType_PEER_EVENT_JOINED
 	}
 	s.mu.Unlock()
 
 	s.notify(event)
+	for _, p := range dropped {
+		s.notify(&proto.PeerEvent{
+			Type:   proto.PeerEventType_PEER_EVENT_LEFT,
+			Update: peerInfoToProto(p),
+		})
+	}
 	return true
+}
+
+// resolveAddressConflict: один адрес — одна нода, выживает запись со свежайшим LastSeen.
+// Так протухшие ID (нода перевыпустила сертификат) не живут вечно и не расползаются
+// по сети gossip'ом. Вызывается под s.mu.
+func (s *inMemoryState) resolveAddressConflict(keep *PeerInfo) (dropped []*PeerInfo, keepLost bool) {
+	if keep.Address == "" {
+		return nil, false
+	}
+
+	for id, p := range s.peers {
+		if id == keep.ID || p.Address != keep.Address {
+			continue
+		}
+		if p.LastSeen.After(keep.LastSeen) {
+			keepLost = true
+		}
+		if keep.LastSeen.After(p.LastSeen) {
+			dropped = append(dropped, p)
+		}
+	}
+	if keepLost {
+		// Проигравший ничего не чистит: победитель по адресу сделает это на своей вставке.
+		return nil, true
+	}
+	for _, p := range dropped {
+		delete(s.peers, p.ID)
+	}
+	return dropped, false
+}
+
+func peerInfoToProto(p *PeerInfo) *proto.PeerInfo {
+	return &proto.PeerInfo{
+		Id:       p.ID,
+		Addr:     p.Address,
+		LastSeen: p.LastSeen.UnixNano(),
+	}
 }
 
 func (s *inMemoryState) Remove(id string) {
@@ -117,12 +158,8 @@ func (s *inMemoryState) Remove(id string) {
 	s.mu.Unlock()
 
 	s.notify(&proto.PeerEvent{
-		Type: proto.PeerEventType_PEER_EVENT_LEFT,
-		Update: &proto.PeerInfo{
-			Id:       existing.ID,
-			Addr:     existing.Address,
-			LastSeen: existing.LastSeen.UnixNano(),
-		},
+		Type:   proto.PeerEventType_PEER_EVENT_LEFT,
+		Update: peerInfoToProto(existing),
 	})
 }
 

@@ -24,9 +24,11 @@ func NewRegistry(localID string) Registry {
 }
 
 func (r *sessionRegistry) Add(s *Session) error {
-	fmt.Printf("new connection: %s\n", s.Conn.RemoteAddr().String())
 	if s == nil || s.PeerID == "" || s.Conn == nil {
 		return errors.New("invalid session data")
+	}
+	if s.PeerID == r.localID {
+		return errors.New("self connection rejected")
 	}
 
 	r.mu.Lock()
@@ -36,14 +38,20 @@ func (r *sessionRegistry) Add(s *Session) error {
 	}
 
 	old, exists := r.sessions[s.PeerID]
-	if exists {
+	if exists && old.Conn.Context().Err() == nil {
+		// Живую сессию не рвём. Дубликат вытесняет её только если старая идет в
+		// проигрышном направлении, а новая — в выигрышном по tie-break.
+		// Обе ноды считают предикат по одной и той же паре соединений, поэтому
+		// сходятся на одном коннекте — том, где инициатор это нода со старшим ID.
+		// Повтор того же направления (лишний dial) всегда отвергается.
 		keepOutbound := r.localID > s.PeerID
-		if s.Conn.IsInitiator() != keepOutbound {
+		if old.Conn.IsInitiator() == keepOutbound || s.Conn.IsInitiator() != keepOutbound {
 			r.mu.Unlock()
 			return errors.New("duplicate connection rejected by tie-breaking rules")
 		}
 	}
 
+	fmt.Printf("new connection: %s\n", s.Conn.RemoteAddr().String())
 	r.sessions[s.PeerID] = s
 	for ch := range r.subs {
 		select {
@@ -88,7 +96,6 @@ func (r *sessionRegistry) SubscribeNewSessions(ctx context.Context) <-chan *Sess
 }
 
 func (r *sessionRegistry) Remove(s *Session) {
-	fmt.Printf("removed connection: %s\n", s.Conn.RemoteAddr().String())
 	if s == nil || s.PeerID == "" {
 		return
 	}
@@ -101,6 +108,8 @@ func (r *sessionRegistry) Remove(s *Session) {
 	}
 	delete(r.sessions, s.PeerID)
 	r.mu.Unlock()
+
+	fmt.Printf("removed connection: %s\n", s.Conn.RemoteAddr().String())
 
 	closeSession(s)
 }

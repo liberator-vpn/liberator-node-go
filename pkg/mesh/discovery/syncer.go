@@ -58,19 +58,54 @@ func (ds *DiscoverySyncer) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			peers := ds.repo.List()
-			for _, p := range peers {
-				if _, active := ds.registry.Get(p.ID); active {
-					continue
-				}
-
-				if p.ID == ds.localID {
-					continue
-				}
-
-				go ds.connect(ctx, p.Address)
-			}
+			ds.refreshPeers(ctx, time.Now())
 		}
+	}
+}
+
+const (
+	// Как часто освежаем LastSeen живых сессий, чтобы они не протухли ни у нас, ни у соседей.
+	peerRefreshInterval = 30 * time.Second
+	// Через сколько выкидываем пира, с которым нет сессии и о котором никто не напоминал.
+	peerTTL = 30 * time.Minute
+)
+
+// refreshPeers освежает живых пиров, выкидывает протухшие записи и добирает недостающие соединения.
+func (ds *DiscoverySyncer) refreshPeers(ctx context.Context, now time.Time) {
+	// Адреса живых сессий: записи с протухшим ID иначе порождают дубликат к уже подключенному пиру.
+	connected := make(map[string]struct{})
+	for _, s := range ds.registry.ListActive() {
+		connected[s.Conn.RemoteAddr().String()] = struct{}{}
+
+		p, ok := ds.repo.Get(s.PeerID)
+		if ok && now.Sub(p.LastSeen) < peerRefreshInterval {
+			continue
+		}
+		// Адрес переносим как есть: живой пир должен вытеснять свои протухшие ID по адресу.
+		ds.repo.InsertMerge(topology.PeerInfo{ID: s.PeerID, Address: p.Address, LastSeen: now})
+	}
+
+	for _, p := range ds.repo.List() {
+		if p.ID == ds.localID {
+			continue
+		}
+
+		if _, active := ds.registry.Get(p.ID); active {
+			continue
+		}
+
+		// Протухший ID (сменился сертификат или адрес) иначе живет в сторе вечно
+		// и разносится gossip'ом по всей сети.
+		if now.Sub(p.LastSeen) > peerTTL {
+			ds.repo.Remove(p.ID)
+			continue
+		}
+
+		if _, busy := connected[p.Address]; busy {
+			continue
+		}
+
+		go ds.connect(ctx, p.Address)
 	}
 }
 
@@ -145,7 +180,7 @@ func (ds *DiscoverySyncer) connect(ctx context.Context, addr string) {
 		return
 	}
 
-	ds.engine.HandleConnection(ctx, pConn, false)
+	ds.engine.HandleConnection(ctx, pConn)
 }
 
 func (ds *DiscoverySyncer) startDial(addr string) bool {
@@ -197,9 +232,14 @@ func (ds *DiscoverySyncer) syncDiscoveryData(ctx context.Context, s *session.Ses
 				LastSeen: time.Unix(0, ev.Update.LastSeen),
 			})
 		case proto.PeerEventType_PEER_EVENT_LEFT:
-			if ev.Update != nil {
-				ds.repo.Remove(ev.Update.Id)
+			if ev.Update == nil {
+				continue
 			}
+			// Чужое протухание не должно выкидывать пира, с которым у нас живая сессия.
+			if _, active := ds.registry.Get(ev.Update.Id); active {
+				continue
+			}
+			ds.repo.Remove(ev.Update.Id)
 		}
 	}
 }

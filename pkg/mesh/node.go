@@ -139,7 +139,7 @@ func (n *MeshNode) Run() {
 				_ = conn.Close()
 				continue
 			}
-			n.engine.HandleConnection(n.ctx, conn, true)
+			n.engine.HandleConnection(n.ctx, conn)
 		}
 	})
 
