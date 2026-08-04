@@ -36,7 +36,8 @@ func NewSessionEngine(reg Registry, pusher StreamPusher, repo topology.PeerRepos
 	}
 }
 
-func (e *SessionEngine) HandleConnection(ctx context.Context, pc transport.PeerConnection) {
+func (e *SessionEngine) HandleConnection(ctx context.Context, pc transport.PeerConnection, incoming bool) {
+
 	if pc == nil {
 		return
 	}

@@ -1,7 +1,6 @@
 package discovery
 
 import (
-	"strings"
 	"time"
 
 	"github.com/TexHik620953/liberator-node-go/pkg/mesh/discovery/proto"
@@ -62,9 +61,6 @@ func (s *DiscoveryServer) buildSyncEvent() *proto.PeerEvent {
 	all := s.repo.List()
 	dump := make([]*proto.PeerInfo, 0, len(all))
 	for _, p := range all {
-		if strings.HasPrefix(p.ID, "bootstrap:") {
-			continue
-		}
 		dump = append(dump, &proto.PeerInfo{
 			Id:       p.ID,
 			Addr:     p.Address,

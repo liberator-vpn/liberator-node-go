@@ -64,9 +64,6 @@ func (ds *DiscoverySyncer) Start(ctx context.Context) {
 					continue
 				}
 
-				if !strings.HasPrefix(p.ID, "bootstrap:") && ds.localID < p.ID {
-					continue
-				}
 				if p.ID == ds.localID {
 					continue
 				}
@@ -99,10 +96,6 @@ func (ds *DiscoverySyncer) listenForNewPeers(ctx context.Context) {
 				return
 			}
 			if ev.Type != proto.PeerEventType_PEER_EVENT_JOINED || ev.Update == nil {
-				continue
-			}
-
-			if strings.HasPrefix(ev.Update.Id, "bootstrap:") {
 				continue
 			}
 
@@ -152,7 +145,7 @@ func (ds *DiscoverySyncer) connect(ctx context.Context, addr string) {
 		return
 	}
 
-	ds.engine.HandleConnection(ctx, pConn)
+	ds.engine.HandleConnection(ctx, pConn, false)
 }
 
 func (ds *DiscoverySyncer) startDial(addr string) bool {
@@ -188,9 +181,6 @@ func (ds *DiscoverySyncer) syncDiscoveryData(ctx context.Context, s *session.Ses
 		switch ev.Type {
 		case proto.PeerEventType_PEER_EVENT_SYNC:
 			for _, p := range ev.Dump {
-				if strings.HasPrefix(p.Id, "bootstrap:") {
-					continue
-				}
 				ds.repo.InsertMerge(topology.PeerInfo{
 					ID:       p.Id,
 					Address:  p.Addr,
@@ -199,9 +189,6 @@ func (ds *DiscoverySyncer) syncDiscoveryData(ctx context.Context, s *session.Ses
 			}
 		case proto.PeerEventType_PEER_EVENT_JOINED, proto.PeerEventType_PEER_EVENT_UPDATED:
 			if ev.Update == nil {
-				continue
-			}
-			if strings.HasPrefix(ev.Update.Id, "bootstrap:") {
 				continue
 			}
 			ds.repo.InsertMerge(topology.PeerInfo{

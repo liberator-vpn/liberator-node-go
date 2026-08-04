@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -23,6 +24,7 @@ func NewRegistry(localID string) Registry {
 }
 
 func (r *sessionRegistry) Add(s *Session) error {
+	fmt.Printf("new connection: %s\n", s.Conn.RemoteAddr().String())
 	if s == nil || s.PeerID == "" || s.Conn == nil {
 		return errors.New("invalid session data")
 	}
@@ -86,6 +88,7 @@ func (r *sessionRegistry) SubscribeNewSessions(ctx context.Context) <-chan *Sess
 }
 
 func (r *sessionRegistry) Remove(s *Session) {
+	fmt.Printf("removed connection: %s\n", s.Conn.RemoteAddr().String())
 	if s == nil || s.PeerID == "" {
 		return
 	}
