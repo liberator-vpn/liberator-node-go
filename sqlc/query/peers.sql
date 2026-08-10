@@ -35,7 +35,7 @@ SELECT * FROM peers ORDER BY id;
 DELETE FROM peers WHERE id = sqlc.arg(id);
 
 -- name: ProlongPeer :exec
-update peers set expiration_date = sqlc.arg(new_expiration_date) where id = sqlc.arg(id) and expiration_data < sqlc.arg(new_expiration_date) limit 1;
+update peers set expiration_date = sqlc.arg(new_expiration_date) where id = sqlc.arg(id) and expiration_date < sqlc.arg(new_expiration_date);
 
 -- name: UpdatePeerStats :exec
 UPDATE peers

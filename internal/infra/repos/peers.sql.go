@@ -167,7 +167,7 @@ func (q *Queries) ListPeers(ctx context.Context) ([]Peer, error) {
 }
 
 const prolongPeer = `-- name: ProlongPeer :exec
-update peers set expiration_date = ?1 where id = ?2 and expiration_data < ?1 limit 1
+update peers set expiration_date = ?1 where id = ?2 and expiration_date < ?1
 `
 
 type ProlongPeerParams struct {

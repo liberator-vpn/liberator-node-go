@@ -4,3 +4,10 @@ dev/
 __debug_bin*
 config.yaml
 peers.json
+
+
+node.crt
+node.key
+root.crt
+
+database.sqlite
