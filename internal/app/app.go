@@ -171,7 +171,7 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	if err != nil {
 		log.Printf("failed to update err: %v", err)
 		ipInfo = &ipapi.IPInfo{
-			CountryCode: "UNKNOWN",
+			CountryCode: cfg.CountryCode,
 		}
 	}
 	app.ipInfo = ipInfo

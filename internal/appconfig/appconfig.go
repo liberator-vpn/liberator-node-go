@@ -58,13 +58,14 @@ type ApiConfig struct {
 
 // AppConfig общая структура конфигурации
 type AppConfig struct {
-	Auth      AuthConfig     `yaml:"auth"`
-	TunConfig TUNConfig      `yaml:"tun"`
-	Router    RouterConfig   `yaml:"router"`
-	Mesh      MeshConfig     `yaml:"mesh"`
-	Database  DatabaseConfig `yaml:"database"`
-	Metrics   MetricsConfig  `yaml:"metrics"`
-	Api       ApiConfig      `yaml:"api"`
+	Auth        AuthConfig     `yaml:"auth"`
+	TunConfig   TUNConfig      `yaml:"tun"`
+	Router      RouterConfig   `yaml:"router"`
+	Mesh        MeshConfig     `yaml:"mesh"`
+	Database    DatabaseConfig `yaml:"database"`
+	Metrics     MetricsConfig  `yaml:"metrics"`
+	Api         ApiConfig      `yaml:"api"`
+	CountryCode string         `yaml:"country_code"`
 }
 
 // LoadAppConfig загружает конфигурацию из YAML-файла
