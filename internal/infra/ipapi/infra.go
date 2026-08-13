@@ -23,7 +23,7 @@ type IPInfo struct {
 }
 
 func GetIpInfo(ctx context.Context) (*IPInfo, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 15 * time.Second}
 	return getIpInfo(ctx, client, ipInfoURL)
 }
 
