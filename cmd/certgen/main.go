@@ -7,7 +7,7 @@ import (
 	"net"
 	"path"
 
-	"github.com/TexHik620953/liberator-node-go/internal/utils/cert"
+	"github.com/liberator-vpn/liberator-node-go/internal/utils/cert"
 )
 
 func main() {

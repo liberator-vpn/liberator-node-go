@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/discovery/proto"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/discovery/proto"
 )
 
 type peerRepository struct {

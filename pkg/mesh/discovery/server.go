@@ -3,8 +3,8 @@ package discovery
 import (
 	"time"
 
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/discovery/proto"
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/topology"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/discovery/proto"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/topology"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 )

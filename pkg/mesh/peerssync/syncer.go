@@ -4,9 +4,9 @@ import (
 	"context"
 	"log"
 
-	"github.com/TexHik620953/liberator-node-go/pkg/firewall"
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/peerssync/proto"
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/session"
+	"github.com/liberator-vpn/liberator-node-go/pkg/firewall"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/peerssync/proto"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/session"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 )

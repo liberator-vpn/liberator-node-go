@@ -3,7 +3,7 @@ package router
 import (
 	"testing"
 
-	"github.com/TexHik620953/liberator-node-go/internal/utils/netutils"
+	"github.com/liberator-vpn/liberator-node-go/internal/utils/netutils"
 )
 
 func TestIsForbiddenEgress(t *testing.T) {

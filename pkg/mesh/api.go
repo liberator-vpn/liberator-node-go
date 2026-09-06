@@ -1,6 +1,6 @@
 package mesh
 
-import "github.com/TexHik620953/liberator-node-go/pkg/model"
+import "github.com/liberator-vpn/liberator-node-go/pkg/model"
 
 func (n *MeshNode) GetConnectivity() []model.ConnectivityState {
 	result := make([]model.ConnectivityState, 0)

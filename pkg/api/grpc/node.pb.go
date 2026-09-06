@@ -7,12 +7,13 @@
 package grpc
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
 const (
@@ -168,7 +169,7 @@ const file_node_proto_rawDesc = "" +
 	"\x05types\x18\x01 \x03(\tR\x05types2\x8b\x01\n" +
 	"\vNodeService\x12,\n" +
 	"\x04Ping\x12\x11.grpc.PingMessage\x1a\x11.grpc.PongMessage\x12N\n" +
-	"\x12ListTransportTypes\x12\x16.google.protobuf.Empty\x1a .grpc.ListTransportTypesResponseB=Z;github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
+	"\x12ListTransportTypes\x12\x16.google.protobuf.Empty\x1a .grpc.ListTransportTypesResponseB=Z;github.com/liberator-vpn/liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
 
 var (
 	file_node_proto_rawDescOnce sync.Once

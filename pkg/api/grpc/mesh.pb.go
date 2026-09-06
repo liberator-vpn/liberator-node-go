@@ -7,12 +7,13 @@
 package grpc
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
 const (
@@ -150,7 +151,7 @@ const file_mesh_proto_rawDesc = "" +
 	"\x11ListNodesResponse\x12-\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x17.grpc.ConnectedNodeInfoR\x05nodes2T\n" +
 	"\vMeshService\x12E\n" +
-	"\x12ListConnectedNodes\x12\x16.google.protobuf.Empty\x1a\x17.grpc.ListNodesResponseB=Z;github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
+	"\x12ListConnectedNodes\x12\x16.google.protobuf.Empty\x1a\x17.grpc.ListNodesResponseB=Z;github.com/liberator-vpn/liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
 
 var (
 	file_mesh_proto_rawDescOnce sync.Once

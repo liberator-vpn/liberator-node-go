@@ -13,25 +13,25 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
-	"github.com/TexHik620953/liberator-node-go/internal/infra/ipapi"
+	"github.com/liberator-vpn/liberator-node-go/internal/appconfig"
+	"github.com/liberator-vpn/liberator-node-go/internal/infra/ipapi"
 
-	"github.com/TexHik620953/liberator-node-go/internal/utils/cert"
-	"github.com/TexHik620953/liberator-node-go/internal/utils/safemap"
-	"github.com/TexHik620953/liberator-node-go/pkg/iface"
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh"
-	"github.com/TexHik620953/liberator-node-go/pkg/router"
-	"github.com/TexHik620953/liberator-node-go/pkg/services/firewallmanager"
-	"github.com/TexHik620953/liberator-node-go/pkg/services/peersmanager"
-	"github.com/TexHik620953/liberator-node-go/pkg/transport"
-	"github.com/TexHik620953/liberator-node-go/pkg/transport/awg"
+	"github.com/liberator-vpn/liberator-node-go/internal/utils/cert"
+	"github.com/liberator-vpn/liberator-node-go/internal/utils/safemap"
+	"github.com/liberator-vpn/liberator-node-go/pkg/iface"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh"
+	"github.com/liberator-vpn/liberator-node-go/pkg/router"
+	"github.com/liberator-vpn/liberator-node-go/pkg/services/firewallmanager"
+	"github.com/liberator-vpn/liberator-node-go/pkg/services/peersmanager"
+	"github.com/liberator-vpn/liberator-node-go/pkg/transport"
+	"github.com/liberator-vpn/liberator-node-go/pkg/transport/awg"
 
 	_ "github.com/mattn/go-sqlite3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	grpcctrl "github.com/TexHik620953/liberator-node-go/pkg/api/controllers/grpc"
-	httpctrl "github.com/TexHik620953/liberator-node-go/pkg/api/controllers/http"
+	grpcctrl "github.com/liberator-vpn/liberator-node-go/pkg/api/controllers/grpc"
+	httpctrl "github.com/liberator-vpn/liberator-node-go/pkg/api/controllers/http"
 )
 
 type App struct {

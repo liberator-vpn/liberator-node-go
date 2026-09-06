@@ -1,7 +1,7 @@
 package router
 
 import (
-	"github.com/TexHik620953/liberator-node-go/pkg/firewall"
+	"github.com/liberator-vpn/liberator-node-go/pkg/firewall"
 )
 
 func (r *Router) AddRule(index firewall.PortRuleIndex, rule firewall.PortRule) bool {

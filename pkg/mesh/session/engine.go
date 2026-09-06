@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TexHik620953/liberator-node-go/internal/utils/dgmessage"
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/topology"
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/transport"
+	"github.com/liberator-vpn/liberator-node-go/internal/utils/dgmessage"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/topology"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/transport"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

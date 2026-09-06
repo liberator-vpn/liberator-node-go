@@ -1,8 +1,8 @@
 package router
 
 import (
-	"github.com/TexHik620953/liberator-node-go/internal/utils/dgmessage"
-	"github.com/TexHik620953/liberator-node-go/pkg/routingtable"
+	"github.com/liberator-vpn/liberator-node-go/internal/utils/dgmessage"
+	"github.com/liberator-vpn/liberator-node-go/pkg/routingtable"
 )
 
 // Agregated packets pool and routing table

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TexHik620953/liberator-node-go/internal/utils/safemap"
-	"github.com/TexHik620953/liberator-node-go/pkg/transport"
+	"github.com/liberator-vpn/liberator-node-go/internal/utils/safemap"
+	"github.com/liberator-vpn/liberator-node-go/pkg/transport"
 
 	"github.com/amnezia-vpn/amneziawg-go/tun"
 )

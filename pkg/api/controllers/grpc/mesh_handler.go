@@ -6,8 +6,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	pb "github.com/TexHik620953/liberator-node-go/pkg/api/grpc" // Наш сгенерированный gRPC пакет
-	"github.com/TexHik620953/liberator-node-go/pkg/model"
+	pb "github.com/liberator-vpn/liberator-node-go/pkg/api/grpc" // Наш сгенерированный gRPC пакет
+	"github.com/liberator-vpn/liberator-node-go/pkg/model"
 )
 
 type MeshNode interface {

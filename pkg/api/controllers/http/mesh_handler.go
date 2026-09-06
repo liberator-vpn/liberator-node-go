@@ -5,7 +5,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/TexHik620953/liberator-node-go/pkg/model"
+	"github.com/liberator-vpn/liberator-node-go/pkg/model"
 )
 
 type MeshNode interface {

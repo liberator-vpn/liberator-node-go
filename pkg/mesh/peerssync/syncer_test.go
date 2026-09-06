@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/TexHik620953/liberator-node-go/pkg/firewall"
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/peerssync/proto"
-	"github.com/TexHik620953/liberator-node-go/pkg/router"
-	"github.com/TexHik620953/liberator-node-go/pkg/routingtable"
+	"github.com/liberator-vpn/liberator-node-go/pkg/firewall"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/peerssync/proto"
+	"github.com/liberator-vpn/liberator-node-go/pkg/router"
+	"github.com/liberator-vpn/liberator-node-go/pkg/routingtable"
 )
 
 // Роутер в памяти: syncRules/syncClients трогают только правила и таблицу маршрутизации.

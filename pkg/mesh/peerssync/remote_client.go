@@ -3,7 +3,7 @@ package peerssync
 import (
 	"context"
 
-	"github.com/TexHik620953/liberator-node-go/pkg/routingtable"
+	"github.com/liberator-vpn/liberator-node-go/pkg/routingtable"
 )
 
 type RemoteMessage struct {

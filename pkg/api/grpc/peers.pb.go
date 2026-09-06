@@ -7,13 +7,14 @@
 package grpc
 
 import (
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
+
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
 )
 
 const (
@@ -629,7 +630,7 @@ const file_peers_proto_rawDesc = "" +
 	"\n" +
 	"DeletePeer\x12\x17.grpc.DeletePeerRequest\x1a\x16.google.protobuf.Empty\x12?\n" +
 	"\vProlongPeer\x12\x18.grpc.ProlongPeerRequest\x1a\x16.google.protobuf.Empty\x12T\n" +
-	"\x11GenerateClientKey\x12\x1e.grpc.GenerateClientKeyRequest\x1a\x1f.grpc.GenerateClientKeyResponseB=Z;github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
+	"\x11GenerateClientKey\x12\x1e.grpc.GenerateClientKeyRequest\x1a\x1f.grpc.GenerateClientKeyResponseB=Z;github.com/liberator-vpn/liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
 
 var (
 	file_peers_proto_rawDescOnce sync.Once

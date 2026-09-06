@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/TexHik620953/liberator-node-go/internal/utils/netutils"
-	"github.com/TexHik620953/liberator-node-go/pkg/model"
+	"github.com/liberator-vpn/liberator-node-go/internal/utils/netutils"
+	"github.com/liberator-vpn/liberator-node-go/pkg/model"
 	"golang.org/x/crypto/curve25519"
 
 	"github.com/google/uuid"

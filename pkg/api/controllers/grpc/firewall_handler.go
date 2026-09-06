@@ -8,9 +8,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	pb "github.com/TexHik620953/liberator-node-go/pkg/api/grpc" // Наш сгенерированный gRPC пакет
-	"github.com/TexHik620953/liberator-node-go/pkg/model"
-	"github.com/TexHik620953/liberator-node-go/pkg/services/firewallmanager"
+	pb "github.com/liberator-vpn/liberator-node-go/pkg/api/grpc" // Наш сгенерированный gRPC пакет
+	"github.com/liberator-vpn/liberator-node-go/pkg/model"
+	"github.com/liberator-vpn/liberator-node-go/pkg/services/firewallmanager"
 )
 
 type FirewallHandler struct {

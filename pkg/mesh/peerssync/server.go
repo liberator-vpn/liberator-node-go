@@ -3,8 +3,8 @@ package peerssync
 import (
 	"time"
 
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/peerssync/proto"
-	"github.com/TexHik620953/liberator-node-go/pkg/router"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/peerssync/proto"
+	"github.com/liberator-vpn/liberator-node-go/pkg/router"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 )

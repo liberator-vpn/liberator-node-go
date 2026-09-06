@@ -7,12 +7,12 @@ import (
 	"log"
 	"time"
 
-	"github.com/TexHik620953/liberator-node-go/internal/infra/repos"
-	"github.com/TexHik620953/liberator-node-go/internal/utils/netutils"
-	"github.com/TexHik620953/liberator-node-go/internal/utils/safemap"
-	"github.com/TexHik620953/liberator-node-go/pkg/model"
-	"github.com/TexHik620953/liberator-node-go/pkg/services/firewallmanager"
-	"github.com/TexHik620953/liberator-node-go/pkg/transport"
+	"github.com/liberator-vpn/liberator-node-go/internal/infra/repos"
+	"github.com/liberator-vpn/liberator-node-go/internal/utils/netutils"
+	"github.com/liberator-vpn/liberator-node-go/internal/utils/safemap"
+	"github.com/liberator-vpn/liberator-node-go/pkg/model"
+	"github.com/liberator-vpn/liberator-node-go/pkg/services/firewallmanager"
+	"github.com/liberator-vpn/liberator-node-go/pkg/transport"
 )
 
 type PeersManager struct {

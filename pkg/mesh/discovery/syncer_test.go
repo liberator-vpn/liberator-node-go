@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/transport"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/transport"
 )
 
 type blockingTransport struct {

@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/TexHik620953/liberator-node-go/internal/infra/repos"
-	"github.com/TexHik620953/liberator-node-go/pkg/firewall"
-	"github.com/TexHik620953/liberator-node-go/pkg/model"
+	"github.com/liberator-vpn/liberator-node-go/internal/infra/repos"
+	"github.com/liberator-vpn/liberator-node-go/pkg/firewall"
+	"github.com/liberator-vpn/liberator-node-go/pkg/model"
 )
 
 type Firewall interface {

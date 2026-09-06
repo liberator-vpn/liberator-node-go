@@ -11,12 +11,12 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/discovery"
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/peerssync"
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/session"
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/topology"
-	"github.com/TexHik620953/liberator-node-go/pkg/mesh/transport"
+	"github.com/liberator-vpn/liberator-node-go/internal/appconfig"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/discovery"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/peerssync"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/session"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/topology"
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/transport"
 	"google.golang.org/grpc"
 )
 

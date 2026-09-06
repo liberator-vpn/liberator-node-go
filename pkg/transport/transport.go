@@ -3,9 +3,9 @@ package transport
 import (
 	"time"
 
-	"github.com/TexHik620953/liberator-node-go/internal/utils/dgmessage"
-	"github.com/TexHik620953/liberator-node-go/pkg/model"
-	"github.com/TexHik620953/liberator-node-go/pkg/routingtable"
+	"github.com/liberator-vpn/liberator-node-go/internal/utils/dgmessage"
+	"github.com/liberator-vpn/liberator-node-go/pkg/model"
+	"github.com/liberator-vpn/liberator-node-go/pkg/routingtable"
 )
 
 type TransportPeerStats struct {

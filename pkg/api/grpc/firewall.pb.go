@@ -7,12 +7,13 @@
 package grpc
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
 const (
@@ -346,7 +347,7 @@ const file_firewall_proto_rawDesc = "" +
 	"\rListPeerRules\x12\x1a.grpc.ListPeerRulesRequest\x1a\x17.grpc.ListRulesResponse\x12=\n" +
 	"\n" +
 	"RemoveRule\x12\x17.grpc.RemoveRuleRequest\x1a\x16.google.protobuf.Empty\x12M\n" +
-	"\x12RemoveAllPeerRules\x12\x1f.grpc.RemoveAllPeerRulesRequest\x1a\x16.google.protobuf.EmptyB=Z;github.com/TexHik620953/liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
+	"\x12RemoveAllPeerRules\x12\x1f.grpc.RemoveAllPeerRulesRequest\x1a\x16.google.protobuf.EmptyB=Z;github.com/liberator-vpn/liberator-node-go/pkg/api/grpc;grpcb\x06proto3"
 
 var (
 	file_firewall_proto_rawDescOnce sync.Once

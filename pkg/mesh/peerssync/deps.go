@@ -3,9 +3,9 @@ package peerssync
 import (
 	"context"
 
-	"github.com/TexHik620953/liberator-node-go/pkg/firewall"
-	"github.com/TexHik620953/liberator-node-go/pkg/router"
-	"github.com/TexHik620953/liberator-node-go/pkg/routingtable"
+	"github.com/liberator-vpn/liberator-node-go/pkg/firewall"
+	"github.com/liberator-vpn/liberator-node-go/pkg/router"
+	"github.com/liberator-vpn/liberator-node-go/pkg/routingtable"
 )
 
 type Router interface {

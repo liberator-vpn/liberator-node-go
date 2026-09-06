@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TexHik620953/liberator-node-go/internal/appconfig"
-	"github.com/TexHik620953/liberator-node-go/internal/utils/dgmessage"
+	"github.com/liberator-vpn/liberator-node-go/internal/appconfig"
+	"github.com/liberator-vpn/liberator-node-go/internal/utils/dgmessage"
 
 	"github.com/coreos/go-iptables/iptables"
 	"github.com/vishvananda/netlink"
