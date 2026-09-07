@@ -145,7 +145,6 @@ func (ig *AWGTransport) Run() {
 		case <-ig.ctx.Done():
 			log.Printf("[%s] Shutting down AWG Transport...", ig.nodeID)
 			ig.awgDevice.Close()
-			fmt.Println("transport exit")
 			return
 		case <-ticker.C:
 			ig.watchPeers()
@@ -163,7 +162,6 @@ func (ig *AWGTransport) CreatePeer(peerInfo *model.Peer) error {
 	// Если юзер уже подключен, удаляем его старую сессию
 	ig.KickPeer(peerInfo.VirtualIP)
 
-	// TODO: move cretion/deletion to router
 	var peer routingtable.RoutingObject
 	awgPeer := NewAWGPeer(ig.ctx, ig.nodeID, peerInfo.VirtualIP, peerInfo.AwgPublicKey, ig, peerInfo.ExpirationDate)
 	peer = awgPeer
@@ -192,7 +190,6 @@ func (ig *AWGTransport) CreatePeer(peerInfo *model.Peer) error {
 	ig.peersByIP.Set(awgPeer.virtualIP, awgPeer)
 	ig.channelTun.peers.Set(awgPeer.virtualIP, awgPeer)
 
-	// TODO: move cretion/deletion to router
 	if err := ig.router.AddRoutingObject(peer); err != nil {
 		// Если не смогли добавить в роутинг, откатываем всё
 		ig.removePeerInternal(awgPeer)
@@ -220,7 +217,6 @@ func (ig *AWGTransport) KickPeer(ip uint32) bool {
 // Вызывается при таймауте (Watchdog) или принудительном кике.
 func (ig *AWGTransport) removePeerInternal(peer *AWGPeer) {
 	// 1. Удаляем из таблицы маршрутизации
-	// TODO: move cretion/deletion to router
 	ig.router.DeleteRoutingObject(peer.GetVirtualIP())
 
 	// 3. Чистим свои карты

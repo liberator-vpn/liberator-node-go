@@ -19,33 +19,21 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 )
 
-func getDefaultGatewayInterface() (string, error) {
-	// 1. Fetch all IPv4 routes from the Linux kernel [3.1]
+// defaultGatewayInterface возвращает имя интерфейса с default-маршрутом IPv4.
+func defaultGatewayInterface() (string, error) {
 	routes, err := netlink.RouteList(nil, netlink.FAMILY_V4)
 	if err != nil {
 		return "", fmt.Errorf("failed to list kernel routes: %w", err)
 	}
-
-	// 2. Scan the routes to find the default gateway (Dst == nil or 0.0.0.0/0) [3.1]
 	for _, route := range routes {
-		// A default route has no destination network specified (it matches everything) [3.1]
-		if route.Dst == nil || route.Dst.IP.IsUnspecified() {
-			// Ensure the route has a valid outbound interface index (LinkIndex) [3.1]
-			if route.LinkIndex <= 0 {
-				continue
-			}
-
-			// 3. Resolve the interface index to its actual OS string name [3.1]
+		if (route.Dst == nil || route.Dst.IP.IsUnspecified()) && route.LinkIndex > 0 {
 			link, err := netlink.LinkByIndex(route.LinkIndex)
 			if err != nil {
 				return "", fmt.Errorf("failed to resolve link index %d: %w", route.LinkIndex, err)
 			}
-
-			// Returns strings like "eth0", "ens3", "enp11s0" [3.1]
 			return link.Attrs().Name, nil
 		}
 	}
-
 	return "", fmt.Errorf("default outbound gateway route (0.0.0.0/0) not found")
 }
 
@@ -88,7 +76,7 @@ func NewTUN(
 	var err error
 	// Получаем дефолтный выходной интерфейс
 	if cfg.IfaceOutName == "" {
-		cfg.IfaceOutName, err = getDefaultGatewayInterface()
+		cfg.IfaceOutName, err = defaultGatewayInterface()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get default out interface: %v", err)
 		}
@@ -136,54 +124,8 @@ func NewTUN(
 		eg.Close()
 		return nil, fmt.Errorf("failed to up iface: %w", err)
 	}
-	/*
-		// Вычисляем сетевой адрес (обнуляем хостовую часть)
-		networkIP := eg.ipNet.IP.Mask(eg.ipNet.Mask)
-		network := &net.IPNet{
-			IP:   networkIP,
-			Mask: eg.ipNet.Mask,
-		}
 
-		route := &netlink.Route{
-			Family:    netlink.FAMILY_V4, // явно указываем IPv4
-			Dst:       network,           // теперь 10.8.0.0/16
-			LinkIndex: link.Attrs().Index,
-			Scope:     netlink.SCOPE_UNIVERSE,
-		}
-		if err := netlink.RouteAdd(route); err != nil {
-			// Проверяем, является ли ошибка "file exists"
-			if strings.Contains(err.Error(), "file exists") {
-				log.Printf("Route already exists, skipping: %v", err)
-				// Можно также попробовать заменить или просто проигнорировать
-			} else {
-				eg.Close()
-				return nil, fmt.Errorf("failed to add route: %w", err)
-			}
-		}
-	*/
-	/*
-		// 4. Включаем IP-форвардинг
-		if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0644); err != nil {
-			eg.Close()
-			return nil, fmt.Errorf("failed to enable ipv4 forward: %w", err)
-		}
-
-		// 4.1. ДОБАВЛЕНО: Глобально включаем BBR для всех TCP соединений сервера
-		// Для работы BBR ядро Linux также требует дисциплину очередей fq (она у вас уже активна)
-		if err := os.WriteFile("/proc/sys/net/ipv4/tcp_congestion_control", []byte("bbr"), 0644); err != nil {
-			// Если ядро старое и не поддерживает BBR, логируем предупреждение, но не падаем
-			log.Printf("[Warning] Failed to set TCP congestion control to BBR: %v. Falling back to system default.", err)
-		}
-
-		// 5. ДОБАВЛЕНО: Отключаем Reverse Path Filtering для интерфейса liberator
-		rpFilterPath := filepath.Join("/proc/sys/net/ipv4/conf", cfg.IfaceInName, "rp_filter")
-		if err := os.WriteFile(rpFilterPath, []byte("0"), 0644); err != nil {
-			// Некоторые ядра требуют отключения и на глобальном уровне
-			_ = os.WriteFile("/proc/sys/net/ipv4/conf/all/rp_filter", []byte("0"), 0644)
-		}
-	*/
-
-	// 5. Настраиваем NAT через go-iptables
+	// Настраиваем NAT через go-iptables
 	eg.ipt, err = iptables.New()
 	if err != nil {
 		eg.Close()
@@ -198,10 +140,9 @@ func NewTUN(
 	return eg, nil
 }
 
-// sudo iptables -t nat -I POSTROUTING 1 -s 10.8.0.0/16 -o amn0 -j MASQUERADE
 func (eg *TUNIface) setupNAT() error {
 	if eg.cfg.IfaceOutName == "" {
-		ext, err := getDefaultInterface()
+		ext, err := defaultGatewayInterface()
 		if err != nil {
 			return fmt.Errorf("failed to get default iface: %w", err)
 		}
@@ -251,27 +192,6 @@ func (eg *TUNIface) setupNAT() error {
 	}
 
 	return nil
-}
-
-// getDefaultInterface возвращает имя интерфейса по умолчанию (через netlink).
-func getDefaultInterface() (string, error) {
-	routes, err := netlink.RouteList(nil, netlink.FAMILY_V4)
-	if err != nil {
-		return "", err
-	}
-	for _, r := range routes {
-		// Маршрут по умолчанию — Dst == nil или 0.0.0.0/0
-		if r.Dst == nil || (r.Dst.IP != nil && r.Dst.IP.IsUnspecified()) {
-			if r.LinkIndex > 0 {
-				link, err := netlink.LinkByIndex(r.LinkIndex)
-				if err != nil {
-					return "", err
-				}
-				return link.Attrs().Name, nil
-			}
-		}
-	}
-	return "", fmt.Errorf("failed to get default iface")
 }
 
 // Close удаляет интерфейс и очищает правила iptables. Идемпотентен: вызывается и из Run,

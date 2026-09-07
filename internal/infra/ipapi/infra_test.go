@@ -10,7 +10,7 @@ import (
 func TestGetIP(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"success","countryCode":"FI"}`))
+		_, _ = w.Write([]byte(`{"status":"success","country":"FI"}`))
 	}))
 	defer server.Close()
 

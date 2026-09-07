@@ -2,11 +2,17 @@ package transport
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
 	"sync/atomic"
 	"time"
@@ -14,12 +20,56 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+// alpnToken превращает общий secret в ALPN-токен. Ноды подключаются только к тем,
+// кто знает тот же secret: при несовпадении ALPN TLS-хендшейк не проходит.
+func alpnToken(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return "liberator-" + hex.EncodeToString(sum[:8])
+}
+
+// makeEphemeralCert генерирует одноразовый самоподписанный сертификат для шифрования
+// QUIC и получения идентичности ноды (SPKI). Криптография здесь не для аутентификации —
+// её обеспечивает общий secret через ALPN.
+func makeEphemeralCert() (tls.Certificate, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("generate key: %w", err)
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "liberator-node"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	return tls.X509KeyPair(certPEM, keyPEM)
+}
+
 type quicTransport struct {
 	transport  *quic.Transport
 	listener   *quic.Listener
 	clientTLS  *tls.Config
 	quicConfig *quic.Config
 	localAddr  net.Addr
+	selfID     string
 }
 
 type quicPeerConnection struct {
@@ -32,8 +82,15 @@ type quicPeerConnection struct {
 	totalRecv atomic.Uint64
 }
 
-// NewQuicTransport инициализирует UDP-сокет, QUIC-транспорт и TLS конфигурации.
-func NewQuicTransport(listenAddr string, cert tls.Certificate, caPool *x509.CertPool) (NetworkTransport, error) {
+// NewQuicTransport инициализирует UDP-сокет, QUIC-транспорт и TLS. Аутентификация
+// пиров — по общему secret (ALPN-токен), а не по цепочке сертификатов.
+func NewQuicTransport(listenAddr, secret string) (NetworkTransport, error) {
+	cert, err := makeEphemeralCert()
+	if err != nil {
+		return nil, fmt.Errorf("generate ephemeral cert: %w", err)
+	}
+	token := alpnToken(secret)
+
 	udpAddr, err := net.ResolveUDPAddr("udp", listenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("resolve udp addr error: %w", err)
@@ -45,50 +102,26 @@ func NewQuicTransport(listenAddr string, cert tls.Certificate, caPool *x509.Cert
 
 	transport := &quic.Transport{Conn: udpConn}
 
-	// Кастомная строгая mTLS валидация
-	verifyPeer := func(cs tls.ConnectionState) error {
-		if len(cs.PeerCertificates) == 0 {
-			return fmt.Errorf("peer certificate is missing")
-		}
-
-		// Так как мы включили InsecureSkipVerify для отключения проверки имени хоста,
-		// мы ДОЛЖНЫ вручную проверить, что сертификат соседа подписан нашим общим Root CA.
-		leaf := cs.PeerCertificates[0]
-		_, err := leaf.Verify(x509.VerifyOptions{
-			Roots:       caPool,
-			CurrentTime: time.Now(),
-			// Разрешаем сертификату быть валидным как для сервера, так и для клиента
-			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
-		})
-		return err
-	}
-
 	clientTLS := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		NextProtos:   []string{"mesh-quic"},
-		// Отключаем стандартную проверку соответствия имени хоста (ServerName),
-		// чтобы поддерживать любые кастомные имена (aboba, node1 и т.д.) в рамках меша
-		InsecureSkipVerify: true,
-		VerifyConnection:   verifyPeer,
+		Certificates:       []tls.Certificate{cert},
+		NextProtos:         []string{token},
+		InsecureSkipVerify: true, // идентичность несёт ALPN-токен, а не CA
 	}
 
 	serverTLS := &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		NextProtos:   []string{"mesh-quic"},
-		ClientCAs:    caPool,
-		// На стороне сервера мы требуем сертификат от клиента и верифицируем его
-		ClientAuth:       tls.RequireAndVerifyClientCert,
-		VerifyConnection: verifyPeer,
+		NextProtos:   []string{token},
+		// Запрашиваем клиентский сертификат (без верификации), чтобы получать его
+		// ID (SPKI) — как и в случае с входящими, и для детекта «дозвона до себя».
+		ClientAuth: tls.RequestClientCert,
 	}
 
 	quicConfig := &quic.Config{
 		MaxIncomingUniStreams: 50,
 		MaxIncomingStreams:    200,
-		// Зомби-соединение (пир пропал молча, NAT перепривязался) держит сессию в реестре
-		// и блокирует дозвоны до самого таймаута, поэтому он короткий: 3 пропущенных keepalive.
-		MaxIdleTimeout:  30 * time.Second,
-		KeepAlivePeriod: 10 * time.Second,
-		EnableDatagrams: true,
+		MaxIdleTimeout:        30 * time.Second,
+		KeepAlivePeriod:       10 * time.Second,
+		EnableDatagrams:       true,
 	}
 
 	listener, err := transport.Listen(serverTLS, quicConfig)
@@ -103,6 +136,7 @@ func NewQuicTransport(listenAddr string, cert tls.Certificate, caPool *x509.Cert
 		clientTLS:  clientTLS,
 		quicConfig: quicConfig,
 		localAddr:  udpConn.LocalAddr(),
+		selfID:     spkiHashOfCert(&cert),
 	}, nil
 }
 
@@ -115,7 +149,7 @@ func (t *quicTransport) Dial(ctx context.Context, addr string) (PeerConnection, 
 	if err != nil {
 		return nil, err
 	}
-	return wrapConnection(qConn, true) // true — мы инициатор (Client)
+	return wrapConnection(qConn, true)
 }
 
 func (t *quicTransport) Accept(ctx context.Context) (PeerConnection, error) {
@@ -123,23 +157,42 @@ func (t *quicTransport) Accept(ctx context.Context) (PeerConnection, error) {
 	if err != nil {
 		return nil, err
 	}
-	return wrapConnection(qConn, false) // false — к нам подключились (Server)
+	return wrapConnection(qConn, false)
 }
 
 func (t *quicTransport) Addr() net.Addr { return t.localAddr }
 func (t *quicTransport) Close() error   { return t.listener.Close() }
+func (t *quicTransport) SelfID() string { return t.selfID }
 
-// Внутренний хелпер для сборки PeerConnection и извлечения ID соседа
+// spkiHashOfCert возвращает SHA-256 SPKI сертификата как идентичность.
+func spkiHashOfCert(c *tls.Certificate) string {
+	var leaf *x509.Certificate
+	if c.Leaf != nil {
+		leaf = c.Leaf
+	} else {
+		if len(c.Certificate) == 0 {
+			return ""
+		}
+		parsed, err := x509.ParseCertificate(c.Certificate[0])
+		if err != nil {
+			return ""
+		}
+		leaf = parsed
+	}
+	sum := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
+	return hex.EncodeToString(sum[:])
+}
+
+// wrapConnection извлекает ID соседа из SPKI его сертификата.
 func wrapConnection(qConn *quic.Conn, isInitiator bool) (PeerConnection, error) {
 	state := qConn.ConnectionState().TLS
 	if len(state.PeerCertificates) == 0 {
-		_ = qConn.CloseWithError(0, "missing cert")
-		return nil, fmt.Errorf("peer is unauthenticated")
+		return nil, fmt.Errorf("peer did not present a certificate")
 	}
 
 	leaf := state.PeerCertificates[0]
-	hash := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
-	nodeID := hex.EncodeToString(hash[:])
+	sum := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
+	nodeID := hex.EncodeToString(sum[:])
 
 	return &quicPeerConnection{
 		ctx:         qConn.Context(),

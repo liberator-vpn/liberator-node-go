@@ -25,6 +25,8 @@ type PeerConnection interface {
 type NetworkTransport interface {
 	Dial(ctx context.Context, addr string) (PeerConnection, error)
 	Accept(ctx context.Context) (PeerConnection, error)
+	// SelfID возвращает идентичность этой ноды (SPKI её сертификата).
+	SelfID() string
 	Addr() net.Addr
 	Close() error
 }

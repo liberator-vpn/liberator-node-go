@@ -5,5 +5,4 @@ type ConnectivityState struct {
 	Addr      string `json:"addr"`
 	TotalSent uint64 `json:"total_sent"`
 	TotalRecv uint64 `json:"total_recv"`
-	// TODO: PING
 }

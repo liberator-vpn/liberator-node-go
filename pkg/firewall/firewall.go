@@ -259,8 +259,7 @@ func (fw *firewallEngineImpl) Holepunch(holeInfo dgmessage.HoleInfo, duration ti
 	})
 }
 
-// Вспомогательная функция для создания канонического ключа (упорядочиваем IP и порты)
-// TODO: move this to fixed size struct key to avoid allocs
+// makeFlowKey строит канонический ключ потока (упорядочивает IP и порты).
 func makeFlowKey(srcIP, dstIP uint32, srcPort, dstPort uint16, protocol string) string {
 
 	// Для ICMP порты не учитываем

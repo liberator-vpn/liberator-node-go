@@ -2,16 +2,18 @@ package grpc
 
 import (
 	"context"
+	"crypto/subtle"
 	"strings"
 
-	"github.com/golang-jwt/jwt/v4"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
-func UnaryAuthInterceptor(jwtSecret string) grpc.UnaryServerInterceptor {
+// UnaryAuthInterceptor требует заголовок "authorization: Bearer <secret>",
+// где secret совпадает с общим ключом ноды.
+func UnaryAuthInterceptor(secret string) grpc.UnaryServerInterceptor {
 	return func(
 		ctx context.Context,
 		req any,
@@ -31,24 +33,18 @@ func UnaryAuthInterceptor(jwtSecret string) grpc.UnaryServerInterceptor {
 		authHeader := values[0]
 		parts := strings.Split(authHeader, " ")
 		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			return nil, status.Error(codes.Unauthenticated, "authorization header format must be 'Bearer <token>'")
+			return nil, status.Error(codes.Unauthenticated, "authorization header format must be 'Bearer <secret>'")
 		}
 
-		tokenString := parts[1]
-
-		claims := jwt.MapClaims{}
-		token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
-			return []byte(jwtSecret), nil
-		}, jwt.WithValidMethods([]string{"HS256", "HS384", "HS512"}))
-
-		// Если токен просрочен, подпись неверна или сам токен сломан
-		if err != nil || !token.Valid {
-			return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
+		if !secureEqual(parts[1], secret) {
+			return nil, status.Error(codes.Unauthenticated, "invalid secret")
 		}
-		// Токен без exp валиден вечно и не отзывается — не принимаем такие.
-		if _, ok := claims["exp"]; !ok {
-			return nil, status.Error(codes.Unauthenticated, "token must have an expiration")
-		}
+
 		return handler(ctx, req)
 	}
+}
+
+// secureEqual сравнивает строки без раннего выхода (constant-time).
+func secureEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

@@ -1,10 +1,8 @@
 package firewallmanager
 
 import (
-	"context"
-	"fmt"
+	"sync"
 
-	"github.com/liberator-vpn/liberator-node-go/internal/infra/repos"
 	"github.com/liberator-vpn/liberator-node-go/pkg/firewall"
 	"github.com/liberator-vpn/liberator-node-go/pkg/model"
 )
@@ -14,127 +12,62 @@ type Firewall interface {
 	RemoveRule(index firewall.PortRuleIndex) bool
 }
 
+// Firewallmanager применяет правила файрвола в рантайме. Правила живут только в
+// памяти (config-фид / будущий state из API), без персистентной БД.
 type Firewallmanager struct {
-	ctx      context.Context
 	firewall Firewall
-	db       *repos.Queries
 	nodeID   string
+
+	mu        sync.Mutex
+	nextID    uint64
+	peerRules map[uint32][]uint64 // virtualIP -> правило ID
 }
 
-func New(
-	ctx context.Context,
-	firewall Firewall,
-	db repos.DBTX,
-	nodeID string,
-) *Firewallmanager {
+func New(firewall Firewall, nodeID string) *Firewallmanager {
 	return &Firewallmanager{
-		ctx:      ctx,
-		firewall: firewall,
-		db:       repos.New(db),
-		nodeID:   nodeID,
+		firewall:  firewall,
+		nodeID:    nodeID,
+		nextID:    1,
+		peerRules: make(map[uint32][]uint64),
 	}
 }
 
-func (fm *Firewallmanager) Run() error {
-	dbRules, err := fm.db.LoadAllRules(fm.ctx)
-	if err != nil {
-		return fmt.Errorf("load rules from DB: %w", err)
-	}
+// AddRule добавляет правило для клиента с virtualIP и возвращает его ID.
+func (fm *Firewallmanager) AddRule(virtualIP uint32, rule model.PortRule) uint64 {
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
 
-	for _, dbRule := range dbRules {
-		// Преобразуем в firewall.PortRule
-		fm.firewall.AddRule(firewall.PortRuleIndex{
-			NodeID: fm.nodeID,
-			RuleID: uint64(dbRule.ID),
-		}, firewall.PortRule{
-			Address:        uint32(dbRule.VirtualIp),
-			TargetAddress:  dbRule.TargetIp,
-			Protocol:       dbRule.Protocol,
-			PortRangeStart: uint16(dbRule.PortRangeStart),
-			PortRangeEnd:   dbRule.PortRangeEnd,
-		})
-	}
-	return nil
-}
+	id := fm.nextID
+	fm.nextID++
+	rule.ID = id
 
-func (fm *Firewallmanager) AddRule(ctx context.Context, peerID uint64, rule *model.PortRule) error {
-	// Вставляем в БД (авто ID)
-	dbRuleID, err := fm.db.InsertPeerRule(ctx, repos.InsertPeerRuleParams{
-		PeerID:         int64(peerID),
-		TargetIp:       rule.TargetAddress,
-		Protocol:       rule.Protocol,
-		PortRangeStart: int64(rule.PortRangeStart),
-		PortRangeEnd:   rule.PortRangeEnd,
-	})
-	if err != nil {
-		return fmt.Errorf("insert rule into DB: %w", err)
-	}
-	peer, err := fm.db.GetPeerByID(ctx, int64(peerID))
-	if err != nil {
-		return fmt.Errorf("insert rule into DB: get peer: %w", err)
-	}
-
-	// Присваиваем сгенерированный ID и добавляем в firewall
-	rule.ID = uint64(dbRuleID)
-	fm.firewall.AddRule(firewall.PortRuleIndex{
+	ok := fm.firewall.AddRule(firewall.PortRuleIndex{
 		NodeID: fm.nodeID,
-		RuleID: rule.ID,
+		RuleID: id,
 	}, firewall.PortRule{
-		Address:        uint32(peer.VirtualIp),
+		Address:        virtualIP,
 		TargetAddress:  rule.TargetAddress,
 		Protocol:       rule.Protocol,
 		PortRangeStart: rule.PortRangeStart,
 		PortRangeEnd:   rule.PortRangeEnd,
 	})
-	return nil
+	if !ok {
+		return 0
+	}
+	fm.peerRules[virtualIP] = append(fm.peerRules[virtualIP], id)
+	return id
 }
 
-func (fm *Firewallmanager) RemoveRule(ctx context.Context, ruleID uint64) error {
-	if err := fm.db.DeletePeerRule(ctx, int64(ruleID)); err != nil {
-		return fmt.Errorf("delete rule from DB: %w", err)
-	}
-	fm.firewall.RemoveRule(firewall.PortRuleIndex{
-		NodeID: fm.nodeID,
-		RuleID: ruleID,
-	})
-	return nil
-}
+// RemoveAllPeerRules снимает все правила клиента с virtualIP.
+func (fm *Firewallmanager) RemoveAllPeerRules(virtualIP uint32) {
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
 
-func (fm *Firewallmanager) RemoveAllPeerRules(ctx context.Context, peerID uint64) error {
-	rules, err := fm.db.LoadRulesByPeerID(ctx, int64(peerID))
-	if err != nil {
-		return fmt.Errorf("load all peer rules from DB: %w", err)
-	}
-	for _, rule := range rules {
+	for _, id := range fm.peerRules[virtualIP] {
 		fm.firewall.RemoveRule(firewall.PortRuleIndex{
 			NodeID: fm.nodeID,
-			RuleID: uint64(rule.ID),
+			RuleID: id,
 		})
 	}
-
-	err = fm.db.DeleteAllPeerRules(ctx, int64(peerID))
-	if err != nil {
-		return fmt.Errorf("delete all peer rules from DB: %w", err)
-	}
-	return nil
-}
-
-func (fm *Firewallmanager) ListPeerRules(ctx context.Context, peerID uint64) ([]model.PortRule, error) {
-	rows, err := fm.db.LoadRulesByPeerID(ctx, int64(peerID))
-	if err != nil {
-		return nil, fmt.Errorf("failed to load rules from db: %w", err)
-	}
-
-	result := make([]model.PortRule, len(rows))
-
-	for i, row := range rows {
-		result[i] = model.PortRule{
-			ID:             uint64(row.ID),
-			TargetAddress:  row.TargetIp,
-			Protocol:       row.Protocol,
-			PortRangeStart: uint16(row.PortRangeStart),
-			PortRangeEnd:   row.PortRangeEnd,
-		}
-	}
-	return result, nil
+	delete(fm.peerRules, virtualIP)
 }

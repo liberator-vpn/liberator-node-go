@@ -3,7 +3,6 @@ package session
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -65,7 +64,6 @@ func (r *sessionRegistry) Add(s *Session) error {
 		// а наша копия — зомби (QUIC узнает об этом только по MaxIdleTimeout).
 	}
 
-	fmt.Printf("new connection: %s\n", s.Conn.RemoteAddr().String())
 	s.AddedAt = time.Now()
 	r.sessions[s.PeerID] = s
 	for ch := range r.subs {
@@ -124,8 +122,6 @@ func (r *sessionRegistry) Remove(s *Session) {
 	delete(r.sessions, s.PeerID)
 	r.mu.Unlock()
 
-	fmt.Printf("removed connection: %s\n", s.Conn.RemoteAddr().String())
-
 	closeSession(s)
 }
 
@@ -155,9 +151,6 @@ func (r *sessionRegistry) Close() {
 }
 
 func closeSession(s *Session) {
-	if s.GrpcClient != nil {
-		_ = s.GrpcClient.Close()
-	}
 	if s.Conn != nil {
 		_ = s.Conn.Close()
 	}

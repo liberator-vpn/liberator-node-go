@@ -1,14 +1,14 @@
 package http
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"strings"
-
-	"github.com/golang-jwt/jwt/v4"
 )
 
-func HTTPAuthMiddleware(jwtSecret string, next http.Handler) http.Handler {
+// HTTPAuthMiddleware требует заголовок "authorization: Bearer <secret>".
+func HTTPAuthMiddleware(secret string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
@@ -18,24 +18,12 @@ func HTTPAuthMiddleware(jwtSecret string, next http.Handler) http.Handler {
 
 		parts := strings.Split(authHeader, " ")
 		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			respondWithError(w, http.StatusUnauthorized, "authorization header format must be 'Bearer <token>'")
+			respondWithError(w, http.StatusUnauthorized, "authorization header format must be 'Bearer <secret>'")
 			return
 		}
 
-		tokenString := parts[1]
-
-		claims := jwt.MapClaims{}
-		token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
-			return []byte(jwtSecret), nil
-		}, jwt.WithValidMethods([]string{"HS256", "HS384", "HS512"}))
-
-		if err != nil || !token.Valid {
-			respondWithError(w, http.StatusUnauthorized, "invalid or expired token")
-			return
-		}
-		// Токен без exp валиден вечно и не отзывается — не принимаем такие.
-		if _, ok := claims["exp"]; !ok {
-			respondWithError(w, http.StatusUnauthorized, "token must have an expiration")
+		if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(secret)) != 1 {
+			respondWithError(w, http.StatusUnauthorized, "invalid secret")
 			return
 		}
 

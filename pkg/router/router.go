@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/liberator-vpn/liberator-node-go/internal/appconfig"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/dgmessage"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/netutils"
 	"github.com/liberator-vpn/liberator-node-go/pkg/firewall"
@@ -28,7 +27,6 @@ type Router struct {
 	toIface chan *dgmessage.DatagramMessage
 
 	gatewayAddr   uint32
-	network       netutils.NativeIPNet
 	globalNetwork netutils.NativeIPNet
 
 	shardedWorkers []chan datagramMessageInfo
@@ -47,13 +45,14 @@ type Router struct {
 
 func New(
 	ctx context.Context,
-	cfg appconfig.RouterConfig,
-	nodeCIDR, globalCIDR string,
+	gatewayAddrStr, globalCIDR string,
 ) (*Router, error) {
-
-	gatewayAddr, network, err := netutils.NewNativeIPNet(nodeCIDR)
-	if err != nil {
-		return nil, fmt.Errorf("invalid CIDR: %w", err)
+	if gatewayAddrStr == "" {
+		return nil, fmt.Errorf("gateway_addr must be provided")
+	}
+	gatewayAddr := netutils.IPStringToUint32(gatewayAddrStr)
+	if gatewayAddr == 0 {
+		return nil, fmt.Errorf("invalid gateway_addr: %q", gatewayAddrStr)
 	}
 
 	_, globalNetwork, err := netutils.NewNativeIPNet(globalCIDR)
@@ -76,7 +75,6 @@ func New(
 		toIface:      make(chan *dgmessage.DatagramMessage, 1000),
 
 		gatewayAddr:   gatewayAddr,
-		network:       network,
 		globalNetwork: globalNetwork,
 
 		shardedWorkers: workers,
