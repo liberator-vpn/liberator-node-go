@@ -33,9 +33,8 @@ router:
       s3: 30
       s4: 7
 
-# Bootstrap-настройки overlay. global_cidr обязан совпадать с
-# LIBERATOR_OVERLAY_GLOBAL_CIDR у API (API аллоцирует из него и gateway ноды,
-# и peer_ip сессий). gateway_addr здесь — только локальный стартовый адрес TUN.
+# Нужно только когда api.base_url пуст (локальный запуск без API). В проде
+# global_cidr и gateway_addr нода получает из API при регистрации.
 vpn:
   global_cidr: "10.0.0.0/8"
   gateway_addr: "10.1.0.1"

@@ -26,6 +26,11 @@ func main() {
 		log.Panicf("failed to load config: %v", err)
 	}
 
+	// Общий флот-секрет можно задать из env (k8s Secret), не держа его в config-файле.
+	if v := os.Getenv("LIBERATOR_NODE_SHARED_SECRET"); v != "" {
+		cfg.Auth.Secret = v
+	}
+
 	application, err := app.New(ctx, cfg)
 	if err != nil {
 		log.Panicf("failed to create application: %v", err)

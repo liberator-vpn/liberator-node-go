@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/liberator-vpn/liberator-node-go/internal/apiclient"
 	"github.com/liberator-vpn/liberator-node-go/internal/appconfig"
 
 	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
@@ -108,6 +109,25 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	}
 	nodeID := nodeIdentity()
 	app.nodeID = nodeID
+
+	// global_cidr и gateway ноды — источник истины API (а не конфиг). При наличии
+	// API регистрируемся сразу и берём их из ответа; конфиг — локальный фолбэк.
+	if cfg.API.BaseURL != "" {
+		client := apiclient.New(cfg.API.BaseURL, secret)
+		if client == nil {
+			return nil, fmt.Errorf("invalid api config")
+		}
+		reg, err := client.Register(ctx, nodeID, cfg.API.PublicEndpoint, cfg.API.MeshEndpoint, cfg.API.RegionCode)
+		if err != nil {
+			return nil, fmt.Errorf("api register (network params): %w", err)
+		}
+		if reg.GatewayAddr != "" {
+			cfg.VPN.GatewayAddr = reg.GatewayAddr
+		}
+		if reg.GlobalCIDR != "" {
+			cfg.VPN.GlobalCIDR = reg.GlobalCIDR
+		}
+	}
 
 	// Bootstrap overlay: global_cidr общий для всех нод; gateway_addr — локальный
 	// overlay IP ноды (в проде API выдаёт gateway из того же пула, что и клиенты).

@@ -31,6 +31,7 @@ type Register struct {
 	Secret      string `json:"secret"`
 	Created     bool   `json:"created"`
 	GatewayAddr string `json:"gateway_addr"`
+	GlobalCIDR  string `json:"global_cidr"`
 }
 
 type Protocol struct {
