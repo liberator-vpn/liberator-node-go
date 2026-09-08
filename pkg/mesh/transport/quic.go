@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
+
 	"github.com/quic-go/quic-go"
 )
 
@@ -204,6 +206,7 @@ func wrapConnection(qConn *quic.Conn, isInitiator bool) (PeerConnection, error) 
 
 // Реализация методов структуры quicPeerConnection
 func (pc *quicPeerConnection) SendDatagram(data []byte) error {
+	metrics.ObserveTraffic(metrics.DirOut, metrics.PeerNode, metrics.NoProtocol, len(data))
 	pc.totalSent.Add(uint64(len(data)))
 	return pc.conn.SendDatagram(data)
 }
@@ -212,6 +215,7 @@ func (pc *quicPeerConnection) RecvDatagram(ctx context.Context) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
+	metrics.ObserveTraffic(metrics.DirIn, metrics.PeerNode, metrics.NoProtocol, len(data))
 	pc.totalRecv.Add(uint64(len(data)))
 	return data, nil
 }
@@ -230,19 +234,3 @@ func (pc *quicPeerConnection) Close() error {
 	return pc.conn.CloseWithError(quic.ApplicationErrorCode(quic.NoError), "session closed")
 }
 func (pc *quicPeerConnection) IsInitiator() bool { return pc.isInitiator }
-
-func (pc *quicPeerConnection) OpenStream(ctx context.Context) (net.Conn, error) {
-	stream, err := pc.conn.OpenStreamSync(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return NewBiStreamConn(stream, pc.conn.LocalAddr(), pc.conn.RemoteAddr()), nil
-}
-
-func (pc *quicPeerConnection) AcceptStream(ctx context.Context) (net.Conn, error) {
-	stream, err := pc.conn.AcceptStream(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return NewBiStreamConn(stream, pc.conn.LocalAddr(), pc.conn.RemoteAddr()), nil
-}

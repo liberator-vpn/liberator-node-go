@@ -10,23 +10,18 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/liberator-vpn/liberator-node-go/internal/appconfig"
-	"github.com/liberator-vpn/liberator-node-go/internal/infra/ipapi"
 
+	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/safemap"
 	"github.com/liberator-vpn/liberator-node-go/pkg/iface"
 	"github.com/liberator-vpn/liberator-node-go/pkg/mesh"
 	"github.com/liberator-vpn/liberator-node-go/pkg/router"
-	"github.com/liberator-vpn/liberator-node-go/pkg/services/firewallmanager"
 	"github.com/liberator-vpn/liberator-node-go/pkg/services/peersmanager"
 	"github.com/liberator-vpn/liberator-node-go/pkg/transport"
 	"github.com/liberator-vpn/liberator-node-go/pkg/transport/awg"
-
-	"google.golang.org/grpc"
-
-	grpcctrl "github.com/liberator-vpn/liberator-node-go/pkg/api/controllers/grpc"
-	httpctrl "github.com/liberator-vpn/liberator-node-go/pkg/api/controllers/http"
 )
 
 type App struct {
@@ -34,29 +29,28 @@ type App struct {
 	cancel context.CancelFunc
 	cfg    *appconfig.AppConfig
 
-	firewallManager *firewallmanager.Firewallmanager
-	peersManager    *peersmanager.PeersManager
-
 	router *router.Router
 
-	node       *mesh.MeshNode
-	nodeID     string
-	tunIface   *iface.TUNIface
-	transports safemap.Safemap[string, transport.Transport]
+	node          *mesh.MeshNode
+	nodeID        string
+	tunIface      *iface.TUNIface
+	transports    safemap.Safemap[string, transport.Transport]
+	transportName string // имя клиентского транспорта (напр. "awg")
 
-	// Grpc
-	grpcLis    net.Listener
-	grpcServer *grpc.Server
+	peersManager *peersmanager.PeersManager
 
-	// Http
+	// Состояние client→client (обновляется в syncLoop): remote virtual IP -> mesh_endpoint.
+	remotes map[uint32]string
+	// Установленные firewall-правила (по стабильному RuleID).
+	fwRules map[uint64]struct{}
+
+	// Только /healthz и /metrics (нода пассивная, без control-plane).
 	httpMux    *http.ServeMux
 	httpServer *http.Server
-
-	ipInfo *ipapi.IPInfo
 }
 
-// nodeIdentity возвращает стабильную идентичность ноды. node_id в конфиге больше
-// нет: в k8s его выставляет окружение (downward API) — POD_NAME/POD_UID.
+// nodeIdentity возвращает стабильную идентичность ноды. node_id в конфиге нет:
+// в k8s её выставляет окружение (downward API) — POD_NAME/POD_UID.
 func nodeIdentity() string {
 	for _, k := range []string{"POD_NAME", "POD_UID", "HOSTNAME"} {
 		if v := os.Getenv(k); v != "" {
@@ -96,6 +90,8 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		cancel:     cancel,
 		cfg:        cfg,
 		transports: safemap.New[string, transport.Transport](),
+		remotes:    make(map[uint32]string),
+		fwRules:    make(map[uint64]struct{}),
 	}
 	initialized := false
 	defer func() {
@@ -104,40 +100,24 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		}
 	}()
 	var err error
-	// Один общий secret защищает control-plane и QUIC-пул между нодами.
+
+	// Общий secret защищает QUIC-пул между нодами (входящего control-plane нет).
 	secret := cfg.Auth.Secret
 	if err := validateSecret(secret); err != nil {
 		return nil, err
 	}
 	nodeID := nodeIdentity()
 	app.nodeID = nodeID
-	// Overlay-адресация приходит из конфига (config-фид), а не из сертификата.
-	// global_cidr общий для всех нод; gateway_addr — единственный overlay IP ноды.
+
+	// Bootstrap overlay: global_cidr общий для всех нод; gateway_addr — локальный
+	// overlay IP ноды (в проде API выдаёт gateway из того же пула, что и клиенты).
 	gatewayAddr := cfg.VPN.GatewayAddr
 	globalNet := cfg.VPN.GlobalCIDR
 	if gatewayAddr == "" || globalNet == "" {
 		return nil, fmt.Errorf("vpn.gateway_addr and vpn.global_cidr must be set")
 	}
-	// TUN/аллокация используют префикс общей overlay-сети.
 	nodeCIDR := gatewayCIDR(gatewayAddr, globalNet)
 
-	// Control-plane gRPC (внутри куб-сети — без TLS, доступ по секрету).
-	app.grpcLis, err = net.Listen("tcp", cfg.Api.Grpc.ListenAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to launch grpc server: %w", err)
-	}
-
-	app.grpcServer = grpc.NewServer(
-		grpc.UnaryInterceptor(grpcctrl.UnaryAuthInterceptor(secret)),
-	)
-
-	app.httpMux = http.NewServeMux()
-	app.httpServer = &http.Server{
-		Addr:    cfg.Api.Http.ListenAddr,
-		Handler: httpctrl.HTTPAuthMiddleware(secret, app.httpMux),
-	}
-
-	// Network stuff
 	if app.router, err = router.New(ctx, gatewayAddr, globalNet); err != nil {
 		return nil, fmt.Errorf("failed to create router: %v", err)
 	}
@@ -145,32 +125,17 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	if app.node, err = mesh.New(ctx, cfg.Mesh, secret, app.router); err != nil {
 		return nil, fmt.Errorf("failed to create mesh node: %v", err)
 	}
+	// Еджест client-exit: не-overlay трафик клиента форвардится на ноду-выход.
+	app.router.SetExitSender(func(endpoint string, data []byte) error {
+		return app.node.SendTo(app.ctx, endpoint, data)
+	})
 
-	// managers
-	app.firewallManager = firewallmanager.New(app.router, nodeID)
-	app.peersManager = peersmanager.New(app.ctx, app.firewallManager)
+	app.peersManager = peersmanager.New(app.ctx)
 
-	// Get current server ip and location
-	ipInfo, err := ipapi.GetIpInfo(ctx)
-	if err != nil {
-		log.Printf("failed to update err: %v", err)
-		ipInfo = &ipapi.IPInfo{
-			CountryCode: cfg.CountryCode,
-		}
-	}
-	app.ipInfo = ipInfo
-
-	// Create tun iface
-	if app.tunIface, err = iface.NewTUN(
-		ctx,
-		cfg.TunConfig,
-		app.router,
-		nodeCIDR,
-	); err != nil {
+	if app.tunIface, err = iface.NewTUN(ctx, cfg.TunConfig, app.router, nodeCIDR); err != nil {
 		return nil, fmt.Errorf("failed to create tun iface: %w", err)
 	}
 
-	// Build transports
 	for name, iconf := range cfg.Router.Transports {
 		if app.transports.Exists(name) {
 			return nil, fmt.Errorf("duplicated transport name: %s", name)
@@ -187,13 +152,7 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse transport %s config: %v", name, err)
 			}
-
-			trp, err = awg.New(
-				ctx,
-				icfg,
-				app.router,
-				nodeID,
-			)
+			trp, err = awg.New(ctx, icfg, app.router, nodeID)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create transport %s: %w", name, err)
 			}
@@ -202,41 +161,44 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		}
 		app.transports.Set(name, trp)
 		app.peersManager.RegisterTransport(name, trp)
-		// Провижим желаемых клиентов (config-фид) на этот транспорт.
-		if err := app.peersManager.ApplyClients(ctx, name, cfg.VPN.Clients); err != nil {
-			return nil, fmt.Errorf("failed to provision clients on transport %s: %w", name, err)
-		}
+		app.transportName = name
 	}
+
+	app.httpMux = http.NewServeMux()
+	app.httpMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	app.httpMux.Handle("/metrics", metrics.Handler())
+	app.httpServer = &http.Server{
+		Addr:    cfg.Server.ListenAddr,
+		Handler: app.httpMux,
+	}
+
+	metrics.SetActiveClients(0)
+
 	initialized = true
 	return app, nil
 }
 
-func (app *App) Run() (runErr error) {
-	defer func() {
-		app.stopRuntime()
-	}()
-
-	// Registering controllers
-	grpcctrl.RegisterNodeService(app.grpcServer, app.nodeID, *app.ipInfo, app.transports)
-	grpcctrl.RegisterMeshService(app.grpcServer, app.node)
-	grpcctrl.RegisterRouterService(app.grpcServer, app.router)
-
-	httpctrl.RegisterMeshNodeService(app.httpMux, app.node)
-	httpctrl.RegisterRouterService(app.httpMux, app.router)
+func (app *App) Run() error {
+	defer app.stopRuntime()
 
 	var workers sync.WaitGroup
 	workers.Go(app.router.Run)
 	workers.Go(app.node.Run)
 	workers.Go(app.tunIface.Run)
-
 	app.transports.Foreach(func(_ string, t transport.Transport) {
 		workers.Go(t.Run)
 	})
+	workers.Go(func() { app.metricsLoop(app.ctx) })
+	app.peersManager.StartUsageCollector(app.ctx)
+	// Пассивный контур к API (если настроен): регистрация + sync желаемого состояния.
+	if app.cfg.API.BaseURL != "" {
+		workers.Go(func() { app.syncLoop(app.ctx, app.cfg.Auth.Secret, app.transportName) })
+	}
 
-	serveErr := make(chan error, 2)
-	go func() {
-		serveErr <- app.grpcServer.Serve(app.grpcLis)
-	}()
+	serveErr := make(chan error, 1)
 	go func() {
 		err := app.httpServer.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -246,38 +208,39 @@ func (app *App) Run() (runErr error) {
 		serveErr <- nil
 	}()
 
-	var grpcErr error
-	serveFinished := false
 	select {
 	case <-app.ctx.Done():
-	case grpcErr = <-serveErr:
-		serveFinished = true
-		app.cancel()
+	case err := <-serveErr:
+		if err != nil {
+			return err
+		}
 	}
 
 	app.stopRuntime()
 	workers.Wait()
-
-	if !serveFinished {
-		grpcErr = <-serveErr
-	}
-	if grpcErr != nil && !errors.Is(grpcErr, grpc.ErrServerStopped) {
-		return fmt.Errorf("gRPC server stopped: %w", grpcErr)
-	}
-
 	return nil
+}
+
+// metricsLoop периодически обновляет калибруемые gauge-метрики.
+func (app *App) metricsLoop(ctx context.Context) {
+	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if app.node != nil {
+				metrics.SetConnectedPeers(app.node.CountConnections())
+			}
+		}
+	}
 }
 
 func (app *App) stopRuntime() {
 	app.cancel()
 	if app.node != nil {
 		app.node.Close()
-	}
-	if app.grpcServer != nil {
-		app.grpcServer.Stop()
-	}
-	if app.grpcLis != nil {
-		_ = app.grpcLis.Close()
 	}
 	if app.httpServer != nil {
 		_ = app.httpServer.Close()

@@ -6,6 +6,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Protocol — имя туннельного протокола (AmneziaWG) для метрик.
+const Protocol = "amneziawg"
+
 // TransportConfig настройки входящих AmneziaWG-соединений
 type TransportConfig struct {
 	MTU              int           `yaml:"mtu"`

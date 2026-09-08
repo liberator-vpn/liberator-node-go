@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/safemap"
 	"github.com/liberator-vpn/liberator-node-go/pkg/transport"
 
@@ -74,6 +75,7 @@ func (t *ChannelTun) Write(bufs [][]byte, offset int) (int, error) {
 		if err != nil {
 			continue
 		}
+		metrics.ObserveTraffic(metrics.DirIn, metrics.PeerClient, Protocol, len(pkt))
 		// ОБНОВЛЯЕМ lastSeen (Критически важно для Watchdog)
 		if peer, ok := t.peers.Get(msg.HoleInfo.SrcIP); ok {
 			if now.Sub(peer.lastSeen) > time.Second {

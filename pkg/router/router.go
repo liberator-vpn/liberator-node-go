@@ -7,14 +7,13 @@ import (
 	"math"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/dgmessage"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/netutils"
 	"github.com/liberator-vpn/liberator-node-go/pkg/firewall"
-	"github.com/liberator-vpn/liberator-node-go/pkg/model"
 	"github.com/liberator-vpn/liberator-node-go/pkg/routingtable"
+	"github.com/liberator-vpn/liberator-node-go/pkg/userrules"
 )
 
 type Router struct {
@@ -37,10 +36,12 @@ type Router struct {
 	firewallsubs   map[chan FirewallEvent]struct{}
 	firewallSubsMu sync.Mutex
 
-	// Stats
-	totalFromPeers atomic.Uint64
-	totalFromIface atomic.Uint64
-	totalFromMesh  atomic.Uint64
+	// Policy-egress: решение «в какую ноду-выход слать» принимает таблица
+	// userRules (данные вне роутера, по аналогии с routingTable). exitFn —
+	// примитив отправки сырого пакета ноде-выходу.
+	exitMu    sync.RWMutex
+	exitFn    func(endpoint string, data []byte) error
+	userRules *userrules.UserRules
 }
 
 func New(
@@ -81,8 +82,21 @@ func New(
 
 		routingsubs:  make(map[chan RouterEvent]struct{}),
 		firewallsubs: make(map[chan FirewallEvent]struct{}),
+		userRules:    userrules.New(),
 	}
 	return br, nil
+}
+
+// SetExitSender регистрирует примитив отправки датаграммы ноде-выходу (mesh).
+func (r *Router) SetExitSender(f func(endpoint string, data []byte) error) {
+	r.exitMu.Lock()
+	r.exitFn = f
+	r.exitMu.Unlock()
+}
+
+// UserRules возвращает таблицу правил интернет-выхода для реконсиляции извне.
+func (r *Router) UserRules() *userrules.UserRules {
+	return r.userRules
 }
 
 // sudo sysctl -w net.core.default_qdisc=fq                                                                                                                                                                                                             ✔
@@ -116,7 +130,6 @@ func (r *Router) Run() {
 
 // Packets handling methods
 func (r *Router) handleTunPacketInternal(packet *dgmessage.DatagramMessage) {
-	r.totalFromIface.Add(uint64(len(packet.Data)))
 	peer, ex := r.routingTable.GetByIP(packet.HoleInfo.DstIP)
 	if !ex {
 		packet.Free()
@@ -137,7 +150,17 @@ func (r *Router) handleTunPacketInternal(packet *dgmessage.DatagramMessage) {
 	}
 }
 func (r *Router) handleMeshPacketInternal(packet *dgmessage.DatagramMessage) {
-	r.totalFromMesh.Add(uint64(len(packet.Data)))
+	// Пакет из другой ноды с адресом вне overlay — это client-exit: узел-выход
+	// выпускает его в интернет (NAT) у себя.
+	if !r.globalNetwork.Contains(packet.HoleInfo.DstIP) {
+		if isForbiddenEgress(packet.HoleInfo.DstIP) {
+			packet.Free()
+			return
+		}
+		r.toIface <- packet
+		return
+	}
+
 	if packet.HoleInfo.Protocol != "" {
 		r.firewall.Holepunch(packet.HoleInfo, time.Minute)
 	}
@@ -163,7 +186,6 @@ func (r *Router) handleMeshPacketInternal(packet *dgmessage.DatagramMessage) {
 	}
 }
 func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage) {
-	r.totalFromPeers.Add(uint64(len(packet.Data)))
 	srcPeer, ex := r.routingTable.GetByIP(packet.HoleInfo.SrcIP)
 	// Check rate limits
 	if ex {
@@ -186,6 +208,20 @@ func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage
 		if isForbiddenEgress(packet.HoleInfo.DstIP) {
 			packet.Free()
 			return
+		}
+		// Policy-egress: если dst попадает под правило клиента и выход удалённый —
+		// форвардим пакет на ноду-выход.
+		if ep := r.userRules.Lookup(packet.HoleInfo.SrcIP, packet.HoleInfo.DstIP); ep != "" {
+			r.exitMu.RLock()
+			fn := r.exitFn
+			r.exitMu.RUnlock()
+			if fn != nil {
+				if err := fn(ep, packet.Data); err != nil {
+					log.Printf("failed to forward egress to exit %s: %v", ep, err)
+				}
+				packet.Free()
+				return
+			}
 		}
 		r.toIface <- packet // TUN → интернет через NAT
 		return
@@ -238,13 +274,5 @@ func isForbiddenEgress(ip uint32) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-func (r *Router) GetStats() model.RouterStats {
-	return model.RouterStats{
-		TotalFromIface: r.totalFromIface.Load(),
-		TotalFromMesh:  r.totalFromMesh.Load(),
-		TotalFromPeers: r.totalFromPeers.Load(),
 	}
 }

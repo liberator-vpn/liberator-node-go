@@ -9,8 +9,6 @@ import (
 type PeerConnection interface {
 	ID() string
 	RemoteAddr() net.Addr
-	OpenStream(ctx context.Context) (net.Conn, error)
-	AcceptStream(ctx context.Context) (net.Conn, error)
 	SendDatagram(data []byte) error
 	RecvDatagram(ctx context.Context) ([]byte, error)
 	IsInitiator() bool

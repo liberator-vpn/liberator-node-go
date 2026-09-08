@@ -24,30 +24,18 @@ type RouterConfig struct {
 	Transports map[string]map[string]any `yaml:"transports"`
 }
 
-// RuleConfig - правило файрвола для клиента.
-type RuleConfig struct {
-	TargetAddress  *uint32 `yaml:"target_ip"`
-	Protocol       string  `yaml:"protocol"`
-	PortRangeStart uint16  `yaml:"port_range_start"`
-	PortRangeEnd   *uint16 `yaml:"port_range_end"`
-}
-
-// ClientConfig - желаемое состояние клиента (config-фид; позже из API).
+// ClientConfig — желаемый клиент, приходящий из state API.
 type ClientConfig struct {
-	VirtualIP      uint32       `yaml:"virtual_ip"`
-	AwgPublicKey   string       `yaml:"awg_public_key"`
-	Expiration     *time.Time   `yaml:"expiration"`
-	TrafficLimitGb *float64     `yaml:"traffic_limit_gb"`
-	SpeedLimitMbps *float64     `yaml:"speed_limit_mbps"`
-	Rules          []RuleConfig `yaml:"rules"`
+	VirtualIP      uint32   `yaml:"virtual_ip"`
+	AwgPublicKey   string   `yaml:"awg_public_key"`
+	TrafficLimitGb *float64 `yaml:"traffic_limit_gb"`
+	SpeedLimitMbps *float64 `yaml:"speed_limit_mbps"`
 }
 
-// VPNConfig - распределённая виртуальная сеть, которую создают ноды.
-// Пока приходит из конфига (config-фид); в дальнейшем замещается state из API.
+// VPNConfig — bootstrap overlay-настройки до первого state от API.
 type VPNConfig struct {
-	GlobalCIDR  string         `yaml:"global_cidr"`  // общий для всех нод overlay-диапазон
-	GatewayAddr string         `yaml:"gateway_addr"` // overlay IP этой ноды (одна из global_cidr)
-	Clients     []ClientConfig `yaml:"clients"`      // желаемые клиенты (временный фид)
+	GlobalCIDR  string `yaml:"global_cidr"`
+	GatewayAddr string `yaml:"gateway_addr"`
 }
 
 // MeshConfig - пул QUIC-подключений к остальным нодам. Ноды узнаются не через
@@ -59,16 +47,19 @@ type MeshConfig struct {
 	Static     []string `yaml:"static"`      // запасной список "host:port" для dev
 }
 
-type GrpcConfig struct {
+// ServerConfig - TCP-listen ноды для /healthz и /metrics (нода без control-plane).
+type ServerConfig struct {
 	ListenAddr string `yaml:"listen_addr"`
 }
 
-type HttpConfig struct {
-	ListenAddr string `yaml:"listen_addr"`
-}
-type ApiConfig struct {
-	Grpc GrpcConfig `yaml:"grpc"`
-	Http HttpConfig `yaml:"http"`
+// APIConfig - настройки восходящего API, к которому нода ходит сама (пассивная).
+type APIConfig struct {
+	BaseURL           string        `yaml:"base_url"` // напр. http://liberator-api:8080
+	RegionCode        string        `yaml:"region_code"`
+	PublicEndpoint    string        `yaml:"public_endpoint"` // куда клиентам подключаться (host:port)
+	MeshEndpoint      string        `yaml:"mesh_endpoint"`   // QUIC endpoint ноды (host:port) для форвардинга
+	SyncInterval      time.Duration `yaml:"sync_interval"`
+	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
 }
 
 // AppConfig общая структура конфигурации
@@ -78,7 +69,8 @@ type AppConfig struct {
 	Router      RouterConfig `yaml:"router"`
 	VPN         VPNConfig    `yaml:"vpn"`
 	Mesh        MeshConfig   `yaml:"mesh"`
-	Api         ApiConfig    `yaml:"api"`
+	Server      ServerConfig `yaml:"server"`
+	API         APIConfig    `yaml:"api"`
 	CountryCode string       `yaml:"country_code"`
 }
 

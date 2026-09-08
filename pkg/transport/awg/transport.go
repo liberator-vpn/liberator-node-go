@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/netutils"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/safemap"
 	"github.com/liberator-vpn/liberator-node-go/pkg/model"
@@ -259,6 +260,7 @@ func (ig *AWGTransport) watchPeers() {
 
 // writePacket вызывается абстракцией AWGPeer.SendDatagram для отправки данных клиенту
 func (ig *AWGTransport) writePacket(data []byte) error {
+	metrics.ObserveTraffic(metrics.DirOut, metrics.PeerClient, Protocol, len(data))
 	select {
 	case ig.in <- data:
 		return nil

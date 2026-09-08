@@ -1,5 +1,6 @@
 auth:
-  # Общий secret: control-plane и QUIC-пул между нодами. Генерируется в k8s secret.
+  # Общий секрет флота: для QUIC-пула между нодами и для node↔API.
+  # Должен совпадать с LIBERATOR_NODE_SHARED_SECRET у API.
   # Сгенерировать, напр.: openssl rand -hex 32. Минимум 16 символов.
   secret_key: "CHANGE_ME_random_secret_min_16_chars"
 
@@ -32,15 +33,15 @@ router:
       s3: 30
       s4: 7
 
-# Распределённая виртуальная VPN-сеть. global_cidr обязан быть одинаковым на всех
-# нодах; gateway_addr — единственный overlay IP этой ноды из global_cidr.
-# Пока это config-фид, в дальнейшем приходит из API в state.
+# Bootstrap-настройки overlay. global_cidr обязан совпадать с
+# LIBERATOR_OVERLAY_GLOBAL_CIDR у API (API аллоцирует из него и gateway ноды,
+# и peer_ip сессий). gateway_addr здесь — только локальный стартовый адрес TUN.
 vpn:
   global_cidr: "10.0.0.0/8"
   gateway_addr: "10.1.0.1"
 
-# Пул QUIC-подключений к остальным нодам. Ноды узнаются не gossip-самообучением,
-# а из статического списка и/или k8s-DNS (headless-сервис).
+# Пул QUIC-подключений к остальным нодам. Ноды узнаются из статического списка
+# и/или k8s-DNS (headless-сервис), а не gossip-самообучением.
 mesh:
   listen_addr: ":9000"
   # headless-сервис k8s: A-записи = IP остальных нод. dns_port — единый quic-порт нод.
@@ -49,19 +50,17 @@ mesh:
   # запасной список "host:port" для локального dev (без k8s)
   static: []
 
-# Желаемые клиенты ноды (config-фид; позже приходят из API в state).
-# vpn:
-#   clients:
-#     - virtual_ip: "10.1.0.2"
-#       awg_public_key: "<client pubkey hex>"
-#       speed_limit_mbps: 10
-#       rules:
-#         - protocol: "tcp"
-#           port_range_start: 1
-#           port_range_end: 65535
+# TCP-listen ноды: только /healthz и /metrics (Prometheus). Нода пассивная,
+# без control-plane и авторизации — находится за закрытым контуром.
+server:
+  listen_addr: ":8080"
 
+# Восходящий API (control-plane). Нода сама регистрируется, шлёт heartbeat и
+# тянет желаемое состояние (клиенты/правила/квоты) по контракту /v1/ctrl.
 api:
-  grpc:
-    listen_addr: ":9001"
-  http:
-    listen_addr: ":8080"
+  base_url: "http://liberator-api.default.svc.cluster.local:8080"
+  region_code: "de"
+  public_endpoint: "1.2.3.4:2200" # куда клиентам подключаться (awg listen)
+  mesh_endpoint: "liberator-nodes-0.default.svc.cluster.local:9000" # QUIC listen (host:port), форвардинг
+  sync_interval: 5s
+  heartbeat_interval: 10s

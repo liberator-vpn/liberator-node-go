@@ -4,6 +4,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sync"
+	"time"
+
+	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
 )
 
 type HoleInfo struct {
@@ -18,6 +21,9 @@ type DatagramMessage struct {
 	Data      []byte
 	IPVersion int
 	HoleInfo  HoleInfo
+
+	// createdAt фиксирует момент появления пакета (unix ns) для метрики времени жизни.
+	createdAt int64
 
 	pool *dgMessagePoolImpl
 }
@@ -88,6 +94,7 @@ func (dgpool *dgMessagePoolImpl) NewMessageCopyFrom(copyFrom []byte) (*DatagramM
 	// 2. Берем ОЧИЩЕННЫЙ готовый объект из пула
 	msg := dgpool.pool.Get().(*DatagramMessage)
 	msg.pool = dgpool
+	msg.createdAt = time.Now().UnixNano()
 
 	msg.Data = msg.Data[:len(copyFrom)]
 
@@ -109,9 +116,14 @@ func (msg *DatagramMessage) Free() {
 		return
 	}
 
+	if msg.createdAt != 0 {
+		metrics.ObservePacketLifetime(time.Duration(time.Now().UnixNano() - msg.createdAt))
+	}
+
 	// СБРОС: возвращаем длину в 0, но СОХРАНЯЕМ емкость (cap) для следующего пакета
 	msg.Data = msg.Data[:0]
 	msg.HoleInfo.Protocol = ""
+	msg.createdAt = 0
 
 	msg.pool.pool.Put(msg)
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/liberator-vpn/liberator-node-go/internal/appconfig"
+	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/dgmessage"
 
 	"github.com/coreos/go-iptables/iptables"
@@ -327,6 +328,7 @@ func (eg *TUNIface) readLoop(batchSize int) {
 				if err != nil {
 					continue
 				}
+				metrics.ObserveTraffic(metrics.DirIn, metrics.PeerInternet, metrics.NoProtocol, sizes[i])
 
 				eg.router.HandleTunPacket(msg)
 			}
@@ -399,11 +401,14 @@ func (eg *TUNIface) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize i
 
 	send:
 		if idx > 0 {
+			out := 0
 			for i := 0; i < idx; i++ {
 				start := i * maxPacketLen
 				end := start + tun_iface_offset + len(msgs[i].Data)
 				writeProjections[i] = flatBuffer[start:end]
+				out += len(msgs[i].Data)
 			}
+			metrics.ObserveTraffic(metrics.DirOut, metrics.PeerInternet, metrics.NoProtocol, out)
 
 			_, err := eg.ifce.Write(writeProjections[:idx], tun_iface_offset)
 			if err != nil {
