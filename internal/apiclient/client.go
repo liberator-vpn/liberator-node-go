@@ -159,6 +159,21 @@ func (c *Client) GetClients(ctx context.Context, nodeID string) (*ClientsResult,
 	return &out, nil
 }
 
+// AliveItem — подтверждение активности сессии (для закрытия мёртвых active).
+type AliveItem struct {
+	SessionID string    `json:"session_id"`
+	LastSeen  time.Time `json:"last_seen"`
+}
+
+// PushAlive — POST /v1/ctrl/sessions/alive.
+func (c *Client) PushAlive(ctx context.Context, nodeID string, items []AliveItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	return c.do(ctx, http.MethodPost, "/v1/ctrl/sessions/alive", nodeID,
+		map[string][]AliveItem{"items": items}, nil)
+}
+
 // ActivateSessions — POST /v1/ctrl/nodes/sessions/activate (issued -> active).
 func (c *Client) ActivateSessions(ctx context.Context, nodeID string, ids []string) (int, error) {
 	var out struct {

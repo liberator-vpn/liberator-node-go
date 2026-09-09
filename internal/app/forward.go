@@ -8,24 +8,9 @@ import (
 	"github.com/liberator-vpn/liberator-node-go/pkg/firewall"
 )
 
-// remoteClient — routing-объект для чужого клиента: отправляет датаграмму на
-// владеющую ноду через mesh по её mesh_endpoint.
-type remoteClient struct {
-	ctx    context.Context
-	ip     uint32
-	nodeID string
-	send   func([]byte) error
-}
-
-func (r *remoteClient) GetNodeID() string    { return r.nodeID }
-func (r *remoteClient) GetVirtualIP() uint32 { return r.ip }
-func (r *remoteClient) Context() context.Context {
-	return r.ctx
-}
-func (r *remoteClient) SendDatagram(data []byte) error { return r.send(data) }
-
-// reconcileRemotes поддерживает в роутере маршруты к клиентам других нод
-// (client→client) по глобальной директории /v1/ctrl/clients.
+// reconcileRemotes собирает из глобальной директории клиентов желаемый набор
+// remote-клиентов (virtual IP -> mesh endpoint владеющей ноды) и отдаёт его mesh,
+// который держит их и обновляет routing-таблицу роутера.
 func (app *App) reconcileRemotes(ctx context.Context, client *apiclient.Client, nodeID string) {
 	cl, err := client.GetClients(ctx, nodeID)
 	if err != nil {
@@ -47,42 +32,7 @@ func (app *App) reconcileRemotes(ctx context.Context, client *apiclient.Client, 
 		desired[ip] = c.Node.MeshEndpoint
 	}
 
-	for ip, endpoint := range desired {
-		if app.remotes[ip] == endpoint {
-			continue
-		}
-		endpoint := endpoint
-		obj := &remoteClient{
-			ctx:    app.ctx,
-			ip:     ip,
-			nodeID: ownerOf(cl, ip),
-			send: func(data []byte) error {
-				return app.node.SendTo(app.ctx, endpoint, data)
-			},
-		}
-		if err := app.router.AddRemoteRoutingObject(obj); err != nil {
-			// возможно, IP уже занят локальным клиентом — пропускаем
-			continue
-		}
-		app.remotes[ip] = endpoint
-	}
-
-	for ip := range app.remotes {
-		if _, keep := desired[ip]; keep {
-			continue
-		}
-		_ = app.router.DeleteRemoteRoutingObject(ip)
-		delete(app.remotes, ip)
-	}
-}
-
-func ownerOf(cl *apiclient.ClientsResult, ip uint32) string {
-	for _, c := range cl.Clients {
-		if netutils.IPStringToUint32(c.PeerIP) == ip {
-			return c.Node.ID
-		}
-	}
-	return ""
+	app.node.ReconcileRemoteClients(desired)
 }
 
 // applyFirewallPairs ставит/снимает разрешённые client→client потоки

@@ -40,8 +40,6 @@ type App struct {
 
 	peersManager *peersmanager.PeersManager
 
-	// Состояние client→client (обновляется в syncLoop): remote virtual IP -> mesh_endpoint.
-	remotes map[uint32]string
 	// Установленные firewall-правила (по стабильному RuleID).
 	fwRules map[uint64]struct{}
 
@@ -91,7 +89,6 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		cancel:     cancel,
 		cfg:        cfg,
 		transports: safemap.New[string, transport.Transport](),
-		remotes:    make(map[uint32]string),
 		fwRules:    make(map[uint64]struct{}),
 	}
 	initialized := false
@@ -149,6 +146,8 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	app.router.SetExitSender(func(endpoint string, data []byte) error {
 		return app.node.SendTo(app.ctx, endpoint, data)
 	})
+	// remote-клиенты (client→client) mesh добавляет в routing-таблицу роутера.
+	app.node.SetRemoteRouting(app.router.AddRemoteRoutingObject, app.router.DeleteRemoteRoutingObject)
 
 	app.peersManager = peersmanager.New(app.ctx)
 

@@ -94,11 +94,6 @@ func (r *Router) SetExitSender(f func(endpoint string, data []byte) error) {
 	r.exitMu.Unlock()
 }
 
-// UserRules возвращает таблицу правил интернет-выхода для реконсиляции извне.
-func (r *Router) UserRules() *userrules.UserRules {
-	return r.userRules
-}
-
 // sudo sysctl -w net.core.default_qdisc=fq                                                                                                                                                                                                             ✔
 // sudo sysctl -w net.ipv4.tcp_congestion_control=bbr
 func (r *Router) Run() {

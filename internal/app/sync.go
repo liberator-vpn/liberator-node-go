@@ -69,6 +69,7 @@ func (app *App) syncLoop(ctx context.Context, secret, transportName string) {
 		} else {
 			usageIndex := app.reconcileState(ctx, client, nodeID, transportName, st)
 			app.pushUsage(ctx, client, nodeID, usageIndex)
+			app.pushAlive(ctx, client, nodeID, usageIndex)
 			app.applyFirewallPairs(st.FirewallPairs)
 			app.reconcileEgress(st.Egress)
 			app.reconcileRemotes(ctx, client, nodeID)
@@ -78,6 +79,30 @@ func (app *App) syncLoop(ctx context.Context, secret, transportName string) {
 		case <-ctx.Done():
 			return
 		case <-time.After(syncEvery):
+		}
+	}
+}
+
+// pushAlive отправляет API отчёт о реально активных сессиях (по last_seen).
+// По нему API закрывает «мёртвые» active-сессии и освобождает их peer_ip.
+func (app *App) pushAlive(ctx context.Context, client *apiclient.Client, nodeID string, ipToSession map[uint32]string) {
+	// клиент считается живым, если активность наблюдалась недавно.
+	aliveIPs := app.peersManager.AliveWithin(90 * time.Second)
+	items := make([]apiclient.AliveItem, 0, len(aliveIPs))
+	for _, ip := range aliveIPs {
+		sid, ok := ipToSession[ip]
+		if !ok {
+			continue
+		}
+		last, ok := app.peersManager.LastSeen(ip)
+		if !ok {
+			continue
+		}
+		items = append(items, apiclient.AliveItem{SessionID: sid, LastSeen: last})
+	}
+	if len(items) > 0 {
+		if err := client.PushAlive(ctx, nodeID, items); err != nil {
+			log.Printf("api alive push failed: %v", err)
 		}
 	}
 }
@@ -163,11 +188,10 @@ func (app *App) reconcileState(ctx context.Context, client *apiclient.Client, no
 	return ipToSession
 }
 
-// reconcileEgress приводит таблицу правил выхода (router.UserRules) в соответствие
+// reconcileEgress приводит правила выхода роутера (userRules) в соответствие
 // желаемому /state.egress.
 func (app *App) reconcileEgress(items []apiclient.Egress) {
-	rules := app.router.UserRules()
-	rules.Clear()
+	app.router.ClearEgressRules()
 	for _, eg := range items {
 		if eg.PeerIP == "" || eg.Prefix == "" || eg.ExitMeshEndpoint == "" {
 			continue
@@ -176,6 +200,6 @@ func (app *App) reconcileEgress(items []apiclient.Egress) {
 		if ip == 0 {
 			continue
 		}
-		_ = rules.Set(ip, eg.Prefix, eg.ExitMeshEndpoint)
+		_ = app.router.SetEgressRule(ip, eg.Prefix, eg.ExitMeshEndpoint)
 	}
 }

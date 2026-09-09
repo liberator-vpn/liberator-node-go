@@ -11,6 +11,7 @@ import (
 	"github.com/liberator-vpn/liberator-node-go/internal/appconfig"
 	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/session"
 	"github.com/liberator-vpn/liberator-node-go/pkg/mesh/transport"
+	"github.com/liberator-vpn/liberator-node-go/pkg/routingtable"
 )
 
 // MeshNode — пул длинных QUIC-соединений ко всем остальным нодам. Список нод
@@ -32,6 +33,11 @@ type MeshNode struct {
 
 	outboundMu sync.Mutex
 	outbound   map[string]transport.PeerConnection // "ip:port" -> живое соединение
+
+	remoteMu     sync.Mutex
+	remotes      map[uint32]string                      // remote virtual IP -> mesh endpoint
+	addRemoteObj func(routingtable.RoutingObject) error // методы routing-таблицы роутера
+	delRemoteObj func(uint32) error
 }
 
 // New собирает пул: transport (QUIC + secret), реестр и движок сессий.
@@ -69,6 +75,7 @@ func New(ctx context.Context, cfg appconfig.MeshConfig, secret string, router se
 		dnsPort:    cfg.DNSPort,
 		static:     cfg.Static,
 		outbound:   make(map[string]transport.PeerConnection),
+		remotes:    make(map[uint32]string),
 	}, nil
 }
 

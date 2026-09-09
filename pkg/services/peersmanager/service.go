@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/liberator-vpn/liberator-node-go/internal/appconfig"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/netutils"
@@ -32,8 +33,9 @@ type PeersManager struct {
 }
 
 type usageAgg struct {
-	up   uint64
-	down uint64
+	up       uint64
+	down     uint64
+	lastSeen time.Time
 }
 
 func New(ctx context.Context) *PeersManager {
@@ -78,6 +80,9 @@ func (pm *PeersManager) collect(ctx context.Context, t transport.Transport) {
 			}
 			a.up += s.DeltaFromPeer
 			a.down += s.DeltaToPeer
+			if !s.LastSeen.IsZero() {
+				a.lastSeen = s.LastSeen
+			}
 			pm.usageMu.Unlock()
 		}
 	}
@@ -92,6 +97,32 @@ func (pm *PeersManager) DrainUsage() []Usage {
 	for ip, a := range pm.usage {
 		out = append(out, Usage{VirtualIP: ip, Up: a.up, Down: a.down})
 		a.up, a.down = 0, 0
+	}
+	return out
+}
+
+// LastSeen возвращает время последней активности клиента по virtual IP.
+func (pm *PeersManager) LastSeen(ip uint32) (time.Time, bool) {
+	pm.usageMu.Lock()
+	defer pm.usageMu.Unlock()
+	a, ok := pm.usage[ip]
+	if !ok {
+		return time.Time{}, false
+	}
+	return a.lastSeen, true
+}
+
+// AliveWithin возвращает virtual IP тех клиентов, чья активность не старше window.
+func (pm *PeersManager) AliveWithin(window time.Duration) []uint32 {
+	pm.usageMu.Lock()
+	defer pm.usageMu.Unlock()
+
+	cut := time.Now().Add(-window)
+	out := make([]uint32, 0, len(pm.usage))
+	for ip, a := range pm.usage {
+		if !a.lastSeen.IsZero() && a.lastSeen.After(cut) {
+			out = append(out, ip)
+		}
 	}
 	return out
 }
