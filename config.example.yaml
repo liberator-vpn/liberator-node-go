@@ -1,7 +1,12 @@
 auth:
   # Общий секрет флота: для QUIC-пула между нодами и для node↔API.
-  # Должен совпадать с LIBERATOR_NODE_SHARED_SECRET у API.
-  # Сгенерировать, напр.: openssl rand -hex 32. Минимум 16 символов.
+  # Должен совпадать с LIBERATOR_NODE_SHARED_SECRET у API (Secret
+  # node-auth-secrets/shared-secret). В k8s перекрывается env-переменной
+  # LIBERATOR_NODE_SHARED_SECRET и в файле не хранится.
+  # Это НЕ ключ подписи клиентских JWT (jwt-secrets у API) — ключи обязаны
+  # быть разными, иначе утечка конфига ноды даёт возможность подписывать
+  # клиентские токены.
+  # Сгенерировать, напр.: openssl rand -base64 48. Минимум 16 символов.
   secret_key: "CHANGE_ME_random_secret_min_16_chars"
 
 tun:
@@ -15,7 +20,10 @@ router:
 
       mtu: 1376
       listen_port: 2200
-      # Приватный ключ сервера AmneziaWG (32 байта hex). Сгенерировать свой, не переиспользовать.
+      # Приватный ключ сервера AmneziaWG (32 байта hex). Сгенерировать свой
+      # (openssl rand -hex 32), не переиспользовать. В git/k8s ConfigMap не
+      # хранится: в кластере приходит из Secret node-awg-secret через
+      # initContainer пода (см. infrastructure-manifests/SECURITY.md).
       private_key: "CHANGE_ME_32byte_hex_private_key"
       watchdog_interval: "30s"
 
@@ -35,9 +43,11 @@ router:
 
 # Нужно только когда api.base_url пуст (локальный запуск без API). В проде
 # global_cidr и gateway_addr нода получает из API при регистрации.
+# 100.64.0.0/10 (CGNAT, RFC 6598) — не пересекается с pod/service CIDR и LAN;
+# должно совпадать с LIBERATOR_OVERLAY_GLOBAL_CIDR у API.
 vpn:
-  global_cidr: "10.0.0.0/8"
-  gateway_addr: "10.1.0.1"
+  global_cidr: "100.64.0.0/10"
+  gateway_addr: "100.64.0.1"
 
 # Пул QUIC-подключений к остальным нодам. Ноды узнаются из статического списка
 # и/или k8s-DNS (headless-сервис), а не gossip-самообучением.
