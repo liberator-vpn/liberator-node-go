@@ -1,15 +1,23 @@
 certs/
 dev/
+state/
 
+# runtime / editor debug artifacts
 __debug_bin*
+trace.out
+*.out
+/node
 config.yaml
+node-identity.json
+
+# local test / old artifacts
 peers.json
+database.sqlite
+*.sqlite
+*.sqlite3
 
-
+# certificates / keys
 node.crt
 node.key
 root.crt
-
-database.sqlite
-state/
-node-identity.json
+*.pem
