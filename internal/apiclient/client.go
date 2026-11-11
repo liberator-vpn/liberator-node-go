@@ -1,6 +1,5 @@
-// Package apiclient — HTTP-клиент ноды к контроль-плоскости (liberator-api).
-// Нода пассивна: регистрируется, шлёт heartbeat, тянет желаемое состояние и
-// подтверждает активацию сессий. Аутентификация — общий secret (Bearer).
+// Package apiclient — HTTP-клиент ноды к control-plane (liberator-api).
+// Нода пассивна: enroll по одноразовому токену, heartbeat, state, usage, ack.
 package apiclient
 
 import (
@@ -8,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -19,19 +20,10 @@ type Client struct {
 }
 
 func New(base, secret string) *Client {
-	if secret == "" || base == "" {
+	if base == "" {
 		return nil
 	}
 	return &Client{base: base, secret: secret, hc: &http.Client{Timeout: 15 * time.Second}}
-}
-
-// Register — вызов POST /v1/ctrl/nodes/register (upsert по hostname).
-type Register struct {
-	NodeID      string `json:"node_id"`
-	Secret      string `json:"secret"`
-	Created     bool   `json:"created"`
-	GatewayAddr string `json:"gateway_addr"`
-	GlobalCIDR  string `json:"global_cidr"`
 }
 
 type Protocol struct {
@@ -39,48 +31,60 @@ type Protocol struct {
 	Capacity int32  `json:"capacity"`
 }
 
-type registerReq struct {
-	Hostname        string     `json:"hostname"`
-	PublicEndpoint  string     `json:"public_endpoint"`
-	MeshEndpoint    string     `json:"mesh_endpoint"`
-	RegionCode      string     `json:"region_code"`
-	ProtocolVersion string     `json:"protocol_version"`
-	Protocols       []Protocol `json:"protocols"`
+type EnrollRequest struct {
+	Token          string         `json:"token"`
+	Name           string         `json:"name"`
+	Hostname       string         `json:"hostname"`
+	PublicEndpoint string         `json:"public_endpoint"`
+	MeshEndpoint   string         `json:"mesh_endpoint"`
+	RegionCode     string         `json:"region_code"`
+	Zone           string         `json:"zone,omitempty"`
+	Provider       string         `json:"provider,omitempty"`
+	AgentVersion   string         `json:"agent_version,omitempty"`
+	Labels         map[string]any `json:"labels,omitempty"`
+	Capabilities   map[string]any `json:"capabilities,omitempty"`
+	Protocols      []Protocol     `json:"protocols"`
 }
 
-func (c *Client) Register(ctx context.Context, hostname, publicEndpoint, meshEndpoint, region string) (*Register, error) {
-	var out Register
-	err := c.do(ctx, http.MethodPost, "/v1/ctrl/nodes/register", "", registerReq{
-		Hostname: hostname, PublicEndpoint: publicEndpoint, MeshEndpoint: meshEndpoint,
-		RegionCode: region, ProtocolVersion: "1", Protocols: []Protocol{{Protocol: "awg", Capacity: 100}},
-	}, &out)
-	if err != nil {
+type EnrollResult struct {
+	NodeID      string `json:"node_id"`
+	Secret      string `json:"secret"`
+	GatewayAddr string `json:"gateway_addr"`
+	GlobalCIDR  string `json:"global_cidr"`
+}
+
+func (c *Client) Enroll(ctx context.Context, req EnrollRequest) (*EnrollResult, error) {
+	var out EnrollResult
+	if err := c.do(ctx, http.MethodPost, "/v1/node/enroll", "", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-// Heartbeat — POST /v1/ctrl/nodes/heartbeat.
 type Heartbeat struct {
-	ActiveSessions  int32   `json:"active_sessions"`
-	CPU             float64 `json:"cpu"`
-	LoadPercent     float64 `json:"load_percent"`
-	ProtocolVersion string  `json:"protocol_version"`
+	ActiveSessions int32          `json:"active_sessions"`
+	CPU            float64        `json:"cpu"`
+	LoadPercent    float64        `json:"load_percent"`
+	BytesUp        int64          `json:"bytes_up"`
+	BytesDown      int64          `json:"bytes_down"`
+	AgentVersion   string         `json:"agent_version,omitempty"`
+	Capabilities   map[string]any `json:"capabilities,omitempty"`
 }
 
 func (c *Client) Heartbeat(ctx context.Context, nodeID string, hb Heartbeat) error {
-	return c.do(ctx, http.MethodPost, "/v1/ctrl/nodes/heartbeat", nodeID, hb, nil)
+	return c.do(ctx, http.MethodPost, "/v1/node/heartbeat", nodeID, hb, nil)
 }
 
-// State — желаемое состояние ноды (GET /v1/ctrl/nodes/state).
 type Session struct {
 	ID              string `json:"id"`
-	NodeID          string `json:"node_id"`
 	AccountID       string `json:"account_id"`
+	DeviceID        string `json:"device_id"`
 	Protocol        string `json:"protocol"`
 	PeerIP          string `json:"peer_ip"`
 	ClientPublicKey string `json:"client_public_key"`
 	Status          string `json:"status"`
+	BytesUp         int64  `json:"bytes_up"`
+	BytesDown       int64  `json:"bytes_down"`
 }
 
 type Quota struct {
@@ -92,26 +96,40 @@ type Quota struct {
 	OverLimit         bool   `json:"over_limit"`
 }
 
-type State struct {
-	NodeID        string            `json:"node_id"`
-	GatewayAddr   string            `json:"gateway_addr"`
-	RegionCode    string            `json:"region_code"`
-	Sessions      []Session         `json:"sessions"`
-	Quotas        []Quota           `json:"quotas"`
-	RouteRules    []json.RawMessage `json:"route_rules"`
-	FirewallRules []json.RawMessage `json:"firewall_rules"`
-	FirewallPairs []FirewallPair    `json:"firewall_pairs"`
-	Egress        []Egress          `json:"egress"`
+type RouteRule struct {
+	ID             string          `json:"id"`
+	UserID         string          `json:"user_id"`
+	DeviceID       string          `json:"device_id,omitempty"`
+	Match          json.RawMessage `json:"match"`
+	Action         string          `json:"action"`
+	ExitNodeID     string          `json:"exit_node_id,omitempty"`
+	ExitRegionCode string          `json:"exit_region_code,omitempty"`
+	Priority       int32           `json:"priority"`
 }
 
-// Egress — policy-правило выхода для клиента: префикс назначения -> нода-выход.
+type State struct {
+	NodeID         string          `json:"node_id"`
+	RegionCode     string          `json:"region_code"`
+	Hostname       string          `json:"hostname"`
+	PublicEndpoint string          `json:"public_endpoint"`
+	GatewayAddr    string          `json:"gateway_addr"`
+	Status         string          `json:"status"`
+	ConfigVersion  int64           `json:"config_version"`
+	Config         json.RawMessage `json:"config,omitempty"`
+	Protocols      []Protocol      `json:"protocols"`
+	Sessions       []Session       `json:"sessions"`
+	Quotas         []Quota         `json:"quotas"`
+	RouteRules     []RouteRule     `json:"route_rules"`
+	FirewallPairs  []FirewallPair  `json:"firewall_pairs"`
+	Egress         []Egress        `json:"egress"`
+}
+
 type Egress struct {
 	PeerIP           string `json:"peer_ip"`
 	Prefix           string `json:"prefix"`
 	ExitMeshEndpoint string `json:"exit_mesh_endpoint"`
 }
 
-// FirewallPair — разрешённый поток recipient<-sender (enforcement на источнике).
 type FirewallPair struct {
 	RecipientIP string `json:"recipient_ip"`
 	SenderIP    string `json:"sender_ip"`
@@ -119,13 +137,12 @@ type FirewallPair struct {
 
 func (c *Client) GetState(ctx context.Context, nodeID string) (*State, error) {
 	var out State
-	if err := c.do(ctx, http.MethodGet, "/v1/ctrl/nodes/state", nodeID, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/v1/node/state", nodeID, nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-// ClientEntry — запись глобальной директории активных клиентов всех нод.
 type ClientEntry struct {
 	SessionID       string     `json:"session_id"`
 	AccountID       string     `json:"account_id"`
@@ -150,7 +167,7 @@ type ClientsResult struct {
 
 func (c *Client) GetClients(ctx context.Context, nodeID string) (*ClientsResult, error) {
 	var out ClientsResult
-	if err := c.do(ctx, http.MethodGet, "/v1/ctrl/clients", nodeID, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/v1/node/clients", nodeID, nil, &out); err != nil {
 		return nil, err
 	}
 	if out.Clients == nil {
@@ -159,22 +176,19 @@ func (c *Client) GetClients(ctx context.Context, nodeID string) (*ClientsResult,
 	return &out, nil
 }
 
-// AliveItem — подтверждение активности сессии (для закрытия мёртвых active).
 type AliveItem struct {
 	SessionID string    `json:"session_id"`
 	LastSeen  time.Time `json:"last_seen"`
 }
 
-// PushAlive — POST /v1/ctrl/sessions/alive.
 func (c *Client) PushAlive(ctx context.Context, nodeID string, items []AliveItem) error {
 	if len(items) == 0 {
 		return nil
 	}
-	return c.do(ctx, http.MethodPost, "/v1/ctrl/sessions/alive", nodeID,
+	return c.do(ctx, http.MethodPost, "/v1/node/sessions/alive", nodeID,
 		map[string][]AliveItem{"items": items}, nil)
 }
 
-// ActivateSessions — POST /v1/ctrl/nodes/sessions/activate (issued -> active).
 func (c *Client) ActivateSessions(ctx context.Context, nodeID string, ids []string) (int, error) {
 	var out struct {
 		Activated int `json:"activated"`
@@ -182,21 +196,22 @@ func (c *Client) ActivateSessions(ctx context.Context, nodeID string, ids []stri
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	err := c.do(ctx, http.MethodPost, "/v1/ctrl/nodes/sessions/activate", nodeID,
+	err := c.do(ctx, http.MethodPost, "/v1/node/sessions/activate", nodeID,
 		map[string][]string{"session_ids": ids}, &out)
 	return out.Activated, err
 }
 
-// UsageReport — дельта трафика по одной сессии.
 type UsageReport struct {
 	SessionID string `json:"session_id"`
 	BytesUp   int64  `json:"bytes_up"`
 	BytesDown int64  `json:"bytes_down"`
 }
 
-// PushUsage — POST /v1/ctrl/nodes/usage.
 func (c *Client) PushUsage(ctx context.Context, nodeID string, reports []UsageReport) error {
-	return c.do(ctx, http.MethodPost, "/v1/ctrl/nodes/usage", nodeID,
+	if len(reports) == 0 {
+		return nil
+	}
+	return c.do(ctx, http.MethodPost, "/v1/node/usage", nodeID,
 		map[string][]UsageReport{"reports": reports}, nil)
 }
 
@@ -211,7 +226,9 @@ func (c *Client) do(ctx context.Context, method, path, nodeID string, body, out 
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.secret)
+	if c.secret != "" {
+		req.Header.Set("Authorization", "Bearer "+c.secret)
+	}
 	if nodeID != "" {
 		req.Header.Set("X-Node-Id", nodeID)
 	}
@@ -223,7 +240,12 @@ func (c *Client) do(ctx context.Context, method, path, nodeID string, body, out 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("api %s %s -> %s", method, path, resp.Status)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		msg := strings.TrimSpace(string(body))
+		if msg == "" {
+			msg = resp.Status
+		}
+		return fmt.Errorf("api %s %s -> %s: %s", method, path, resp.Status, msg)
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)

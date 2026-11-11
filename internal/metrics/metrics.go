@@ -49,10 +49,16 @@ var (
 		Name:      "active_clients",
 		Help:      "Number of provisioned/active VPN clients.",
 	})
+
+	ifaceDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "node",
+		Name:      "iface_dropped_packets_total",
+		Help:      "Packets dropped because the TUN writer queue is full.",
+	}, []string{"dir"})
 )
 
 func init() {
-	prometheus.MustRegister(trafficBytes, packetLifetime, connectedPeers, activeClients)
+	prometheus.MustRegister(trafficBytes, packetLifetime, connectedPeers, activeClients, ifaceDropped)
 }
 
 // ObserveTraffic учитывает прошедшие байты по направлению, peer'у и протоколу.
@@ -69,6 +75,9 @@ func SetActiveClients(n int) { activeClients.Set(float64(n)) }
 func SetConnectedPeers(n int) {
 	connectedPeers.Set(float64(n))
 }
+
+// ObserveIfaceDrop учитывает пакет, отброшенный при переполнении очереди TUN.
+func ObserveIfaceDrop(dir string) { ifaceDropped.WithLabelValues(dir).Inc() }
 
 // Handler возвращает HTTP-хендлер /metrics поверх default-регистра (включая
 // Go/process-коллекторы).

@@ -7,6 +7,9 @@ import (
 type Peer struct {
 	ID             uint64
 	Type           string
+	Protocol       string // awg | vless | hysteria2
+	Name           string // стабильное имя пользователя (email/tag в xray)
+	Auth           string // UUID (VLESS) или пароль (Hysteria2)
 	VirtualIP      uint32
 	LastSeen       time.Time
 	ExpirationDate *time.Time

@@ -11,5 +11,6 @@ services:
     volumes:
       - "/dev/net/tun:/dev/net/tun"
       - "./config.yaml:/app/config.yaml:ro"
+      - "./state:/var/lib/liberator"
     command: ["/app/config.yaml"]
       

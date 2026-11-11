@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"math"
 
 	"github.com/liberator-vpn/liberator-node-go/internal/apiclient"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/netutils"
@@ -50,11 +51,19 @@ func (app *App) applyFirewallPairs(pairs []apiclient.FirewallPair) {
 		if _, ok := app.fwRules[id]; ok {
 			continue
 		}
+		// Пара из API не несёт порт — разрешаем любой порт получателя.
+		// Важно задать PortRangeEnd явно: matcher при nil-диапазоне
+		// сравнивает PortRangeStart как «ровно этот порт», поэтому правило
+		// с нулевым start матчило бы только dstPort == 0 и не пускало
+		// реальный TCP/UDP.
+		anyPort := uint16(math.MaxUint16)
 		app.router.AddRule(firewall.PortRuleIndex{NodeID: app.nodeID, RuleID: id},
 			firewall.PortRule{
-				Address:       rec,
-				TargetAddress: &snd,
-				Protocol:      "both",
+				Address:        rec,
+				TargetAddress:  &snd,
+				Protocol:       "both",
+				PortRangeStart: 0,
+				PortRangeEnd:   &anyPort,
 			})
 		app.fwRules[id] = struct{}{}
 	}

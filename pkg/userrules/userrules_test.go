@@ -34,3 +34,25 @@ func TestUserRulesLongestPrefix(t *testing.T) {
 		t.Fatalf("expected empty after Clear, got %q", got)
 	}
 }
+
+func TestUserRulesReplaceAllIsAtomicAndValidates(t *testing.T) {
+	r := New()
+	src := netutils.IPStringToUint32("10.1.0.2")
+	r.Set(src, "10.0.0.0/8", "old")
+
+	invalid := r.ReplaceAll([]Entry{
+		{ClientIP: src, PrefixCIDR: "10.1.0.0/16", Exit: "exit-a"},
+		{ClientIP: src, PrefixCIDR: "not-a-cidr", Exit: "bad"},
+		{ClientIP: src, PrefixCIDR: "2001:db8::/32", Exit: "v6"},
+	})
+	if invalid != 2 {
+		t.Fatalf("invalid = %d, want 2", invalid)
+	}
+	// Старое правило должно исчезнуть полностью (замена, не append).
+	if got := r.Lookup(src, netutils.IPStringToUint32("10.9.8.7")); got != "" {
+		t.Fatalf("old rule survived ReplaceAll: %q", got)
+	}
+	if got := r.Lookup(src, netutils.IPStringToUint32("10.1.2.3")); got != "exit-a" {
+		t.Fatalf("new rule not applied: %q", got)
+	}
+}

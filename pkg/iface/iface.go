@@ -56,6 +56,7 @@ type TUNIface struct {
 	ipt   *iptables.IPTables
 
 	closeOnce sync.Once
+	closeErr  error
 }
 
 const tun_iface_offset = 10
@@ -84,7 +85,20 @@ func NewTUN(
 		log.Printf("[TUN] Autodetected primary outbound network interface: %s", cfg.IfaceOutName)
 	}
 
-	// 1. Создаём TUN-интерфейс
+	// 1. Создаём TUN-интерфейс. Если после аварийного завершения остался
+	// старый линк с тем же именем, CreateTUN упадёт с EEXIST — удаляем его
+	// и ждём, пока netlink реально уберёт линк.
+	if link, err := netlink.LinkByName(cfg.IfaceInName); err == nil {
+		if err := netlink.LinkDel(link); err != nil {
+			return nil, fmt.Errorf("failed to remove stale iface %s: %w", cfg.IfaceInName, err)
+		}
+		for i := 0; i < 100; i++ {
+			if _, err := netlink.LinkByName(cfg.IfaceInName); err != nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 	eg.ifce, err = tun.CreateTUN(cfg.IfaceInName, cfg.MTU)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create TUn: %w", err)
@@ -141,6 +155,16 @@ func NewTUN(
 	return eg, nil
 }
 
+// tunNetwork возвращает сеть TUN с замаскированным адресом. Один и тот же
+// источник используется и для Append, и для Delete: go-iptables ищет правило
+// по точному совпадению аргументов.
+func (eg *TUNIface) tunNetwork() *net.IPNet {
+	return &net.IPNet{
+		IP:   eg.ipNet.IP.Mask(eg.ipNet.Mask),
+		Mask: eg.ipNet.Mask,
+	}
+}
+
 func (eg *TUNIface) setupNAT() error {
 	if eg.cfg.IfaceOutName == "" {
 		ext, err := defaultGatewayInterface()
@@ -150,45 +174,39 @@ func (eg *TUNIface) setupNAT() error {
 		eg.cfg.IfaceOutName = ext
 	}
 
-	network := &net.IPNet{
-		IP:   eg.ipNet.IP.Mask(eg.ipNet.Mask),
-		Mask: eg.ipNet.Mask,
-	}
-	tunNet := network.String()
+	tunNet := eg.tunNetwork().String()
 
-	// А) ДОБАВЛЕНО: MSS Clamping (Зажатие MSS под PMTU)
-	// Это заставит компьютеры на Windows/Linux отправлять TCP сегменты,
-	// которые гарантированно пролезут через L3 Point-to-Point линк
-	err := eg.ipt.Append("mangle", "FORWARD",
+	// AppendUnique, а не Append: после падения процесса/рестарта старые
+	// правила могут остаться, и Append копил бы дубликаты.
+	//
+	// А) MSS Clamping: заставляет TCP-клиентов подстраивать MSS под PMTU.
+	if err := eg.ipt.AppendUnique("mangle", "FORWARD",
 		"-p", "tcp",
 		"--tcp-flags", "SYN,RST", "SYN",
 		"-j", "TCPMSS",
 		"--clamp-mss-to-pmtu",
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("failed to setup MSS Clamping: %w", err)
 	}
 
-	// Б) Маскарадинг (NAT) трафика из подсети туннеля наружу в amn0
-	if err := eg.ipt.Append("nat", "POSTROUTING", "-s", tunNet, "-o", eg.cfg.IfaceOutName, "-j", "MASQUERADE"); err != nil {
+	// Б) Маскарадинг (NAT) трафика из подсети туннеля наружу.
+	if err := eg.ipt.AppendUnique("nat", "POSTROUTING", "-s", tunNet, "-o", eg.cfg.IfaceOutName, "-j", "MASQUERADE"); err != nil {
 		return fmt.Errorf("failed to setup NAT: %w", err)
 	}
 
-	// В) КРОСС-ФОРВАРДИНГ: Разрешаем прохождение пакетов МЕЖДУ интерфейсами
-	// Разрешаем трафик из TUN во внешний мир
-	if err := eg.ipt.Append("filter", "FORWARD", "-i", eg.cfg.IfaceInName, "-o", eg.cfg.IfaceOutName, "-j", "ACCEPT"); err != nil {
+	// В) Разрешаем трафик из TUN во внешний мир.
+	if err := eg.ipt.AppendUnique("filter", "FORWARD", "-i", eg.cfg.IfaceInName, "-o", eg.cfg.IfaceOutName, "-j", "ACCEPT"); err != nil {
 		return fmt.Errorf("failed to setup FORWARD IN->OUT: %w", err)
 	}
 
-	// Разрешаем трафик из внешнего мира обратно в TUN (только для уже установленных соединений)
-	err = eg.ipt.Append("filter", "FORWARD",
+	// Разрешаем обратный трафик только для уже установленных соединений.
+	if err := eg.ipt.AppendUnique("filter", "FORWARD",
 		"-i", eg.cfg.IfaceOutName,
 		"-o", eg.cfg.IfaceInName,
 		"-m", "conntrack",
 		"--ctstate", "RELATED,ESTABLISHED",
 		"-j", "ACCEPT",
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("failed to setup FORWARD OUT->IN: %w", err)
 	}
 
@@ -198,46 +216,51 @@ func (eg *TUNIface) setupNAT() error {
 // Close удаляет интерфейс и очищает правила iptables. Идемпотентен: вызывается и из Run,
 // и из шатдауна приложения, и из аварийных веток NewTUN.
 func (eg *TUNIface) Close() error {
-	var err error
-	eg.closeOnce.Do(func() { err = eg.close() })
-	return err
+	eg.closeOnce.Do(func() { eg.closeErr = eg.close() })
+	return eg.closeErr
 }
 
 func (eg *TUNIface) close() error {
 	var errs []string
 
 	if eg.ifce != nil {
-		eg.ifce.Close()
+		if err := eg.ifce.Close(); err != nil {
+			errs = append(errs, fmt.Sprintf("failed to close tun device: %v", err))
+		}
 	}
 
-	// Удаляем правила iptables
+	// Удаляем ровно те правила, которые добавил setupNAT. Раньше здесь были
+	// другие аргументы (`-i <tun> -j ACCEPT`), поэтому Delete ничего не
+	// находил и правила жили до перезагрузки хоста.
 	if eg.ipt != nil && eg.ipNet != nil && eg.cfg.IfaceOutName != "" {
-		tunNet := eg.ipNet.String()
+		tunNet := eg.tunNetwork().String()
 
-		// Удаляем NAT
-		if err := eg.ipt.Delete("nat", "POSTROUTING", "-s", tunNet, "-o", eg.cfg.IfaceOutName, "-j", "MASQUERADE"); err != nil {
-			errs = append(errs, fmt.Sprintf("failed to remove NAT: %v", err))
-		}
-
-		// Удаляем FORWARD правила
-		for _, rule := range [][]string{
-			{"-i", eg.cfg.IfaceInName, "-j", "ACCEPT"},
-			{"-o", eg.cfg.IfaceInName, "-j", "ACCEPT"},
+		for _, rule := range []struct {
+			table, chain string
+			args         []string
+		}{
+			{"mangle", "FORWARD", []string{
+				"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu",
+			}},
+			{"nat", "POSTROUTING", []string{"-s", tunNet, "-o", eg.cfg.IfaceOutName, "-j", "MASQUERADE"}},
+			{"filter", "FORWARD", []string{"-i", eg.cfg.IfaceInName, "-o", eg.cfg.IfaceOutName, "-j", "ACCEPT"}},
+			{"filter", "FORWARD", []string{
+				"-i", eg.cfg.IfaceOutName, "-o", eg.cfg.IfaceInName,
+				"-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT",
+			}},
 		} {
-			if err := eg.ipt.Delete("filter", "FORWARD", rule...); err != nil {
-				errs = append(errs, fmt.Sprintf("failed to remove FORWARD: %v", err))
+			if err := eg.ipt.DeleteIfExists(rule.table, rule.chain, rule.args...); err != nil {
+				errs = append(errs, fmt.Sprintf("failed to remove %s/%s rule: %v", rule.table, rule.chain, err))
 			}
 		}
 	}
 
-	// Удаляем интерфейс
+	// Удаляем интерфейс. Если устройство уже удалило его само — это не ошибка.
 	if eg.ifce != nil {
 		if link, err := netlink.LinkByName(eg.cfg.IfaceInName); err == nil {
 			if err := netlink.LinkDel(link); err != nil {
 				errs = append(errs, fmt.Sprintf("failed to remove iface: %v", err))
 			}
-		} else {
-			errs = append(errs, fmt.Sprintf("failed to find iface: %v", err))
 		}
 	}
 
@@ -304,6 +327,13 @@ func (eg *TUNIface) readLoop(batchSize int) {
 		n, err := eg.ifce.Read(readProjections[bufferIndex], ringSizes[bufferIndex], tun_iface_offset)
 		if err != nil {
 			locks[bufferIndex].Unlock()
+			// После Close read возвращает os.ErrClosed: не крутим busy-loop
+			// со sleep и не спамим лог до выхода по ctx.
+			select {
+			case <-eg.ctx.Done():
+				return
+			default:
+			}
 			log.Printf("failed to read from iface: %v", err)
 			time.Sleep(time.Millisecond * 2)
 			continue

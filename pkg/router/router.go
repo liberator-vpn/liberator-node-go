@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/dgmessage"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/netutils"
 	"github.com/liberator-vpn/liberator-node-go/pkg/firewall"
@@ -123,6 +124,20 @@ func (r *Router) Run() {
 	wg.Wait()
 }
 
+// deliverToIface отдаёт пакет писателю TUN без блокировки шардового воркера.
+// toIface — канал на 1000; если TUN не успевает, прямая отправка подвешивала
+// все шарды (и mesh-транзит) на неопределённый срок. При переполнении дропаем
+// и считаем метрику: для интернет-трафика это эквивалент переполнения очереди,
+// но без остановки остального роутинга.
+func (r *Router) deliverToIface(packet *dgmessage.DatagramMessage) {
+	select {
+	case r.toIface <- packet:
+	default:
+		metrics.ObserveIfaceDrop(metrics.DirOut)
+		packet.Free()
+	}
+}
+
 // Packets handling methods
 func (r *Router) handleTunPacketInternal(packet *dgmessage.DatagramMessage) {
 	peer, ex := r.routingTable.GetByIP(packet.HoleInfo.DstIP)
@@ -131,10 +146,10 @@ func (r *Router) handleTunPacketInternal(packet *dgmessage.DatagramMessage) {
 		return
 	}
 	if shaped, ok := peer.(*routingtable.ShapedRoute); ok {
-		err := shaped.PushLimited(packet)
-		if err != nil {
+		// PushLimited забирает владение пакетом и освобождает его на всех
+		// путях (включая ошибку). Повторный Free здесь приводил к double-free.
+		if err := shaped.PushLimited(packet); err != nil {
 			log.Printf("failed to push to shaped connection: %v", err)
-			packet.Free()
 		}
 	} else {
 		err := peer.SendDatagram(packet.Data)
@@ -152,10 +167,14 @@ func (r *Router) handleMeshPacketInternal(packet *dgmessage.DatagramMessage) {
 			packet.Free()
 			return
 		}
-		r.toIface <- packet
+		r.deliverToIface(packet)
 		return
 	}
 
+	// Mesh-ноды — доверенный контур (общий секрет флота). Для пакетов,
+	// пришедших из меша к локальному клиенту, RuleCheck здесь не является
+	// границей безопасности; при необходимости его можно включить как
+	// дополнительную проверку, но это ужесточит client→client семантику.
 	if packet.HoleInfo.Protocol != "" {
 		r.firewall.Holepunch(packet.HoleInfo, time.Minute)
 	}
@@ -167,10 +186,8 @@ func (r *Router) handleMeshPacketInternal(packet *dgmessage.DatagramMessage) {
 	}
 
 	if shaped, ok := peer.(*routingtable.ShapedRoute); ok {
-		err := shaped.PushLimited(packet)
-		if err != nil {
+		if err := shaped.PushLimited(packet); err != nil {
 			log.Printf("failed to push to shaped connection: %v", err)
-			packet.Free()
 		}
 	} else {
 		err := peer.SendDatagram(packet.Data)
@@ -193,7 +210,7 @@ func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage
 	}
 
 	if packet.HoleInfo.DstIP == r.gatewayAddr {
-		r.toIface <- packet // TUN (локальные сервисы ноды: DNS и т.п.)
+		r.deliverToIface(packet) // TUN (локальные сервисы ноды: DNS и т.п.)
 		return
 	}
 	if !r.globalNetwork.Contains(packet.HoleInfo.DstIP) {
@@ -218,7 +235,7 @@ func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage
 				return
 			}
 		}
-		r.toIface <- packet // TUN → интернет через NAT
+		r.deliverToIface(packet) // TUN → интернет через NAT
 		return
 	}
 	hi := dgmessage.HoleInfo{
@@ -237,6 +254,12 @@ func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage
 	peer, ex := r.routingTable.GetByIP(packet.HoleInfo.DstIP)
 	if !ex {
 		packet.Free()
+		return
+	}
+	if shaped, ok := peer.(*routingtable.ShapedRoute); ok {
+		if err := shaped.PushLimited(packet); err != nil {
+			log.Printf("failed to push to shaped connection: %v", err)
+		}
 		return
 	}
 	err := peer.SendDatagram(packet.Data)
@@ -264,6 +287,8 @@ func isForbiddenEgress(ip uint32) bool {
 	case ip>>16 == 0xC0A8: // 192.168.0.0/16
 		return true
 	case ip >= 0xAC100000 && ip <= 0xAC1FFFFF: // 172.16.0.0/12
+		return true
+	case ip >= 0xC6120000 && ip <= 0xC613FFFF: // 198.18.0.0/15 (proxy local IP pool)
 		return true
 	case ip >= 0xE0000000: // 224.0.0.0/4 multicast + 240.0.0.0/4 reserved + broadcast
 		return true

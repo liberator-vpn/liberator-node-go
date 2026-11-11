@@ -46,8 +46,13 @@ func (n *MeshNode) ReconcileRemoteClients(desired map[uint32]string) {
 		if _, existed := n.remotes[ip]; existed {
 			n.removeRemote(ip)
 		}
-		n.remotes[ip] = endpoint
-		n.addRemote(ip, endpoint)
+		if n.addRemote(ip, endpoint) {
+			n.remotes[ip] = endpoint
+		} else {
+			// Не запоминаем неудачную установку: иначе следующая попытка
+			// будет пропущена как «уже применено» и маршрут останется дырой.
+			delete(n.remotes, ip)
+		}
 	}
 
 	for ip := range n.remotes {
@@ -58,15 +63,15 @@ func (n *MeshNode) ReconcileRemoteClients(desired map[uint32]string) {
 	}
 }
 
-func (n *MeshNode) addRemote(ip uint32, endpoint string) {
+func (n *MeshNode) addRemote(ip uint32, endpoint string) bool {
 	if n.addRemoteObj == nil {
-		return
+		return false
 	}
 	obj := &RemoteClient{ctx: n.ctx, ip: ip}
 	obj.send = func(data []byte) error {
 		return n.SendTo(n.ctx, endpoint, data)
 	}
-	_ = n.addRemoteObj(obj)
+	return n.addRemoteObj(obj) == nil
 }
 
 func (n *MeshNode) removeRemote(ip uint32) {

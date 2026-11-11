@@ -11,3 +11,5 @@ node.key
 root.crt
 
 database.sqlite
+state/
+node-identity.json

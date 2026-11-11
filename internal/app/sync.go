@@ -9,13 +9,15 @@ import (
 	"github.com/liberator-vpn/liberator-node-go/internal/appconfig"
 	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/netutils"
+	"github.com/liberator-vpn/liberator-node-go/pkg/services/peersmanager"
+	"github.com/liberator-vpn/liberator-node-go/pkg/userrules"
 )
 
-// syncLoop — пассивный контур ноды к API: регистрация, heartbeat, pull желаемого
-// состояния, реконсиляция локальных клиентов и ack активации сессий.
-func (app *App) syncLoop(ctx context.Context, secret, transportName string) {
+// syncLoop — пассивный контур ноды к API: heartbeat, pull желаемого состояния,
+// реконсиляция локальных клиентов и ack активации сессий.
+func (app *App) syncLoop(ctx context.Context) {
 	cfg := app.cfg.API
-	client := apiclient.New(cfg.BaseURL, secret)
+	client := apiclient.New(cfg.BaseURL, app.apiSecret)
 	if client == nil {
 		return
 	}
@@ -29,34 +31,22 @@ func (app *App) syncLoop(ctx context.Context, secret, transportName string) {
 		hbEvery = 10 * time.Second
 	}
 
-	host := nodeIdentity()
-	nodeID := ""
+	nodeID := app.apiNodeID
+	if nodeID == "" {
+		log.Printf("api node identity is missing; sync loop disabled")
+		return
+	}
 	hbTicker := time.NewTicker(hbEvery)
 	defer hbTicker.Stop()
 
-	// Ждём API (с саморегистрацией) без блокировки основного рантайма.
 	for {
-		if nodeID == "" {
-			reg, err := client.Register(ctx, host, cfg.PublicEndpoint, cfg.MeshEndpoint, cfg.RegionCode)
-			if err != nil {
-				log.Printf("api register failed: %v", err)
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(syncEvery):
-				}
-				continue
-			}
-			nodeID = reg.NodeID
-			log.Printf("api registered node_id=%s gateway=%s", nodeID, reg.GatewayAddr)
-		}
-
 		select {
 		case <-ctx.Done():
 			return
 		case <-hbTicker.C:
 			if err := client.Heartbeat(ctx, nodeID, apiclient.Heartbeat{
-				ActiveSessions: int32(app.peersManager.ActiveCount(transportName)),
+				ActiveSessions: int32(app.peersManager.ActiveCountAll()),
+				AgentVersion:   cfg.AgentVersion,
 			}); err != nil {
 				log.Printf("api heartbeat failed: %v", err)
 			}
@@ -67,7 +57,7 @@ func (app *App) syncLoop(ctx context.Context, secret, transportName string) {
 		if err != nil {
 			log.Printf("api state pull failed: %v", err)
 		} else {
-			usageIndex := app.reconcileState(ctx, client, nodeID, transportName, st)
+			usageIndex := app.reconcileState(ctx, client, nodeID, st)
 			app.pushUsage(ctx, client, nodeID, usageIndex)
 			app.pushAlive(ctx, client, nodeID, usageIndex)
 			app.applyFirewallPairs(st.FirewallPairs)
@@ -108,34 +98,58 @@ func (app *App) pushAlive(ctx context.Context, client *apiclient.Client, nodeID 
 }
 
 // pushUsage отправляет накопленные дельты трафика по сессиям в API.
+// Дельты списываются только после успешного ответа API: при недоступности
+// control-plane они остаются в памяти и уходят на следующем цикле. Иначе
+// каждый сетевой сбой API означал бы безвозвратную потерю биллинга.
 func (app *App) pushUsage(ctx context.Context, client *apiclient.Client, nodeID string, ipToSession map[uint32]string) {
-	usages := app.peersManager.DrainUsage()
+	usages := app.peersManager.UsageSnapshot()
 	reports := make([]apiclient.UsageReport, 0, len(usages))
+	committed := make([]peersmanager.Usage, 0, len(usages))
+	var orphans uint64
 	for _, u := range usages {
 		sid, ok := ipToSession[u.VirtualIP]
 		if !ok || (u.Up == 0 && u.Down == 0) {
+			// Сессии уже нет в текущем state (IP переиспользован/клиент ушёл).
+			// Начислять не на что, но и копить вечно нельзя — списываем.
+			orphans += u.Up + u.Down
+			committed = append(committed, u)
 			continue
 		}
 		reports = append(reports, apiclient.UsageReport{
 			SessionID: sid, BytesUp: int64(u.Up), BytesDown: int64(u.Down),
 		})
+		committed = append(committed, u)
 	}
-	if len(reports) > 0 {
-		if err := client.PushUsage(ctx, nodeID, reports); err != nil {
-			log.Printf("api usage push failed: %v", err)
+
+	if len(reports) == 0 {
+		if orphans > 0 {
+			app.peersManager.CommitUsage(committed)
 		}
+		return
 	}
+	if err := client.PushUsage(ctx, nodeID, reports); err != nil {
+		var pending uint64
+		for _, u := range usages {
+			pending += u.Up + u.Down
+		}
+		log.Printf("api usage push failed, %d reports (%d bytes) kept for retry: %v", len(reports), pending, err)
+		return
+	}
+	app.peersManager.CommitUsage(committed)
 }
 
 // reconcileState приводит локальный транспорт к желаемому состоянию сессий и
 // возвращает карту virtual IP -> session_id (для пуша usage).
-func (app *App) reconcileState(ctx context.Context, client *apiclient.Client, nodeID, transportName string, st *apiclient.State) map[uint32]string {
+func (app *App) reconcileState(ctx context.Context, client *apiclient.Client, nodeID string, st *apiclient.State) map[uint32]string {
 	quota := make(map[string]*apiclient.Quota, len(st.Quotas))
 	for i := range st.Quotas {
 		quota[st.Quotas[i].AccountID] = &st.Quotas[i]
 	}
 
-	clients := make([]appconfig.ClientConfig, 0, len(st.Sessions))
+	// Сессии группируются по транспорту: awg идёт в AWG-транспорт,
+	// vless/hysteria2 — в xray. Раньше все сессии уезжали в «последний
+	// зарегистрированный» транспорт.
+	byTransport := make(map[string][]appconfig.ClientConfig)
 	ipToSession := make(map[uint32]string)
 	var toActivate []string
 	for _, s := range st.Sessions {
@@ -149,37 +163,56 @@ func (app *App) reconcileState(ctx context.Context, client *apiclient.Client, no
 		if ip == 0 {
 			continue
 		}
-		if s.ClientPublicKey == "" {
+		protocol := s.Protocol
+		if protocol == "" {
+			protocol = "awg"
+		}
+		transportName, ok := app.protocolTransport[protocol]
+		if !ok {
+			log.Printf("state: no transport for protocol %q (session %s)", protocol, s.ID)
+			continue
+		}
+		// AWG не может поднять пира без публичного ключа. Для VLESS UUID
+		// и Hysteria2-пароль тоже приходят в client_public_key; если пусто,
+		// proxy-транспорт сгенерирует auth сам.
+		if protocol == "awg" && s.ClientPublicKey == "" {
 			continue
 		}
 		ipToSession[ip] = s.ID
 		c := appconfig.ClientConfig{
+			Protocol:     protocol,
+			Name:         s.ID,
+			Auth:         s.ClientPublicKey,
 			VirtualIP:    ip,
 			AwgPublicKey: s.ClientPublicKey,
 		}
-		if q := quota[s.AccountID]; q != nil {
-			if q.SpeedLimitBps != nil && *q.SpeedLimitBps > 0 {
-				mbps := float64(*q.SpeedLimitBps) / 8 / (1024 * 1024) // bps -> MiB/s
-				c.SpeedLimitMbps = &mbps
-			}
-			if q.TrafficLimitBytes != nil && !q.OverLimit {
-				used := int64(0)
-				if q.TrafficUsedBytes != nil {
-					used = *q.TrafficUsedBytes
-				}
-				if rem := *q.TrafficLimitBytes - used; rem > 0 {
-					gb := float64(rem) / (1024 * 1024 * 1024)
-					c.TrafficLimitGb = &gb
-				}
-			}
-		}
-		clients = append(clients, c)
+		applyQuotaLimits(&c, quota[s.AccountID])
+		byTransport[transportName] = append(byTransport[transportName], c)
 	}
-	metrics.SetActiveClients(len(clients))
+	metrics.SetActiveClients(len(ipToSession))
 
-	if err := app.peersManager.ReconcileClients(ctx, transportName, clients); err != nil {
-		log.Printf("reconcile clients failed: %v", err)
+	for transportName, clients := range byTransport {
+		if err := app.peersManager.ReconcileClients(ctx, transportName, clients); err != nil {
+			log.Printf("reconcile clients on %s failed: %v", transportName, err)
+		}
 	}
+	// Транспорты без сессий в текущем state тоже надо реконсилировать:
+	// иначе исчезнувшие клиенты остаются поднятыми навсегда.
+	for name := range app.transports.CloneRaw() {
+		if _, done := byTransport[name]; done {
+			continue
+		}
+		if err := app.peersManager.ReconcileClients(ctx, name, nil); err != nil {
+			log.Printf("reconcile clients on %s failed: %v", name, err)
+		}
+	}
+
+	// Убираем из карты usage IP, которых больше нет в state. Записи с ещё
+	// неотправленными байтами сохраняются до успешного пуша.
+	app.peersManager.PruneUsage(func(ip uint32) bool {
+		_, ok := ipToSession[ip]
+		return ok
+	})
 	if len(toActivate) > 0 {
 		if _, err := client.ActivateSessions(ctx, nodeID, toActivate); err != nil {
 			log.Printf("activate sessions failed: %v", err)
@@ -188,10 +221,45 @@ func (app *App) reconcileState(ctx context.Context, client *apiclient.Client, no
 	return ipToSession
 }
 
+// applyQuotaLimits переводит квоту аккаунта в лимиты клиента.
+// over_limit — это явный запрет трафика: нулевой traffic-limit заставляет
+// шейпер дропать все пакеты. Раньше при over_limit лимит не ставился вовсе,
+// то есть нода снимала ограничение ровно в момент исчерпания квоты.
+func applyQuotaLimits(c *appconfig.ClientConfig, q *apiclient.Quota) {
+	if q == nil {
+		return
+	}
+	if q.SpeedLimitBps != nil && *q.SpeedLimitBps > 0 {
+		mbps := float64(*q.SpeedLimitBps) / 8 / (1024 * 1024) // bps -> MiB/s
+		c.SpeedLimitMbps = &mbps
+	}
+
+	zero := 0.0
+	if q.OverLimit {
+		c.TrafficLimitGb = &zero
+		return
+	}
+	if q.TrafficLimitBytes == nil {
+		return
+	}
+	used := int64(0)
+	if q.TrafficUsedBytes != nil {
+		used = *q.TrafficUsedBytes
+	}
+	rem := *q.TrafficLimitBytes - used
+	if rem <= 0 {
+		c.TrafficLimitGb = &zero
+		return
+	}
+	gb := float64(rem) / (1024 * 1024 * 1024)
+	c.TrafficLimitGb = &gb
+}
+
 // reconcileEgress приводит правила выхода роутера (userRules) в соответствие
-// желаемому /state.egress.
+// желаемому /state.egress. Набор собирается целиком и подменяется атомарно:
+// иначе между Clear и Set был бы интервал, когда весь egress шёл в локальный NAT.
 func (app *App) reconcileEgress(items []apiclient.Egress) {
-	app.router.ClearEgressRules()
+	entries := make([]userrules.Entry, 0, len(items))
 	for _, eg := range items {
 		if eg.PeerIP == "" || eg.Prefix == "" || eg.ExitMeshEndpoint == "" {
 			continue
@@ -200,6 +268,13 @@ func (app *App) reconcileEgress(items []apiclient.Egress) {
 		if ip == 0 {
 			continue
 		}
-		_ = app.router.SetEgressRule(ip, eg.Prefix, eg.ExitMeshEndpoint)
+		entries = append(entries, userrules.Entry{
+			ClientIP:   ip,
+			PrefixCIDR: eg.Prefix,
+			Exit:       eg.ExitMeshEndpoint,
+		})
+	}
+	if invalid := app.router.ReplaceEgressRules(entries); invalid > 0 {
+		log.Printf("egress: dropped %d invalid rules from desired state", invalid)
 	}
 }

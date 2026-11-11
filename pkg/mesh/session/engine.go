@@ -29,9 +29,11 @@ func NewSessionEngine(reg Registry, router Router) *SessionEngine {
 }
 
 // HandleConnection принимает и входящие, и исходящие QUIC-соединения пула.
-func (e *SessionEngine) HandleConnection(ctx context.Context, pc transport.PeerConnection) {
+// Возвращает ошибку, если соединение не зарегистрировано (self/duplicate/
+// registry closed). Вызывающий обязан не использовать отклонённое соединение.
+func (e *SessionEngine) HandleConnection(ctx context.Context, pc transport.PeerConnection) error {
 	if pc == nil {
-		return
+		return nil
 	}
 
 	s := &Session{
@@ -41,10 +43,11 @@ func (e *SessionEngine) HandleConnection(ctx context.Context, pc transport.PeerC
 
 	if err := e.registry.Add(s); err != nil {
 		_ = pc.Close()
-		return
+		return err
 	}
 
 	go e.runSession(ctx, s)
+	return nil
 }
 
 func (e *SessionEngine) runSession(ctx context.Context, s *Session) {
@@ -56,6 +59,10 @@ func (e *SessionEngine) runSession(ctx context.Context, s *Session) {
 		data, err := s.Conn.RecvDatagram(ctx)
 		if err != nil {
 			return
+		}
+		if len(data) == 0 {
+			// Промежуточный фрагмент: пакет ещё не собран.
+			continue
 		}
 		msg, err := e.router.NewMessageCopyFrom(data)
 		if err != nil {

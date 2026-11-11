@@ -22,6 +22,13 @@ type TransportConfig struct {
 	H3 string `yaml:"h3"`
 	H4 string `yaml:"h4"`
 
+	// I1..I5 — опциональные «signature»/padding-пакеты AmneziaWG 1.5+/2.0.
+	I1 string `yaml:"i1"`
+	I2 string `yaml:"i2"`
+	I3 string `yaml:"i3"`
+	I4 string `yaml:"i4"`
+	I5 string `yaml:"i5"`
+
 	Jc   int `yaml:"jc"`
 	JMin int `yaml:"jmin"`
 	JMax int `yaml:"jmax"`

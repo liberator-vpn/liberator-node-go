@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
@@ -36,6 +37,11 @@ func getServerPubKey(privKeyHex string) (string, error) {
 	return hex.EncodeToString(pubBytes), nil
 }
 
+// ServerPublicKey возвращает публичный ключ сервера из HEX приватного (для клиента).
+func ServerPublicKey(privKeyHex string) (string, error) {
+	return getServerPubKey(privKeyHex)
+}
+
 var _ transport.Transport = (*AWGTransport)(nil)
 
 type AWGTransport struct {
@@ -54,10 +60,15 @@ type AWGTransport struct {
 	peersByIP safemap.Safemap[uint32, *AWGPeer]
 
 	deltaChan chan transport.TransportPeerStats
+	closeOnce sync.Once
 }
 
 func (ig *AWGTransport) Type() string {
 	return "awg"
+}
+
+func (ig *AWGTransport) Protocols() []string {
+	return []string{"awg"}
 }
 
 func New(
@@ -107,7 +118,20 @@ func New(
 		cfg.S3,
 		cfg.S4,
 	)); err != nil {
-		return nil, fmt.Errorf("failed to set AWG H[1-4] and S[1-2] obfuscation config: %w", err)
+		return nil, fmt.Errorf("failed to set AWG H[1-4] and S[1-4] obfuscation config: %w", err)
+	}
+
+	// I1..I5 — опциональные junk/signature-пакеты (AmneziaWG 1.5+/2.0).
+	// Без них DPI видит характерный первый пакет рукопожатия.
+	for key, val := range map[string]string{
+		"i1": cfg.I1, "i2": cfg.I2, "i3": cfg.I3, "i4": cfg.I4, "i5": cfg.I5,
+	} {
+		if val == "" {
+			continue
+		}
+		if err := ig.awgDevice.IpcSet(fmt.Sprintf("%s=%s\n", key, val)); err != nil {
+			return nil, fmt.Errorf("failed to set AWG %s obfuscation config: %w", key, err)
+		}
 	}
 
 	if cfg.Jc > 0 {
@@ -117,12 +141,12 @@ func New(
 	}
 
 	if cfg.JMin > 0 {
-		if err := ig.awgDevice.IpcSet(fmt.Sprintf("jmin=%d\n", cfg.Jc)); err != nil {
+		if err := ig.awgDevice.IpcSet(fmt.Sprintf("jmin=%d\n", cfg.JMin)); err != nil {
 			return nil, fmt.Errorf("failed to set AWG jmin obfuscation config: %w", err)
 		}
 	}
 	if cfg.JMax > 0 {
-		if err := ig.awgDevice.IpcSet(fmt.Sprintf("jmax=%d\n", cfg.Jc)); err != nil {
+		if err := ig.awgDevice.IpcSet(fmt.Sprintf("jmax=%d\n", cfg.JMax)); err != nil {
 			return nil, fmt.Errorf("failed to set AWG jmax obfuscation config: %w", err)
 		}
 	}
@@ -145,7 +169,7 @@ func (ig *AWGTransport) Run() {
 		select {
 		case <-ig.ctx.Done():
 			log.Printf("[%s] Shutting down AWG Transport...", ig.nodeID)
-			ig.awgDevice.Close()
+			ig.Close()
 			return
 		case <-ticker.C:
 			ig.watchPeers()
@@ -157,28 +181,47 @@ func (ig *AWGTransport) DeltaChan() chan transport.TransportPeerStats {
 	return ig.deltaChan
 }
 
-// CreatePeer вызывается из VpnAuthService ДО подключения клиента.
-// Добавляет ключ в ядро AWG и выделяет маршрутизируемый объект.
+// Close идемпотентно останавливает устройство. Нужен для аварийного
+// завершения app.New, когда Run ещё не успел запуститься.
+func (ig *AWGTransport) Close() {
+	ig.closeOnce.Do(func() {
+		ig.channelTun.Close()
+		ig.awgDevice.Close()
+	})
+}
+
+// CreatePeer приводит пира к желаемому состоянию. Вызывается реконсилятором
+// каждые несколько секунд, поэтому обязан быть идемпотентным: если пир с тем же
+// virtual IP и тем же публичным ключом уже поднят, сессия НЕ пересоздаётся
+// (иначе у клиента рвётся handshake и обнуляются счётчики каждые 5 секунд).
 func (ig *AWGTransport) CreatePeer(peerInfo *model.Peer) error {
-	// Если юзер уже подключен, удаляем его старую сессию
-	ig.KickPeer(peerInfo.VirtualIP)
+	if existing, ok := ig.peersByIP.Get(peerInfo.VirtualIP); ok {
+		if existing.pubKey == peerInfo.AwgPublicKey {
+			// Пир уже есть: обновляем только лимиты, если маршрут шейпится.
+			if shaped, isShaped := ig.router.GetRemoteRoutingObject(peerInfo.VirtualIP); isShaped {
+				if sr, ok := shaped.(*routingtable.ShapedRoute); ok {
+					speed, traffic := limitsOf(peerInfo)
+					if sr.SetLimits(speed, traffic) {
+						return nil
+					}
+				}
+			}
+			if peerInfo.SpeedLimitMbps == nil && peerInfo.TrafficLimitGb == nil {
+				return nil
+			}
+			// Режим лимитирования изменился — пересоздаём ниже.
+		}
+		// Тот же IP, но другой ключ (клиент перегенерировал keypair) либо
+		// изменился режим лимитов — снимаем старую сессию.
+		ig.KickPeer(peerInfo.VirtualIP)
+	}
 
 	var peer routingtable.RoutingObject
 	awgPeer := NewAWGPeer(ig.ctx, ig.nodeID, peerInfo.VirtualIP, peerInfo.AwgPublicKey, ig, peerInfo.ExpirationDate)
 	peer = awgPeer
 	// Wrap this to shaped object
 	if peerInfo.SpeedLimitMbps != nil || peerInfo.TrafficLimitGb != nil {
-		var speedLimit *uint64
-		var trafficLimit *uint64
-
-		if peerInfo.SpeedLimitMbps != nil {
-			v := uint64((*peerInfo.SpeedLimitMbps) * 1024 * 1024)
-			speedLimit = &v
-		}
-		if peerInfo.TrafficLimitGb != nil {
-			v := uint64(*peerInfo.TrafficLimitGb*1024*1024*1024) - uint64(peerInfo.FromPeerTotal+peerInfo.ToPeerTotal)
-			trafficLimit = &v
-		}
+		speedLimit, trafficLimit := limitsOf(peerInfo)
 		peer = routingtable.NewShapedRoute(peer, speedLimit, trafficLimit)
 	}
 
@@ -198,6 +241,26 @@ func (ig *AWGTransport) CreatePeer(peerInfo *model.Peer) error {
 	}
 
 	return nil
+}
+
+// limitsOf переводит лимиты из model.Peer в байты/байт-в-секунду.
+func limitsOf(peerInfo *model.Peer) (speed *uint64, traffic *uint64) {
+	if peerInfo.SpeedLimitMbps != nil {
+		v := uint64((*peerInfo.SpeedLimitMbps) * 1024 * 1024)
+		speed = &v
+	}
+	if peerInfo.TrafficLimitGb != nil {
+		total := *peerInfo.TrafficLimitGb * 1024 * 1024 * 1024
+		used := float64(peerInfo.FromPeerTotal + peerInfo.ToPeerTotal)
+		if remaining := total - used; remaining > 0 {
+			v := uint64(remaining)
+			traffic = &v
+		} else {
+			v := uint64(0)
+			traffic = &v
+		}
+	}
+	return speed, traffic
 }
 
 func (ig *AWGTransport) ExistsPeer(ip uint32) bool {
@@ -241,15 +304,20 @@ func (ig *AWGTransport) watchPeers() {
 				toDelete = append(toDelete, peer)
 			}
 		}
+		toPeer, fromPeer, lastSeen := peer.snapshotStats()
 		select {
 		case ig.deltaChan <- transport.TransportPeerStats{
-			VirtualIP: peer.virtualIP,
-			LastSeen:  peer.lastSeen,
-
-			DeltaToPeer:   peer.totalToPeer.Swap(0),
-			DeltaFromPeer: peer.totalFromPeer.Swap(0),
+			VirtualIP:     peer.virtualIP,
+			LastSeen:      lastSeen,
+			DeltaToPeer:   toPeer,
+			DeltaFromPeer: fromPeer,
 		}:
 		default:
+			// Канал дельт переполнен: возвращаем срез пиру, чтобы он ушёл
+			// на следующем тике, а не потерялся (раньше Swap(0) выполнялся
+			// даже при выборе default и байты исчезали из биллинга).
+			peer.totalToPeer.Add(toPeer)
+			peer.totalFromPeer.Add(fromPeer)
 		}
 	})
 

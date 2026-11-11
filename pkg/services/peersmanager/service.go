@@ -2,6 +2,7 @@ package peersmanager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -43,6 +44,7 @@ func New(ctx context.Context) *PeersManager {
 		ctx:         ctx,
 		transports:  make(map[string]transport.Transport),
 		provisioned: make(map[string]map[uint32]struct{}),
+		usage:       make(map[uint32]*usageAgg),
 	}
 }
 
@@ -55,7 +57,9 @@ func (pm *PeersManager) StartUsageCollector(ctx context.Context) {
 	}
 	pm.mu.RUnlock()
 	pm.usageMu.Lock()
-	pm.usage = make(map[uint32]*usageAgg)
+	if pm.usage == nil {
+		pm.usage = make(map[uint32]*usageAgg)
+	}
 	pm.usageMu.Unlock()
 
 	for _, t := range trs {
@@ -88,16 +92,66 @@ func (pm *PeersManager) collect(ctx context.Context, t transport.Transport) {
 	}
 }
 
-// DrainUsage возвращает накопленные дельты и сбрасывает счётчики.
-func (pm *PeersManager) DrainUsage() []Usage {
+// UsageSnapshot возвращает срез накопленных дельт без их списания.
+// Списание делает CommitUsage только после успешной отправки в API, иначе
+// неудачный push безвозвратно терял бы биллинг.
+func (pm *PeersManager) UsageSnapshot() []Usage {
 	pm.usageMu.Lock()
 	defer pm.usageMu.Unlock()
 
 	out := make([]Usage, 0, len(pm.usage))
 	for ip, a := range pm.usage {
 		out = append(out, Usage{VirtualIP: ip, Up: a.up, Down: a.down})
-		a.up, a.down = 0, 0
 	}
+	return out
+}
+
+// CommitUsage вычитает ровно те дельты, которые были отправлены в API.
+// Дельты, накопленные за время HTTP-запроса, остаются в карте.
+func (pm *PeersManager) CommitUsage(committed []Usage) {
+	pm.usageMu.Lock()
+	defer pm.usageMu.Unlock()
+
+	for _, u := range committed {
+		a := pm.usage[u.VirtualIP]
+		if a == nil {
+			continue
+		}
+		if u.Up >= a.up {
+			a.up = 0
+		} else {
+			a.up -= u.Up
+		}
+		if u.Down >= a.down {
+			a.down = 0
+		} else {
+			a.down -= u.Down
+		}
+	}
+}
+
+// PruneUsage удаляет записи без неотправленных байт, для которых keep(ip)
+// вернул false. Нужен, чтобы карта не росла вечно после ухода клиентов.
+func (pm *PeersManager) PruneUsage(keep func(ip uint32) bool) {
+	pm.usageMu.Lock()
+	defer pm.usageMu.Unlock()
+
+	for ip, a := range pm.usage {
+		if a.up != 0 || a.down != 0 {
+			continue
+		}
+		if !keep(ip) {
+			delete(pm.usage, ip)
+		}
+	}
+}
+
+// DrainUsage возвращает накопленные дельты и сбрасывает счётчики.
+// Оставлен для совместимости; в control-plane цикле используется
+// UsageSnapshot + CommitUsage.
+func (pm *PeersManager) DrainUsage() []Usage {
+	out := pm.UsageSnapshot()
+	pm.CommitUsage(out)
 	return out
 }
 
@@ -148,15 +202,21 @@ func (pm *PeersManager) ReconcileClients(ctx context.Context, transportName stri
 	}
 
 	want := make(map[uint32]struct{}, len(clients))
+	var errs []error
 	for _, c := range clients {
 		want[c.VirtualIP] = struct{}{}
 		if err := trp.CreatePeer(&model.Peer{
+			Protocol:       c.Protocol,
+			Name:           c.Name,
+			Auth:           c.Auth,
 			VirtualIP:      c.VirtualIP,
 			AwgPublicKey:   c.AwgPublicKey,
 			TrafficLimitGb: c.TrafficLimitGb,
 			SpeedLimitMbps: c.SpeedLimitMbps,
 		}); err != nil {
-			return fmt.Errorf("provision client %s: %w", netutils.Uint32ToIPString(c.VirtualIP), err)
+			// Один битый клиент не должен блокировать реконсиляцию остальных
+			// и удаление уже исчезнувших. Ошибка вернётся наверх после прохода.
+			errs = append(errs, fmt.Errorf("provision client %s: %w", netutils.Uint32ToIPString(c.VirtualIP), err))
 		}
 	}
 
@@ -166,18 +226,24 @@ func (pm *PeersManager) ReconcileClients(ctx context.Context, transportName stri
 		prev = make(map[uint32]struct{})
 		pm.provisioned[transportName] = prev
 	}
+	var toKick []uint32
 	for ip := range prev {
 		if _, keep := want[ip]; keep {
 			continue
 		}
-		trp.KickPeer(ip)
+		toKick = append(toKick, ip)
 		delete(prev, ip)
 	}
 	for ip := range want {
 		prev[ip] = struct{}{}
 	}
 	pm.mu.Unlock()
-	return nil
+
+	// KickPeer может трогать routing table/транспорт — не держим pm.mu.
+	for _, ip := range toKick {
+		trp.KickPeer(ip)
+	}
+	return errors.Join(errs...)
 }
 
 // ActiveCount возвращает число провижинённых клиентов на транспорте.
@@ -185,4 +251,16 @@ func (pm *PeersManager) ActiveCount(transportName string) int {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 	return len(pm.provisioned[transportName])
+}
+
+// ActiveCountAll — суммарное число динамически провижинённых клиентов по всем
+// транспортам (heartbeat в API).
+func (pm *PeersManager) ActiveCountAll() int {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	total := 0
+	for _, ips := range pm.provisioned {
+		total += len(ips)
+	}
+	return total
 }

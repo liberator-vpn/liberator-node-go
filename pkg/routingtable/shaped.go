@@ -2,6 +2,7 @@ package routingtable
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -16,6 +17,7 @@ type ShapedRoute struct {
 	ctx        context.Context
 	underlying RoutingObject
 
+	mu           sync.Mutex
 	queue        chan *dgmessage.DatagramMessage
 	limiter      *rate.Limiter
 	speedLimited bool
@@ -59,24 +61,27 @@ func (sr *ShapedRoute) PushLimited(packet *dgmessage.DatagramMessage) error {
 	if sr.trafficLimited {
 		remains := sr.totalLimit.Add(-int64(len(packet.Data)))
 		if remains < 0 {
+			// Пакет не отправляем, но вернуть его в пул обязаны — иначе утечка.
+			packet.Free()
 			return nil
 		}
 	}
 	if !sr.speedLimited {
 		err := sr.SendDatagram(packet.Data)
-		if err != nil {
-			packet.Free()
-			return err
-		}
 		packet.Free()
+		return err
 	}
 
 	select {
 	case <-sr.ctx.Done():
+		packet.Free()
 		return sr.ctx.Err()
 	case sr.queue <- packet:
 		return nil
 	default:
+		// Очередь полна: дропаем пакет (шейпер не должен блокировать роутер),
+		// но возвращаем его в пул.
+		packet.Free()
 		return nil
 	}
 }
@@ -93,19 +98,46 @@ func (sr *ShapedRoute) IsAllowed(packetSize uint64) bool {
 	}
 	return true
 }
+
+// SetLimits обновляет лимиты «на лету». Возвращает false, если сменился сам
+// режим лимитирования (появился/исчез лимит) — тогда маршрут надо пересоздать.
+func (sr *ShapedRoute) SetLimits(speedLimit *uint64, trafficLimit *uint64) bool {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+
+	if sr.speedLimited != (speedLimit != nil) || sr.trafficLimited != (trafficLimit != nil) {
+		return false
+	}
+	if sr.speedLimited && sr.limiter != nil {
+		sr.limiter.SetLimit(rate.Limit(*speedLimit))
+	}
+	if sr.trafficLimited && trafficLimit != nil {
+		// totalLimit здесь — остаток; пересчитываем от нового значения.
+		sr.totalLimit.Store(int64(*trafficLimit))
+	}
+	return true
+}
+
 func (sr *ShapedRoute) startWorker() {
+	// Канал не закрываем: PushLimited может находиться в select с отправкой
+	// в него в момент shutdown, а send в закрытый канал паникует. Вместо
+	// этого по ctx просто выходим и освобождаем всё, что успело накопиться.
 	defer func() {
-		close(sr.queue)
+		for {
+			select {
+			case packet := <-sr.queue:
+				packet.Free()
+			default:
+				return
+			}
+		}
 	}()
 
 	for {
 		select {
 		case <-sr.ctx.Done():
 			return
-		case packet, ok := <-sr.queue:
-			if !ok {
-				return
-			}
+		case packet := <-sr.queue:
 			packetSize := len(packet.Data)
 
 			err := sr.limiter.WaitN(sr.ctx, packetSize)

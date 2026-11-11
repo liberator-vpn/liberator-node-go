@@ -67,6 +67,9 @@ func (t *ChannelTun) Write(bufs [][]byte, offset int) (int, error) {
 
 	now := time.Now()
 
+	// n — число буферов, реально принятых к обработке. amneziawg-go
+	// интерпретирует возвращённое значение как «сколько пакетов записано»,
+	// поэтому жёсткий 0 раньше выглядел как 100% потерь на приёме.
 	c := int(0)
 	for _, buf := range bufs {
 		pkt := buf[offset:]
@@ -76,15 +79,14 @@ func (t *ChannelTun) Write(bufs [][]byte, offset int) (int, error) {
 			continue
 		}
 		metrics.ObserveTraffic(metrics.DirIn, metrics.PeerClient, Protocol, len(pkt))
-		// ОБНОВЛЯЕМ lastSeen (Критически важно для Watchdog)
+		// ОБНОВЛЯЕМ lastSeen (критически важно для watchdog)
 		if peer, ok := t.peers.Get(msg.HoleInfo.SrcIP); ok {
-			if now.Sub(peer.lastSeen) > time.Second {
-				peer.lastSeen = now
-			}
+			peer.TouchLastSeen(now)
 			peer.totalFromPeer.Add(uint64(len(pkt)))
 		}
 
 		t.router.HandleTransportPacket(msg)
+		c++
 	}
 	return c, nil
 }

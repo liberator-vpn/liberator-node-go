@@ -1,12 +1,7 @@
 auth:
-  # Общий секрет флота: для QUIC-пула между нодами и для node↔API.
-  # Должен совпадать с LIBERATOR_NODE_SHARED_SECRET у API (Secret
-  # node-auth-secrets/shared-secret). В k8s перекрывается env-переменной
-  # LIBERATOR_NODE_SHARED_SECRET и в файле не хранится.
-  # Это НЕ ключ подписи клиентских JWT (jwt-secrets у API) — ключи обязаны
-  # быть разными, иначе утечка конфига ноды даёт возможность подписывать
-  # клиентские токены.
-  # Сгенерировать, напр.: openssl rand -base64 48. Минимум 16 символов.
+  # Общий секрет QUIC-меша между нодами. API его больше не использует.
+  # Все ноды флота должны иметь одинаковый secret_key.
+  # Сгенерировать: openssl rand -base64 48. Минимум 16 символов.
   secret_key: "CHANGE_ME_random_secret_min_16_chars"
 
 tun:
@@ -41,6 +36,60 @@ router:
       s3: 30
       s4: 7
 
+      # Опциональные signature/junk-пакеты AmneziaWG 1.5+/2.0.
+      # Должны совпадать у сервера и клиента; пустые значения не применяются.
+      i1: ""
+      i2: ""
+      i3: ""
+      i4: ""
+      i5: ""
+
+    # VLESS+REALITY и Hysteria2 через внешний Xray-core. Нода запускает
+    # `xray run`, забирает расшифрованный трафик из proxy_tun и дальше
+    # обрабатывает его общим роутером (firewall/egress/usage/mesh).
+    # Пользователи пока задаются статически: control-plane не умеет выдавать
+    # proxy-сессии. virtual_ip не должен пересекаться с IP, которые выдаёт API.
+    xray:
+      type: "xray"
+      binary: "/usr/local/bin/xray"
+      mtu: 1376
+      proxy_tun: "liberator-proxy"
+      dummy: "liberator-proxy-dummy"
+      state_dir: "/var/lib/liberator"
+      # Диапазон policy-routing таблиц/приоритетов; должен быть свободен.
+      route_table_base: 20000
+      rule_priority_base: 20000
+      # Пул локальных source-IP для Xray. Назначаются /32 на dummy-интерфейс
+      # и не должны пересекаться с overlay и реальными сетями.
+      local_cidr: "198.18.0.0/15"
+      inbounds:
+        - protocol: "vless"
+          listen: "0.0.0.0"
+          port: 443
+          dest: "www.microsoft.com:443"
+          # Приватный ключ REALITY в base64url (xray x25519).
+          private_key: "CHANGE_ME_reality_private_key_base64url"
+          server_names: ["www.microsoft.com"]
+          short_ids: ["0123456789abcdef"]
+          flow: "xtls-rprx-vision"
+        - protocol: "hysteria2"
+          listen: "0.0.0.0"
+          port: 8443
+          cert_file: "/certs/fullchain.pem"
+          key_file: "/certs/key.pem"
+          sni: "vpn.example.com"
+      users:
+        - name: "alice@example.com"
+          protocol: "vless"
+          # UUID (xray uuid).
+          auth: "CHANGE_ME_uuid"
+          virtual_ip: "100.64.0.10"
+        - name: "bob@example.com"
+          protocol: "hysteria2"
+          # Пароль Hysteria2.
+          auth: "CHANGE_ME_hysteria2_password"
+          virtual_ip: "100.64.0.11"
+
 # Нужно только когда api.base_url пуст (локальный запуск без API). В проде
 # global_cidr и gateway_addr нода получает из API при регистрации.
 # 100.64.0.0/10 (CGNAT, RFC 6598) — не пересекается с pod/service CIDR и LAN;
@@ -64,8 +113,8 @@ mesh:
 server:
   listen_addr: ":8080"
 
-# Восходящий API (control-plane). Нода сама регистрируется, шлёт heartbeat и
-# тянет желаемое состояние (клиенты/правила/квоты) по контракту /v1/ctrl.
+# Восходящий API (control-plane). Нода enroll'ится по одноразовому токену,
+# шлёт heartbeat и тянет желаемое состояние (клиенты/правила/квоты) по /v1/node.
 api:
   base_url: "http://liberator-api.default.svc.cluster.local:8080"
   region_code: "de"
@@ -73,3 +122,16 @@ api:
   mesh_endpoint: "liberator-nodes-0.default.svc.cluster.local:9000" # QUIC listen (host:port), форвардинг
   sync_interval: 5s
   heartbeat_interval: 10s
+
+  # Первичная регистрация: одноразовый токен из
+  # POST /v1/admin/cluster/enrollment-tokens. После enroll токен не нужен:
+  # нода хранит node_id + per-node secret в state_dir/node-identity.json.
+  enrollment_token: "CHANGE_ME_enrollment_token"
+  node_name: "liberator-node-1"
+  zone: "dc1"
+  provider: "self-hosted"
+  agent_version: "dev"
+  labels:
+    role: "hybrid"
+  state_dir: "/var/lib/liberator"
+  # identity_file: "/etc/liberator/node-identity.json" # альтернатива state_dir

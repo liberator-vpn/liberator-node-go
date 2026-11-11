@@ -95,25 +95,56 @@ func (n *MeshNode) SendTo(ctx context.Context, endpoint string, data []byte) err
 		return err
 	}
 
+	// Быстрый путь: соединение уже в пуле. Не держим outboundMu во время
+	// Dial — иначе один медленный/недоступный пир блокирует отправку всем.
 	n.outboundMu.Lock()
 	pc := n.outbound[key]
-	if pc == nil {
-		pc, err = n.transport.Dial(ctx, key)
-		if err != nil {
-			n.outboundMu.Unlock()
+	n.outboundMu.Unlock()
+	if pc != nil {
+		return pc.SendDatagram(data)
+	}
+
+	pc, err = n.transport.Dial(ctx, key)
+	if err != nil {
+		return err
+	}
+	if pc.ID() == n.localID {
+		_ = pc.Close()
+		return fmt.Errorf("dialed self %s", endpoint)
+	}
+	created := true
+	if err := n.engine.HandleConnection(ctx, pc); err != nil {
+		// Соединение отклонено (например, уже есть живая сессия с этим
+		// пиром). Не кладём закрытый conn в пул: используем существующую
+		// сессию, если она есть, иначе отдаём ошибку.
+		if s, ok := n.registry.Get(pc.ID()); ok {
+			pc = s.Conn
+			created = false
+		} else {
 			return err
 		}
-		if pc.ID() == n.localID {
-			_ = pc.Close()
-			n.outboundMu.Unlock()
-			return fmt.Errorf("dialed self %s", endpoint)
-		}
-		n.outbound[key] = pc
-		n.engine.HandleConnection(ctx, pc)
 	}
+
+	n.outboundMu.Lock()
+	if existing := n.outbound[key]; existing != nil {
+		n.outboundMu.Unlock()
+		// Пока мы звонили, соединение уже установила другая горутина.
+		// Закрываем только то, что создали сами, и только если оно лишнее.
+		if created && existing != pc {
+			_ = pc.Close()
+		}
+		return existing.SendDatagram(data)
+	}
+	n.outbound[key] = pc
 	n.outboundMu.Unlock()
 
-	return pc.SendDatagram(data)
+	if err := pc.SendDatagram(data); err != nil {
+		// Соединение, созданное на data-path, не имеет supervisor'а.
+		// Убираем его из пула, чтобы следующая отправка переподключилась.
+		n.dropOutbound(key, pc)
+		return err
+	}
+	return nil
 }
 
 // resolveKey приводит endpoint к каноническому "ip:port" (резолвит hostname).
@@ -151,7 +182,9 @@ func (n *MeshNode) Run() {
 				_ = conn.Close()
 				continue
 			}
-			n.engine.HandleConnection(n.ctx, conn)
+			// Дубликаты/self отклоняются внутри engine; отдельная реакция
+			// не нужна — соединение уже закрыто.
+			_ = n.engine.HandleConnection(n.ctx, conn)
 		}
 	})
 
@@ -262,17 +295,37 @@ func (n *MeshNode) isSelfHost(addr string) bool {
 	return ok
 }
 
+const (
+	superviseBackoffMin = 2 * time.Second
+	superviseBackoffMax = 60 * time.Second
+)
+
 // supervise держит одно соединение к addr и переподключается при обрыве.
 func (n *MeshNode) supervise(ctx context.Context, addr string) {
-	backoff := 2 * time.Second
+	backoff := superviseBackoffMin
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 
-		pc, err := n.transport.Dial(ctx, addr)
+		// Ключ outbound должен совпадать с тем, что использует SendTo
+		// (канонический ip:port), иначе hostname из static-списка и
+		// IP из директории создают два соединения к одной ноде.
+		key, err := n.resolveKey(addr)
 		if err != nil {
-			time.Sleep(backoff)
+			if !sleepCtx(ctx, backoff) {
+				return
+			}
+			backoff = nextBackoff(backoff)
+			continue
+		}
+
+		pc, err := n.transport.Dial(ctx, key)
+		if err != nil {
+			if !sleepCtx(ctx, backoff) {
+				return
+			}
+			backoff = nextBackoff(backoff)
 			continue
 		}
 
@@ -282,20 +335,75 @@ func (n *MeshNode) supervise(ctx context.Context, addr string) {
 			return
 		}
 
+		created := true
+		if err := n.engine.HandleConnection(ctx, pc); err != nil {
+			// Уже есть живая сессия с этим пиром — переиспользуем её.
+			if s, ok := n.registry.Get(pc.ID()); ok {
+				pc = s.Conn
+				created = false
+			} else {
+				_ = pc.Close()
+				if !sleepCtx(ctx, backoff) {
+					return
+				}
+				backoff = nextBackoff(backoff)
+				continue
+			}
+		}
+
 		n.outboundMu.Lock()
-		n.outbound[addr] = pc
+		if existing := n.outbound[key]; existing != nil {
+			n.outboundMu.Unlock()
+			if created && existing != pc {
+				_ = pc.Close()
+			}
+			// Пул уже держит соединение к этому пиру; не плодим второе.
+			select {
+			case <-ctx.Done():
+				return
+			case <-existing.Context().Done():
+				n.dropOutbound(key, existing)
+				backoff = nextBackoff(backoff)
+				continue
+			}
+		}
+		n.outbound[key] = pc
 		n.outboundMu.Unlock()
-		n.engine.HandleConnection(ctx, pc)
+
+		// Соединение установлено — сбрасываем backoff.
+		backoff = superviseBackoffMin
 
 		select {
 		case <-ctx.Done():
-			n.dropOutbound(addr, pc)
+			n.dropOutbound(key, pc)
 			return
 		case <-pc.Context().Done():
 			// соединение умерло — переподключаемся
 		}
-		n.dropOutbound(addr, pc)
-		time.Sleep(backoff)
+		n.dropOutbound(key, pc)
+		if !sleepCtx(ctx, backoff) {
+			return
+		}
+		backoff = nextBackoff(backoff)
+	}
+}
+
+func nextBackoff(d time.Duration) time.Duration {
+	d *= 2
+	if d > superviseBackoffMax {
+		return superviseBackoffMax
+	}
+	return d
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
 	}
 }
 

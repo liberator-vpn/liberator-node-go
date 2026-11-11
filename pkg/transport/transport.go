@@ -27,11 +27,20 @@ type Transport interface {
 
 	DeltaChan() chan TransportPeerStats
 	Type() string
+	// Protocols — имена протоколов, которые обслуживает транспорт
+	// ("awg", "vless", "hysteria2"). Нода использует их, чтобы направлять
+	// сессии из /state в нужный транспорт.
+	Protocols() []string
 }
 
 type Router interface {
 	AddRoutingObject(routingtable.RoutingObject) error
 	DeleteRoutingObject(uint32) error
+
+	// GetRemoteRoutingObject нужен транспорту, чтобы проверить, обёрнута ли
+	// сессия пира в шейпер (RoutingObject живёт в таблице роутера, а не в
+	// транспорте).
+	GetRemoteRoutingObject(uint32) (routingtable.RoutingObject, bool)
 
 	NewMessageCopyFrom(data []byte) (*dgmessage.DatagramMessage, error)
 	HandleTransportPacket(packet *dgmessage.DatagramMessage)

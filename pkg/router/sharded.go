@@ -18,21 +18,25 @@ type datagramMessageInfo struct {
 }
 
 func (r *Router) HandleTunPacket(packet *dgmessage.DatagramMessage) {
-	r.getWorker(packet.HoleInfo) <- datagramMessageInfo{
-		Msg:  packet,
-		From: fromTun,
-	}
+	r.enqueue(packet, fromTun)
 }
 func (r *Router) HandleMeshPacket(packet *dgmessage.DatagramMessage) {
-	r.getWorker(packet.HoleInfo) <- datagramMessageInfo{
-		Msg:  packet,
-		From: fromMesh,
-	}
+	r.enqueue(packet, fromMesh)
 }
 func (r *Router) HandleTransportPacket(packet *dgmessage.DatagramMessage) {
-	r.getWorker(packet.HoleInfo) <- datagramMessageInfo{
-		Msg:  packet,
-		From: fromTransport,
+	r.enqueue(packet, fromTransport)
+}
+
+// enqueue отдаёт пакет шардовому воркеру. Обычная отправка — backpressure
+// для источника, но с выходом по ctx: на shutdown воркеры уже вышли и канал
+// никто не читает, иначе TUN readLoop / QUIC-сессия / приём AWG висели бы
+// навсегда, не давая приложению завершиться.
+func (r *Router) enqueue(packet *dgmessage.DatagramMessage, from fromType) {
+	worker := r.getWorker(packet.HoleInfo)
+	select {
+	case worker <- datagramMessageInfo{Msg: packet, From: from}:
+	case <-r.ctx.Done():
+		packet.Free()
 	}
 }
 

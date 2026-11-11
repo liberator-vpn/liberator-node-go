@@ -32,6 +32,7 @@ type ClientParams struct {
 	ClientIP      string // Формат "10.8.0.2/32"
 	DNSServer1    string
 	DNSServer2    string
+	MTU           int
 
 	// Параметры обфускации передаем строками, чтобы поддержать любой формат
 	H1, H2, H3, H4     string
@@ -131,8 +132,13 @@ func generateURI(p *ClientParams) (string, error) {
 	clientPubB64 := hexToBase64(p.ClientPubKey) // клиенту нужен и его публичный ключ
 
 	// 3. Формируем внутренний объект last_config
+	mtu := p.MTU
+	if mtu <= 0 {
+		mtu = 1280
+	}
 	lastCfg := lastConfigInner{
 		H1: p.H1, H2: p.H2, H3: p.H3, H4: p.H4,
+		I1: p.I1, I2: p.I2, I3: p.I3, I4: p.I4, I5: p.I5,
 		Jc: p.Jc, Jmin: p.Jmin, Jmax: p.Jmax,
 		S1: p.S1, S2: p.S2, S3: p.S3, S4: p.S4,
 		AllowedIPs:          []string{"0.0.0.0/0", "::/0"},
@@ -142,7 +148,7 @@ func generateURI(p *ClientParams) (string, error) {
 		ClientPubKey:        clientPubB64,
 		Config:              iniStr,
 		HostName:            p.ServerAddr,
-		Mtu:                 "1280",
+		Mtu:                 strconv.Itoa(mtu),
 		PersistentKeepAlive: "25",
 		Port:                p.ServerPort,
 		PskKey:              p.ServerPSK,
@@ -215,7 +221,11 @@ func buildINIString(p *ClientParams) string {
 
 	sb.WriteString("[Interface]\n")
 	sb.WriteString(fmt.Sprintf("Address = %s\n", p.ClientIP))
-	sb.WriteString(fmt.Sprintf("DNS = %s\n", p.DNSServer1))
+	if p.DNSServer2 != "" && p.DNSServer2 != p.DNSServer1 {
+		sb.WriteString(fmt.Sprintf("DNS = %s, %s\n", p.DNSServer1, p.DNSServer2))
+	} else {
+		sb.WriteString(fmt.Sprintf("DNS = %s\n", p.DNSServer1))
+	}
 	sb.WriteString(fmt.Sprintf("PrivateKey = %s\n", p.ClientPrivKey))
 
 	sb.WriteString(fmt.Sprintf("Jc = %s\n", p.Jc))
@@ -264,11 +274,18 @@ func (awg *AWGTransport) GenerateClientConnectionString(peer *model.Peer, addr s
 		ClientIP:   netutils.Uint32ToIPString(peer.VirtualIP) + "/32",
 		DNSServer1: "8.8.8.8",
 		DNSServer2: "1.1.1.1",
+		MTU:        awg.cfg.MTU,
 
 		H1: awg.cfg.H1,
 		H2: awg.cfg.H2,
 		H3: awg.cfg.H3,
 		H4: awg.cfg.H4,
+
+		I1: awg.cfg.I1,
+		I2: awg.cfg.I2,
+		I3: awg.cfg.I3,
+		I4: awg.cfg.I4,
+		I5: awg.cfg.I5,
 
 		Jc:   strconv.Itoa(awg.cfg.Jc),
 		Jmin: strconv.Itoa(awg.cfg.JMin),

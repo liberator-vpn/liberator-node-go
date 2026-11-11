@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liberator-vpn/liberator-node-go/internal/apiclient"
 	"github.com/liberator-vpn/liberator-node-go/internal/appconfig"
 
 	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
@@ -23,6 +22,7 @@ import (
 	"github.com/liberator-vpn/liberator-node-go/pkg/services/peersmanager"
 	"github.com/liberator-vpn/liberator-node-go/pkg/transport"
 	"github.com/liberator-vpn/liberator-node-go/pkg/transport/awg"
+	"github.com/liberator-vpn/liberator-node-go/pkg/transport/xray"
 )
 
 type App struct {
@@ -32,11 +32,15 @@ type App struct {
 
 	router *router.Router
 
-	node          *mesh.MeshNode
-	nodeID        string
-	tunIface      *iface.TUNIface
-	transports    safemap.Safemap[string, transport.Transport]
-	transportName string // имя клиентского транспорта (напр. "awg")
+	node       *mesh.MeshNode
+	nodeID     string
+	apiNodeID  string // node_id, выданный API при enrollment
+	apiSecret  string // per-node secret для /v1/node/*
+	tunIface   *iface.TUNIface
+	transports safemap.Safemap[string, transport.Transport]
+	// protocol -> имя транспорта. Позволяет направлять сессии из /state
+	// в awg/vless/hysteria2, а не в один «последний зарегистрированный».
+	protocolTransport map[string]string
 
 	peersManager *peersmanager.PeersManager
 
@@ -49,9 +53,11 @@ type App struct {
 }
 
 // nodeIdentity возвращает стабильную идентичность ноды. node_id в конфиге нет:
-// в k8s её выставляет окружение (downward API) — POD_NAME/POD_UID.
+// в k8s её выставляет окружение. LIBERATOR_NODE_ID/NODE_NAME приоритетнее
+// POD_NAME/POD_UID, потому что имя пода меняется при рестарте, а API
+// upsert-ит ноду по hostname — иначе каждый рестарт создавал бы новую ноду.
 func nodeIdentity() string {
-	for _, k := range []string{"POD_NAME", "POD_UID", "HOSTNAME"} {
+	for _, k := range []string{"LIBERATOR_NODE_ID", "NODE_NAME", "POD_NAME", "POD_UID", "HOSTNAME"} {
 		if v := os.Getenv(k); v != "" {
 			return v
 		}
@@ -85,11 +91,12 @@ func validateSecret(secret string) error {
 func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	app := &App{
-		ctx:        ctx,
-		cancel:     cancel,
-		cfg:        cfg,
-		transports: safemap.New[string, transport.Transport](),
-		fwRules:    make(map[uint64]struct{}),
+		ctx:               ctx,
+		cancel:            cancel,
+		cfg:               cfg,
+		transports:        safemap.New[string, transport.Transport](),
+		protocolTransport: make(map[string]string),
+		fwRules:           make(map[uint64]struct{}),
 	}
 	initialized := false
 	defer func() {
@@ -107,22 +114,20 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	nodeID := nodeIdentity()
 	app.nodeID = nodeID
 
-	// global_cidr и gateway ноды — источник истины API (а не конфиг). При наличии
-	// API регистрируемся сразу и берём их из ответа; конфиг — локальный фолбэк.
+	// global_cidr и gateway ноды — источник истины API. При наличии API
+	// загружаем сохранённую identity или enroll'имся по одноразовому токену.
 	if cfg.API.BaseURL != "" {
-		client := apiclient.New(cfg.API.BaseURL, secret)
-		if client == nil {
-			return nil, fmt.Errorf("invalid api config")
-		}
-		reg, err := client.Register(ctx, nodeID, cfg.API.PublicEndpoint, cfg.API.MeshEndpoint, cfg.API.RegionCode)
+		identity, err := app.ensureIdentity(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("api register (network params): %w", err)
+			return nil, err
 		}
-		if reg.GatewayAddr != "" {
-			cfg.VPN.GatewayAddr = reg.GatewayAddr
+		app.apiNodeID = identity.NodeID
+		app.apiSecret = identity.Secret
+		if identity.GatewayAddr != "" {
+			cfg.VPN.GatewayAddr = identity.GatewayAddr
 		}
-		if reg.GlobalCIDR != "" {
-			cfg.VPN.GlobalCIDR = reg.GlobalCIDR
+		if identity.GlobalCIDR != "" {
+			cfg.VPN.GlobalCIDR = identity.GlobalCIDR
 		}
 	}
 
@@ -175,12 +180,29 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to create transport %s: %w", name, err)
 			}
+		case "xray":
+			// Xray принимает VLESS+REALITY и Hysteria2 (оба — клиентские
+			// протоколы) и отдаёт расшифрованный IP-трафик в proxy-TUN,
+			// откуда нода забирает его в общий роутер.
+			icfg, err := xray.ParseConfig(iconf)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse transport %s config: %v", name, err)
+			}
+			trp, err = xray.New(ctx, icfg, app.router, nodeID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create transport %s: %w", name, err)
+			}
 		default:
 			return nil, fmt.Errorf("unknown transport type: %s", typ)
 		}
 		app.transports.Set(name, trp)
 		app.peersManager.RegisterTransport(name, trp)
-		app.transportName = name
+		for _, protocol := range trp.Protocols() {
+			if existing, ok := app.protocolTransport[protocol]; ok && existing != name {
+				return nil, fmt.Errorf("protocol %q is served by both %q and %q", protocol, existing, name)
+			}
+			app.protocolTransport[protocol] = name
+		}
 	}
 
 	app.httpMux = http.NewServeMux()
@@ -214,7 +236,7 @@ func (app *App) Run() error {
 	app.peersManager.StartUsageCollector(app.ctx)
 	// Пассивный контур к API (если настроен): регистрация + sync желаемого состояния.
 	if app.cfg.API.BaseURL != "" {
-		workers.Go(func() { app.syncLoop(app.ctx, app.cfg.Auth.Secret, app.transportName) })
+		workers.Go(func() { app.syncLoop(app.ctx) })
 	}
 
 	serveErr := make(chan error, 1)
@@ -258,6 +280,13 @@ func (app *App) metricsLoop(ctx context.Context) {
 
 func (app *App) stopRuntime() {
 	app.cancel()
+	// Транспорты могут владеть TUN/dummy/policy-routing и дочерним Xray.
+	// Закрываем их и на аварийном пути app.New, когда Run ещё не стартовал.
+	app.transports.Foreach(func(_ string, t transport.Transport) {
+		if c, ok := t.(interface{ Close() }); ok {
+			c.Close()
+		}
+	})
 	if app.node != nil {
 		app.node.Close()
 	}

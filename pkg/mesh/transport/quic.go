@@ -80,6 +80,9 @@ type quicPeerConnection struct {
 	conn        *quic.Conn
 	isInitiator bool
 
+	nextFragmentID atomic.Uint32
+	reassembler    *datagramReassembler
+
 	totalSent atomic.Uint64
 	totalRecv atomic.Uint64
 }
@@ -201,6 +204,7 @@ func wrapConnection(qConn *quic.Conn, isInitiator bool) (PeerConnection, error) 
 		id:          nodeID,
 		conn:        qConn,
 		isInitiator: isInitiator,
+		reassembler: newDatagramReassembler(),
 	}, nil
 }
 
@@ -208,12 +212,38 @@ func wrapConnection(qConn *quic.Conn, isInitiator bool) (PeerConnection, error) 
 func (pc *quicPeerConnection) SendDatagram(data []byte) error {
 	metrics.ObserveTraffic(metrics.DirOut, metrics.PeerNode, metrics.NoProtocol, len(data))
 	pc.totalSent.Add(uint64(len(data)))
-	return pc.conn.SendDatagram(data)
+
+	if len(data) <= maxFragmentPayload {
+		return pc.conn.SendDatagram(data)
+	}
+	// Пакет больше безопасного размера QUIC DATAGRAM: режем на фрагменты.
+	// Без этого SendDatagram возвращал DatagramTooLargeError, и любой
+	// полноразмерный пакет overlay терялся на mesh-хопе.
+	id := pc.nextFragmentID.Add(1)
+	for _, frag := range fragmentDatagram(id, data) {
+		if err := pc.conn.SendDatagram(frag); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (pc *quicPeerConnection) RecvDatagram(ctx context.Context) ([]byte, error) {
 	data, err := pc.conn.ReceiveDatagram(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if len(data) > 0 && data[0] == fragmentMagic {
+		packet, ready, err := pc.reassembler.add(data)
+		if err != nil {
+			// Битый/неполный фрагмент не должен рвать всю QUIC-сессию:
+			// дропаем его, TCP-поток повторит пакет, UDP потеряется.
+			return nil, nil
+		}
+		if !ready {
+			// Ещё не все фрагменты: вызывающий просто продолжит читать.
+			return nil, nil
+		}
+		data = packet
 	}
 	metrics.ObserveTraffic(metrics.DirIn, metrics.PeerNode, metrics.NoProtocol, len(data))
 	pc.totalRecv.Add(uint64(len(data)))

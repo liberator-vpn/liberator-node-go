@@ -47,14 +47,20 @@ type FirewallEngine interface {
 	DumpRules() []RuleDump
 }
 
-type firewallEngineImpl struct {
-	rulesByAddr map[uint32][]uint64
-	rulesByID   map[uint64]PortRule
-	rulesMu     sync.RWMutex
+// ruleKey — полный ключ правила. Раньше он упаковывался в uint64
+// (16 бит short node id + 48 бит локального RuleID), из-за чего RuleID
+// усекался, а пары (recipient, sender) с разными старшими битами IP
+// коллизировали. Держим ключ структурой — без потерь и без выгорания
+// 16-битного пространства node id.
+type ruleKey struct {
+	nodeID string
+	ruleID uint64
+}
 
-	shortIdByNodeId map[string]uint16
-	nextShortID     uint16
-	nodeIDMu        sync.Mutex
+type firewallEngineImpl struct {
+	rulesByAddr map[uint32][]ruleKey
+	rulesByID   map[ruleKey]PortRule
+	rulesMu     sync.RWMutex
 
 	holes sync.Map // map[string]hole | Активные дырки (stateful)
 }
@@ -68,9 +74,8 @@ type hole struct {
 
 func New() FirewallEngine {
 	return &firewallEngineImpl{
-		rulesByAddr:     make(map[uint32][]uint64),
-		rulesByID:       make(map[uint64]PortRule),
-		shortIdByNodeId: make(map[string]uint16),
+		rulesByAddr: make(map[uint32][]ruleKey),
+		rulesByID:   make(map[ruleKey]PortRule),
 	}
 }
 
@@ -78,33 +83,31 @@ func (fw *firewallEngineImpl) AddRule(index PortRuleIndex, rule PortRule) bool {
 	if len(index.NodeID) == 0 {
 		return false
 	}
-	shortNodeID := fw.getOrCreateShortID(index.NodeID)
-	ruleID := makeGlobalKey(shortNodeID, index.RuleID)
+	key := ruleKey{nodeID: index.NodeID, ruleID: index.RuleID}
 
 	fw.rulesMu.Lock()
 	defer fw.rulesMu.Unlock()
 
-	if _, ex := fw.rulesByID[ruleID]; ex {
+	if _, ex := fw.rulesByID[key]; ex {
 		return false
 	}
 
 	rule.index = index
-	fw.rulesByID[ruleID] = rule
-	fw.rulesByAddr[rule.Address] = append(fw.rulesByAddr[rule.Address], ruleID)
+	fw.rulesByID[key] = rule
+	fw.rulesByAddr[rule.Address] = append(fw.rulesByAddr[rule.Address], key)
 	return true
 }
 
 func (fw *firewallEngineImpl) ExistsRule(index PortRuleIndex) bool {
-	shortNodeID, ex := fw.getShortID(index.NodeID)
-	if !ex {
+	if len(index.NodeID) == 0 {
 		return false
 	}
-	ruleID := makeGlobalKey(shortNodeID, index.RuleID)
+	key := ruleKey{nodeID: index.NodeID, ruleID: index.RuleID}
 
-	fw.rulesMu.Lock()
-	defer fw.rulesMu.Unlock()
+	fw.rulesMu.RLock()
+	defer fw.rulesMu.RUnlock()
 
-	_, ex = fw.rulesByID[ruleID]
+	_, ex := fw.rulesByID[key]
 	return ex
 }
 
@@ -136,20 +139,19 @@ func (fw *firewallEngineImpl) DumpRules() []RuleDump {
 }
 
 func (fw *firewallEngineImpl) RemoveRule(index PortRuleIndex) bool {
-	shortNodeID, ex := fw.getShortID(index.NodeID)
-	if !ex {
+	if len(index.NodeID) == 0 {
 		return false
 	}
-	ruleID := makeGlobalKey(shortNodeID, index.RuleID)
+	key := ruleKey{nodeID: index.NodeID, ruleID: index.RuleID}
 
 	fw.rulesMu.Lock()
-	rule, ok := fw.rulesByID[ruleID]
+	rule, ok := fw.rulesByID[key]
 	if ok {
-		delete(fw.rulesByID, ruleID)
+		delete(fw.rulesByID, key)
 
 		ids := fw.rulesByAddr[rule.Address]
 		for i, id := range ids {
-			if id == ruleID {
+			if id == key {
 				fw.rulesByAddr[rule.Address] = append(ids[:i], ids[i+1:]...)
 				break
 			}
@@ -277,29 +279,4 @@ func makeFlowKey(srcIP, dstIP uint32, srcPort, dstPort uint16, protocol string) 
 	} else {
 		return fmt.Sprintf("%d|%d|%d|%d|%s", dstIP, srcIP, dstPort, srcPort, protocol)
 	}
-}
-
-func (fw *firewallEngineImpl) getShortID(nodeHash string) (uint16, bool) {
-	fw.nodeIDMu.Lock()
-	defer fw.nodeIDMu.Unlock()
-
-	id, exists := fw.shortIdByNodeId[nodeHash]
-	return id, exists
-}
-
-func (fw *firewallEngineImpl) getOrCreateShortID(nodeHash string) uint16 {
-	fw.nodeIDMu.Lock()
-	defer fw.nodeIDMu.Unlock()
-
-	if id, exists := fw.shortIdByNodeId[nodeHash]; exists {
-		return id
-	}
-
-	// Регистрируем новую ноду, инкрементируя счетчик
-	fw.nextShortID++
-	fw.shortIdByNodeId[nodeHash] = fw.nextShortID
-	return fw.nextShortID
-}
-func makeGlobalKey(shortID uint16, localRuleID uint64) uint64 {
-	return (uint64(shortID) << 48) | (localRuleID & 0x0000FFFFFFFFFFFF)
 }

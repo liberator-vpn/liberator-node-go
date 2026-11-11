@@ -26,6 +26,9 @@ type RouterConfig struct {
 
 // ClientConfig — желаемый клиент, приходящий из state API.
 type ClientConfig struct {
+	Protocol       string   `yaml:"protocol"`
+	Name           string   `yaml:"name"`
+	Auth           string   `yaml:"auth"` // VLESS UUID / Hysteria2 password
 	VirtualIP      uint32   `yaml:"virtual_ip"`
 	AwgPublicKey   string   `yaml:"awg_public_key"`
 	TrafficLimitGb *float64 `yaml:"traffic_limit_gb"`
@@ -60,6 +63,17 @@ type APIConfig struct {
 	MeshEndpoint      string        `yaml:"mesh_endpoint"`   // QUIC endpoint ноды (host:port) для форвардинга
 	SyncInterval      time.Duration `yaml:"sync_interval"`
 	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
+
+	// Первичная регистрация ноды в API. Токен одноразовый; после enroll
+	// нода хранит node_id+secret в state_dir и больше токен не использует.
+	EnrollmentToken string            `yaml:"enrollment_token"`
+	NodeName        string            `yaml:"node_name"`
+	Zone            string            `yaml:"zone"`
+	Provider        string            `yaml:"provider"`
+	AgentVersion    string            `yaml:"agent_version"`
+	Labels          map[string]string `yaml:"labels"`
+	StateDir        string            `yaml:"state_dir"`
+	IdentityFile    string            `yaml:"identity_file"`
 }
 
 // AppConfig общая структура конфигурации
