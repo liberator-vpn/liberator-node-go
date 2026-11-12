@@ -29,7 +29,8 @@ VPN-шлюз (egress/ingress нода) в распределённой сети 
     (создание/обновление/удаление awg-пиров по `peer_ip`+`client_public_key`,
     лимиты из квот);
   - применяет **firewall-pairs** (`/state.firewall_pairs`) — разрешённые
-    client→client потоки по IP-парам (enforcement на источнике);
+    client→client потоки по IP-парам (enforcement на источнике). API компилирует
+    их из `VirtualNetwork`: полный mesh внутри сети и изоляция между сетями;
   - тянет глобальную директорию клиентов (`/v1/node/clients`) и ставит **remote-маршруты**:
     клиент другой ноды → пересылка датаграмм через QUIC-пул на её `mesh_endpoint`
     (client→client);
