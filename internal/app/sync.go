@@ -10,6 +10,7 @@ import (
 	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/netutils"
 	"github.com/liberator-vpn/liberator-node-go/pkg/services/peersmanager"
+	"github.com/liberator-vpn/liberator-node-go/pkg/transport/awg"
 	"github.com/liberator-vpn/liberator-node-go/pkg/userrules"
 )
 
@@ -170,7 +171,7 @@ func (app *App) reconcileState(ctx context.Context, client *apiclient.Client, no
 		}
 		protocol := s.Protocol
 		if protocol == "" {
-			protocol = "awg"
+			protocol = awg.ProtocolAmneziaV2
 		}
 		transportName, ok := app.protocolTransport[protocol]
 		if !ok {
@@ -180,7 +181,7 @@ func (app *App) reconcileState(ctx context.Context, client *apiclient.Client, no
 		// AWG не может поднять пира без публичного ключа. Для VLESS UUID
 		// и Hysteria2-пароль тоже приходят в client_public_key; если пусто,
 		// proxy-транспорт сгенерирует auth сам.
-		if protocol == "awg" && s.ClientPublicKey == "" {
+		if awg.IsAWGProtocol(protocol) && s.ClientPublicKey == "" {
 			continue
 		}
 		ipToSession[ip] = s.ID

@@ -3,6 +3,7 @@ package awg
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"net"
@@ -12,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amnezia-vpn/amneziawg-go/conn"
-	amneziawgdevice "github.com/amnezia-vpn/amneziawg-go/device"
-	"github.com/amnezia-vpn/amneziawg-go/tun"
+	"github.com/amnezia-vpn/amneziawg-go/v3/conn"
+	amneziawgdevice "github.com/amnezia-vpn/amneziawg-go/v3/device"
+	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/dgmessage"
 	"github.com/liberator-vpn/liberator-node-go/pkg/model"
 	"github.com/liberator-vpn/liberator-node-go/pkg/routingtable"
@@ -250,4 +251,112 @@ func ipToUint32(ip net.IP) uint32 {
 
 func ipString(v uint32) string {
 	return net.IPv4(byte(v>>24), byte(v>>16), byte(v>>8), byte(v)).String()
+}
+
+func TestAWG31EndToEnd(t *testing.T) {
+	port := freeUDPPort(t)
+
+	headerRaw := make([]byte, 32)
+	if _, err := rand.Read(headerRaw); err != nil {
+		t.Fatal(err)
+	}
+	headerB64 := base64.StdEncoding.EncodeToString(headerRaw)
+	headerHex := hex.EncodeToString(headerRaw)
+
+	serverPriv := randHex(t)
+	serverCfg := &TransportConfig{
+		Protocol: ProtocolAmneziaV31,
+		MTU:      1376, ListenPort: port, PrivateKey: serverPriv,
+		H1: "1245955480-1579617642", H2: "1827874969-1854585193",
+		H3: "2137919667-2143439009", H4: "2147159423-2147402519",
+		Jc: 5, JMin: 70, JMax: 120, S1: 48, S2: 27, S3: 30, S4: 13,
+		HeaderProtectionKey:    headerB64,
+		ContentPaddingAddition: "0-32",
+		RekeyAfterTime:         "120-180",
+		RekeyTimeout:           "5-10",
+		RejectAfterTime:        "180-240",
+		KeepaliveTimeout:       "10-25",
+		MaxHandshakeAttempts:   "10-15",
+		RandomTrailers:         true,
+		DisableCookies:         true,
+	}
+	router := newTestRouter()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	srv, err := New(ctx, serverCfg, router, "server")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cancel(); srv.Close() }()
+
+	clientPriv := randHex(t)
+	clientPub, err := ServerPublicKey(clientPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverPub, err := ServerPublicKey(serverPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientVIP := ipToUint32(net.ParseIP("100.64.0.3"))
+	if err := srv.CreatePeer(&model.Peer{VirtualIP: clientVIP, AwgPublicKey: clientPub}); err != nil {
+		t.Fatal(err)
+	}
+
+	ct := newMemTun(1376)
+	clientDev := amneziawgdevice.NewDevice(ct, conn.NewDefaultBind(), amneziawgdevice.NewLogger(amneziawgdevice.LogLevelError, "(client31) "))
+	defer clientDev.Close()
+	deviceIPC := "private_key=" + clientPriv + "\nlisten_port=0\n" +
+		"h1=" + serverCfg.H1 + "\nh2=" + serverCfg.H2 + "\nh3=" + serverCfg.H3 + "\nh4=" + serverCfg.H4 + "\n" +
+		"s1=" + itoa(serverCfg.S1) + "\ns2=" + itoa(serverCfg.S2) + "\ns3=" + itoa(serverCfg.S3) + "\ns4=" + itoa(serverCfg.S4) + "\n" +
+		"jc=" + itoa(serverCfg.Jc) + "\njmin=" + itoa(serverCfg.JMin) + "\njmax=" + itoa(serverCfg.JMax) + "\n" +
+		"header_protection_key=" + headerHex + "\n" +
+		"content_padding_addition=" + serverCfg.ContentPaddingAddition + "\n" +
+		"rekey_after_time=" + serverCfg.RekeyAfterTime + "\n" +
+		"rekey_timeout=" + serverCfg.RekeyTimeout + "\n" +
+		"reject_after_time=" + serverCfg.RejectAfterTime + "\n" +
+		"keepalive_timeout=" + serverCfg.KeepaliveTimeout + "\n" +
+		"max_handshake_attempts=" + serverCfg.MaxHandshakeAttempts + "\n" +
+		"random_trailers=true\ndisable_cookies=true\n"
+	if err := clientDev.IpcSet(deviceIPC); err != nil {
+		t.Fatal(err)
+	}
+	peerIPC := "public_key=" + serverPub + "\nendpoint=127.0.0.1:" + itoa(port) + "\nallowed_ip=0.0.0.0/0\n" +
+		"persistent_keepalive_interval=1\n"
+	if err := clientDev.IpcSet(peerIPC); err != nil {
+		t.Fatal(err)
+	}
+	if err := clientDev.Up(); err != nil {
+		t.Fatal(err)
+	}
+
+	pkt := udpPacket(clientVIP, 0x08080808, 12345, 53, []byte("ping31"))
+	ct.toDevice <- pkt
+	select {
+	case got := <-router.in:
+		defer got.Free()
+		if got.HoleInfo.SrcIP != clientVIP {
+			t.Fatalf("server got src %s", ipString(got.HoleInfo.SrcIP))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("client packet did not reach server")
+	}
+
+	route, ok := router.GetRemoteRoutingObject(clientVIP)
+	if !ok {
+		t.Fatal("route object missing")
+	}
+	reply := udpPacket(0x08080808, clientVIP, 53, 12345, []byte("pong31"))
+	if err := route.SendDatagram(reply); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-ct.fromDev:
+		if string(got[28:]) != "pong31" {
+			t.Fatalf("client got payload %q", got[28:])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server packet did not reach client")
+	}
 }

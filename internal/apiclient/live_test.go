@@ -35,7 +35,7 @@ func TestLiveNodeContract(t *testing.T) {
 		Token: token, Name: name, Hostname: name,
 		PublicEndpoint: "127.0.0.1:2200", MeshEndpoint: "127.0.0.1:9000",
 		RegionCode: "test", AgentVersion: "test",
-		Protocols: []Protocol{{Protocol: "awg", Capacity: 10}},
+		Protocols: []Protocol{{Protocol: "amnesiav2", Capacity: 10}},
 	})
 	if err != nil {
 		t.Fatal(err)

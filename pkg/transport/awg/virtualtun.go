@@ -12,7 +12,7 @@ import (
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/safemap"
 	"github.com/liberator-vpn/liberator-node-go/pkg/transport"
 
-	"github.com/amnezia-vpn/amneziawg-go/tun"
+	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 )
 
 // ---------------------------------------------------------
@@ -20,10 +20,11 @@ import (
 // ---------------------------------------------------------
 
 type ChannelTun struct {
-	ctx    context.Context
-	in     <-chan []byte
-	router transport.Router
-	mtu    int
+	ctx      context.Context
+	in       <-chan []byte
+	router   transport.Router
+	mtu      int
+	protocol string
 
 	events    chan tun.Event
 	closeOnce sync.Once
@@ -33,14 +34,15 @@ type ChannelTun struct {
 
 var _ tun.Device = (*ChannelTun)(nil)
 
-func NewChannelTun(ctx context.Context, in <-chan []byte, router transport.Router, mtu int) *ChannelTun {
+func NewChannelTun(ctx context.Context, in <-chan []byte, router transport.Router, mtu int, protocol string) *ChannelTun {
 	return &ChannelTun{
-		ctx:    ctx,
-		in:     in,
-		router: router,
-		events: make(chan tun.Event, 1),
-		peers:  safemap.New[uint32, *AWGPeer](),
-		mtu:    mtu,
+		ctx:      ctx,
+		in:       in,
+		router:   router,
+		events:   make(chan tun.Event, 1),
+		peers:    safemap.New[uint32, *AWGPeer](),
+		mtu:      mtu,
+		protocol: protocol,
 	}
 }
 
@@ -78,7 +80,7 @@ func (t *ChannelTun) Write(bufs [][]byte, offset int) (int, error) {
 		if err != nil {
 			continue
 		}
-		metrics.ObserveTraffic(metrics.DirIn, metrics.PeerClient, Protocol, len(pkt))
+		metrics.ObserveTraffic(metrics.DirIn, metrics.PeerClient, t.protocol, len(pkt))
 		// ОБНОВЛЯЕМ lastSeen (критически важно для watchdog)
 		if peer, ok := t.peers.Get(msg.HoleInfo.SrcIP); ok {
 			peer.TouchLastSeen(now)

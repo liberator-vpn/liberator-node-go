@@ -10,9 +10,7 @@ import (
 )
 
 // buildCapabilities собирает параметры входов ноды для регистрации в API.
-// API сейчас умеет отдавать клиенту только объект "awg"; proxy-параметры
-// (vless/hysteria2) кладутся рядом, чтобы они не терялись и были доступны,
-// когда control-plane научится их использовать.
+// AWG-транспорты публикуются под своими именами: amnesiav2 / amnesiav31.
 func buildCapabilities(cfg *appconfig.AppConfig) map[string]any {
 	out := make(map[string]any)
 
@@ -51,7 +49,34 @@ func buildCapabilities(cfg *appconfig.AppConfig) map[string]any {
 					awgParams[fmt.Sprintf("i%d", i+1)] = val
 				}
 			}
-			out["awg"] = awgParams
+			if icfg.HeaderProtectionKey != "" {
+				awgParams["header_protection_key"] = icfg.HeaderProtectionKey
+			}
+			if icfg.ContentPaddingAddition != "" {
+				awgParams["content_padding_addition"] = icfg.ContentPaddingAddition
+			}
+			if icfg.RekeyAfterTime != "" {
+				awgParams["rekey_after_time"] = icfg.RekeyAfterTime
+			}
+			if icfg.RekeyTimeout != "" {
+				awgParams["rekey_timeout"] = icfg.RekeyTimeout
+			}
+			if icfg.RejectAfterTime != "" {
+				awgParams["reject_after_time"] = icfg.RejectAfterTime
+			}
+			if icfg.KeepaliveTimeout != "" {
+				awgParams["keepalive_timeout"] = icfg.KeepaliveTimeout
+			}
+			if icfg.MaxHandshakeAttempts != "" {
+				awgParams["max_handshake_attempts"] = icfg.MaxHandshakeAttempts
+			}
+			if icfg.RandomTrailers {
+				awgParams["random_trailers"] = true
+			}
+			if icfg.DisableCookies {
+				awgParams["disable_cookies"] = true
+			}
+			out[icfg.Protocol] = awgParams
 		case "xray":
 			icfg, err := xray.ParseConfig(iconf)
 			if err != nil {
@@ -105,7 +130,11 @@ func buildProtocols(cfg *appconfig.AppConfig) []apiclient.Protocol {
 		typ, _ := iconf["type"].(string)
 		switch typ {
 		case "awg":
-			add("awg")
+			icfg, err := awg.ParseConfig(iconf)
+			if err != nil {
+				continue
+			}
+			add(icfg.Protocol)
 		case "xray":
 			icfg, err := xray.ParseConfig(iconf)
 			if err != nil {

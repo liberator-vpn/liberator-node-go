@@ -9,7 +9,7 @@ import (
 // Device.Close() ждет RoutineTUNEventReader, который висит в range по Events().
 // Канал обязан быть один на устройство и закрываться в Close, иначе шатдаун виснет.
 func TestChannelTunEventsClose(t *testing.T) {
-	tn := NewChannelTun(context.Background(), nil, nil, 1376)
+	tn := NewChannelTun(context.Background(), nil, nil, 1376, ProtocolAmneziaV2)
 
 	if tn.Events() != tn.Events() {
 		t.Fatal("Events must return the same channel, a fresh one is never closed")

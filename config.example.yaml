@@ -10,9 +10,9 @@ tun:
   iface_out_name: ""
 router:
   transports:
-    awg:
+    amnesiav2:
       type: "awg"
-
+      protocol: "amnesiav2"
       mtu: 1376
       listen_port: 2200
       # Приватный ключ сервера AmneziaWG (32 байта hex). Сгенерировать свой
@@ -43,6 +43,48 @@ router:
       i3: ""
       i4: ""
       i5: ""
+
+    amnesiav31:
+      type: "awg"
+      protocol: "amnesiav31"
+      mtu: 1376
+      listen_port: 2201
+      # Для 3.1 нужен отдельный ключ и отдельный порт.
+      private_key: "CHANGE_ME_32byte_hex_private_key_v31"
+      watchdog_interval: "30s"
+
+      h1: "1245955480-1579617642"
+      h2: "1827874969-1854585193"
+      h3: "2137919667-2143439009"
+      h4: "2147159423-2147402519"
+
+      jc: 5
+      jmin: 70
+      jmax: 120
+
+      # При header_protection_key все S1..S4 должны быть >= 12.
+      s1: 48
+      s2: 27
+      s3: 30
+      s4: 13
+
+      i1: ""
+      i2: ""
+      i3: ""
+      i4: ""
+      i5: ""
+
+      # AWG 3.1. Ключ хранится в base64 (как в клиентском URI).
+      # Сгенерировать: awg genkey.
+      header_protection_key: "CHANGE_ME_32byte_base64_header_key"
+      content_padding_addition: "0-32"
+      rekey_after_time: "120-180"
+      rekey_timeout: "5-10"
+      reject_after_time: "180-240"
+      keepalive_timeout: "10-25"
+      max_handshake_attempts: "10-15"
+      random_trailers: true
+      disable_cookies: true
 
     # VLESS+REALITY и Hysteria2 через внешний Xray-core. Нода запускает
     # `xray run`, забирает расшифрованный трафик из proxy_tun и дальше

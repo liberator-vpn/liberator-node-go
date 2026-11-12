@@ -15,8 +15,8 @@ import (
 	"github.com/liberator-vpn/liberator-node-go/pkg/routingtable"
 	"github.com/liberator-vpn/liberator-node-go/pkg/transport"
 
-	"github.com/amnezia-vpn/amneziawg-go/conn"
-	amneziawgdevice "github.com/amnezia-vpn/amneziawg-go/device"
+	"github.com/amnezia-vpn/amneziawg-go/v3/conn"
+	amneziawgdevice "github.com/amnezia-vpn/amneziawg-go/v3/device"
 	"golang.org/x/crypto/curve25519"
 )
 
@@ -68,7 +68,7 @@ func (ig *AWGTransport) Type() string {
 }
 
 func (ig *AWGTransport) Protocols() []string {
-	return []string{"awg"}
+	return []string{ig.cfg.Protocol}
 }
 
 func New(
@@ -77,6 +77,9 @@ func New(
 	router transport.Router,
 	nodeID string,
 ) (*AWGTransport, error) {
+	if err := cfg.normalize(); err != nil {
+		return nil, err
+	}
 	ig := &AWGTransport{
 		ctx:       ctx,
 		cfg:       cfg,
@@ -93,7 +96,7 @@ func New(
 	}
 	ig.publicKey = pubKey
 
-	ig.channelTun = NewChannelTun(ctx, ig.in, ig.router, cfg.MTU)
+	ig.channelTun = NewChannelTun(ctx, ig.in, ig.router, cfg.MTU, cfg.Protocol)
 
 	udpBind := conn.NewDefaultBind()
 
@@ -151,11 +154,47 @@ func New(
 		}
 	}
 
+	// AWG 3.1: header protection, content padding и timings.
+	if cfg.HeaderProtectionKey != "" {
+		keyHex, err := cfg.headerKeyHex()
+		if err != nil {
+			return nil, fmt.Errorf("awg: header protection key: %w", err)
+		}
+		if err := ig.awgDevice.IpcSet(fmt.Sprintf("header_protection_key=%s\n", keyHex)); err != nil {
+			return nil, fmt.Errorf("failed to set AWG header protection: %w", err)
+		}
+	}
+	for key, val := range map[string]string{
+		"content_padding_addition": cfg.ContentPaddingAddition,
+		"rekey_after_time":         cfg.RekeyAfterTime,
+		"rekey_timeout":            cfg.RekeyTimeout,
+		"reject_after_time":        cfg.RejectAfterTime,
+		"keepalive_timeout":        cfg.KeepaliveTimeout,
+		"max_handshake_attempts":   cfg.MaxHandshakeAttempts,
+	} {
+		if val == "" {
+			continue
+		}
+		if err := ig.awgDevice.IpcSet(fmt.Sprintf("%s=%s\n", key, val)); err != nil {
+			return nil, fmt.Errorf("failed to set AWG %s: %w", key, err)
+		}
+	}
+	if cfg.RandomTrailers {
+		if err := ig.awgDevice.IpcSet("random_trailers=true\n"); err != nil {
+			return nil, fmt.Errorf("failed to enable AWG random trailers: %w", err)
+		}
+	}
+	if cfg.DisableCookies {
+		if err := ig.awgDevice.IpcSet("disable_cookies=true\n"); err != nil {
+			return nil, fmt.Errorf("failed to disable AWG cookies: %w", err)
+		}
+	}
+
 	if err := ig.awgDevice.Up(); err != nil {
 		return nil, fmt.Errorf("failed to bring up AWG device: %w", err)
 	}
 
-	log.Printf("[%s] AmneziaWG Transport started on port %d", nodeID, cfg.ListenPort)
+	log.Printf("[%s] %s transport started on port %d", nodeID, cfg.Protocol, cfg.ListenPort)
 	return ig, nil
 }
 
@@ -328,7 +367,7 @@ func (ig *AWGTransport) watchPeers() {
 
 // writePacket вызывается абстракцией AWGPeer.SendDatagram для отправки данных клиенту
 func (ig *AWGTransport) writePacket(data []byte) error {
-	metrics.ObserveTraffic(metrics.DirOut, metrics.PeerClient, Protocol, len(data))
+	metrics.ObserveTraffic(metrics.DirOut, metrics.PeerClient, ig.cfg.Protocol, len(data))
 	select {
 	case ig.in <- data:
 		return nil

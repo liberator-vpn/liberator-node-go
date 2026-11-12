@@ -26,7 +26,7 @@ VPN-шлюз (egress/ingress нода) в распределённой сети 
   - enroll/перерегистрация по enrollment-токену (`/v1/node/enroll`) и получает `node_id`, per-node secret, `gateway_addr`;
   - шлёт `heartbeat`;
   - тянет желаемое состояние (`/state`) и **реконсилит** локальных клиентов
-    (создание/обновление/удаление awg-пиров по `peer_ip`+`client_public_key`,
+    (создание/обновление/удаление AWG-пиров по `peer_ip`+`client_public_key`,
     лимиты из квот);
   - применяет **firewall-pairs** (`/state.firewall_pairs`) — разрешённые
     client→client потоки по IP-парам (enforcement на источнике). API компилирует
@@ -50,8 +50,8 @@ VPN-шлюз (egress/ingress нода) в распределённой сети 
 ### Proxy-протоколы и control-plane
 
 `liberator-api` теперь принимает произвольные протоколы в `node_protocols`
-(жёсткого CHECK на `awg` больше нет). Нода сама анонсирует `awg`, `vless`,
-`hysteria2` из своего конфига при `POST /v1/node/enroll`.
+(жёсткого CHECK на `awg` больше нет). Нода сама анонсирует `amnesiav2`,
+`amnesiav31`, `vless`, `hysteria2` из своего конфига при `POST /v1/node/enroll`.
 
 Динамические proxy-сессии работают так же, как AWG: API отдаёт сессию в
 `/v1/node/state`, нода направляет её в Xray-транспорт по `protocol`.
@@ -79,7 +79,7 @@ IP-туннельный протокол (AWG/WireGuard) или отдельны
   Секрет выдаётся API при enroll и хранится в `api.state_dir/node-identity.json`.
   Enroll/перерегистрация — по `api.enrollment_token` (одноразовому или общему reusable).
 - `api.base_url` — адрес API; `api.public_endpoint` — куда клиентам подключаться к
-  awg-listen ноды; `api.mesh_endpoint` — QUIC listen этой ноды (host:port), по нему
+  amnesiav2/amnesiav31-listen ноды; `api.mesh_endpoint` — QUIC listen этой ноды (host:port), по нему
   остальные ноды форвардят ей пакеты client→client; `api.region_code` — регион.
 
 ## Как добавить ноду в сеть
@@ -112,7 +112,8 @@ IP-туннельный протокол (AWG/WireGuard) или отдельны
    ```
 
 3. Открыть на хосте:
-   - `2200/udp` — клиентам;
+   - `2200/udp` — клиентам amnesiav2;
+   - `2201/udp` — клиентам amnesiav31;
    - `9000/udp` — другим нодам;
    - `8080/tcp` — только внутри кластера.
 

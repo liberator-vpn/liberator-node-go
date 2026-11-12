@@ -39,6 +39,17 @@ type ClientParams struct {
 	I1, I2, I3, I4, I5 string // Опционально
 	Jc, Jmin, Jmax     string
 	S1, S2, S3, S4     string
+
+	// AWG 3.1
+	HeaderProtectionKey    string
+	ContentPaddingAddition string
+	RekeyAfterTime         string
+	RekeyTimeout           string
+	RejectAfterTime        string
+	KeepaliveTimeout       string
+	MaxHandshakeAttempts   string
+	RandomTrailers         bool
+	DisableCookies         bool
 }
 
 // --- Внутренние структуры для парсинга в JSON ---
@@ -83,34 +94,43 @@ type awgConfig struct {
 
 // lastConfigInner это то, что лежит внутри поля last_config в виде строки
 type lastConfigInner struct {
-	H1                  string   `json:"H1"`
-	H2                  string   `json:"H2"`
-	H3                  string   `json:"H3"`
-	H4                  string   `json:"H4"`
-	I1                  string   `json:"I1"`
-	I2                  string   `json:"I2"`
-	I3                  string   `json:"I3"`
-	I4                  string   `json:"I4"`
-	I5                  string   `json:"I5"`
-	Jc                  string   `json:"Jc"`
-	Jmin                string   `json:"Jmin"`
-	Jmax                string   `json:"Jmax"`
-	S1                  string   `json:"S1"`
-	S2                  string   `json:"S2"`
-	S3                  string   `json:"S3"`
-	S4                  string   `json:"S4"`
-	AllowedIPs          []string `json:"allowed_ips"`
-	ClientId            string   `json:"clientId"`
-	ClientIP            string   `json:"client_ip"`
-	ClientPrivKey       string   `json:"client_priv_key"`
-	ClientPubKey        string   `json:"client_pub_key"`
-	Config              string   `json:"config"`
-	HostName            string   `json:"hostName"`
-	Mtu                 string   `json:"mtu"`
-	PersistentKeepAlive string   `json:"persistent_keep_alive"`
-	Port                int      `json:"port"`
-	PskKey              string   `json:"psk_key,omitempty"`
-	ServerPubKey        string   `json:"server_pub_key"`
+	H1                     string   `json:"H1"`
+	H2                     string   `json:"H2"`
+	H3                     string   `json:"H3"`
+	H4                     string   `json:"H4"`
+	I1                     string   `json:"I1"`
+	I2                     string   `json:"I2"`
+	I3                     string   `json:"I3"`
+	I4                     string   `json:"I4"`
+	I5                     string   `json:"I5"`
+	Jc                     string   `json:"Jc"`
+	Jmin                   string   `json:"Jmin"`
+	Jmax                   string   `json:"Jmax"`
+	S1                     string   `json:"S1"`
+	S2                     string   `json:"S2"`
+	S3                     string   `json:"S3"`
+	S4                     string   `json:"S4"`
+	AllowedIPs             []string `json:"allowed_ips"`
+	ClientId               string   `json:"clientId"`
+	ClientIP               string   `json:"client_ip"`
+	ClientPrivKey          string   `json:"client_priv_key"`
+	ClientPubKey           string   `json:"client_pub_key"`
+	Config                 string   `json:"config"`
+	HostName               string   `json:"hostName"`
+	Mtu                    string   `json:"mtu"`
+	PersistentKeepAlive    string   `json:"persistent_keep_alive"`
+	Port                   int      `json:"port"`
+	PskKey                 string   `json:"psk_key,omitempty"`
+	ServerPubKey           string   `json:"server_pub_key"`
+	HeaderProtectionKey    string   `json:"HeaderProtectionKey,omitempty"`
+	ContentPaddingAddition string   `json:"ContentPaddingAddition,omitempty"`
+	RekeyAfterTime         string   `json:"RekeyAfterTime,omitempty"`
+	RekeyTimeout           string   `json:"RekeyTimeout,omitempty"`
+	RejectAfterTime        string   `json:"RejectAfterTime,omitempty"`
+	KeepaliveTimeout       string   `json:"KeepaliveTimeout,omitempty"`
+	MaxHandshakeAttempts   string   `json:"MaxHandshakeAttempts,omitempty"`
+	RandomTrailers         string   `json:"RandomTrailers,omitempty"`
+	DisableCookies         string   `json:"DisableCookies,omitempty"`
 }
 
 // GenerateURI собирает ссылку vpn:// в формате Amnezia v2
@@ -141,18 +161,31 @@ func generateURI(p *ClientParams) (string, error) {
 		I1: p.I1, I2: p.I2, I3: p.I3, I4: p.I4, I5: p.I5,
 		Jc: p.Jc, Jmin: p.Jmin, Jmax: p.Jmax,
 		S1: p.S1, S2: p.S2, S3: p.S3, S4: p.S4,
-		AllowedIPs:          []string{"0.0.0.0/0", "::/0"},
-		ClientId:            clientId,
-		ClientIP:            strings.Replace(p.ClientIP, "/32", "", 1),
-		ClientPrivKey:       clientPrivB64,
-		ClientPubKey:        clientPubB64,
-		Config:              iniStr,
-		HostName:            p.ServerAddr,
-		Mtu:                 strconv.Itoa(mtu),
-		PersistentKeepAlive: "25",
-		Port:                p.ServerPort,
-		PskKey:              p.ServerPSK,
-		ServerPubKey:        serverPubB64,
+		AllowedIPs:             []string{"0.0.0.0/0", "::/0"},
+		ClientId:               clientId,
+		ClientIP:               strings.Replace(p.ClientIP, "/32", "", 1),
+		ClientPrivKey:          clientPrivB64,
+		ClientPubKey:           clientPubB64,
+		Config:                 iniStr,
+		HostName:               p.ServerAddr,
+		Mtu:                    strconv.Itoa(mtu),
+		PersistentKeepAlive:    "25",
+		Port:                   p.ServerPort,
+		PskKey:                 p.ServerPSK,
+		ServerPubKey:           serverPubB64,
+		HeaderProtectionKey:    p.HeaderProtectionKey,
+		ContentPaddingAddition: p.ContentPaddingAddition,
+		RekeyAfterTime:         p.RekeyAfterTime,
+		RekeyTimeout:           p.RekeyTimeout,
+		RejectAfterTime:        p.RejectAfterTime,
+		KeepaliveTimeout:       p.KeepaliveTimeout,
+		MaxHandshakeAttempts:   p.MaxHandshakeAttempts,
+	}
+	if p.RandomTrailers {
+		lastCfg.RandomTrailers = "true"
+	}
+	if p.DisableCookies {
+		lastCfg.DisableCookies = "true"
 	}
 
 	// Сериализуем last_config в JSON СТРОКУ (ключевой момент!)
@@ -246,6 +279,33 @@ func buildINIString(p *ClientParams) string {
 	sb.WriteString(fmt.Sprintf("I3 = %s\n", p.I3))
 	sb.WriteString(fmt.Sprintf("I4 = %s\n", p.I4))
 	sb.WriteString(fmt.Sprintf("I5 = %s\n", p.I5))
+	if p.HeaderProtectionKey != "" {
+		sb.WriteString(fmt.Sprintf("HeaderProtectionKey = %s\n", p.HeaderProtectionKey))
+	}
+	if p.ContentPaddingAddition != "" {
+		sb.WriteString(fmt.Sprintf("ContentPaddingAddition = %s\n", p.ContentPaddingAddition))
+	}
+	if p.RekeyAfterTime != "" {
+		sb.WriteString(fmt.Sprintf("RekeyAfterTime = %s\n", p.RekeyAfterTime))
+	}
+	if p.RekeyTimeout != "" {
+		sb.WriteString(fmt.Sprintf("RekeyTimeout = %s\n", p.RekeyTimeout))
+	}
+	if p.RejectAfterTime != "" {
+		sb.WriteString(fmt.Sprintf("RejectAfterTime = %s\n", p.RejectAfterTime))
+	}
+	if p.KeepaliveTimeout != "" {
+		sb.WriteString(fmt.Sprintf("KeepaliveTimeout = %s\n", p.KeepaliveTimeout))
+	}
+	if p.MaxHandshakeAttempts != "" {
+		sb.WriteString(fmt.Sprintf("MaxHandshakeAttempts = %s\n", p.MaxHandshakeAttempts))
+	}
+	if p.RandomTrailers {
+		sb.WriteString("RandomTrailers = true\n")
+	}
+	if p.DisableCookies {
+		sb.WriteString("DisableCookies = true\n")
+	}
 
 	sb.WriteString("\n[Peer]\n")
 	sb.WriteString(fmt.Sprintf("PublicKey = %s\n", p.ServerPubKey))
@@ -295,6 +355,16 @@ func (awg *AWGTransport) GenerateClientConnectionString(peer *model.Peer, addr s
 		S2: strconv.Itoa(awg.cfg.S2),
 		S3: strconv.Itoa(awg.cfg.S3),
 		S4: strconv.Itoa(awg.cfg.S4),
+
+		HeaderProtectionKey:    awg.cfg.HeaderProtectionKey,
+		ContentPaddingAddition: awg.cfg.ContentPaddingAddition,
+		RekeyAfterTime:         awg.cfg.RekeyAfterTime,
+		RekeyTimeout:           awg.cfg.RekeyTimeout,
+		RejectAfterTime:        awg.cfg.RejectAfterTime,
+		KeepaliveTimeout:       awg.cfg.KeepaliveTimeout,
+		MaxHandshakeAttempts:   awg.cfg.MaxHandshakeAttempts,
+		RandomTrailers:         awg.cfg.RandomTrailers,
+		DisableCookies:         awg.cfg.DisableCookies,
 	})
 	return connectionStr, err
 }

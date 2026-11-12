@@ -3,7 +3,7 @@ module github.com/liberator-vpn/liberator-node-go
 go 1.26.2
 
 require (
-	github.com/amnezia-vpn/amneziawg-go v0.2.19
+	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828
 	github.com/coreos/go-iptables v0.8.0
 	github.com/google/uuid v1.6.0
 	github.com/ilyakaznacheev/cleanenv v1.5.0
