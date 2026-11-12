@@ -31,21 +31,11 @@ func main() {
 	if v := os.Getenv("LIBERATOR_NODE_SHARED_SECRET"); v != "" {
 		cfg.Auth.Secret = v
 	}
-	// Секреты/параметры enrollment удобнее передавать через env/Secret.
+	// Enrollment-токен — секрет, поэтому его можно передать через env/Secret.
+	// Остальные параметры (state_dir, identity_file, node_name, agent_version)
+	// задаются в config.yaml.
 	if v := os.Getenv("LIBERATOR_NODE_ENROLLMENT_TOKEN"); v != "" {
 		cfg.API.EnrollmentToken = v
-	}
-	if v := os.Getenv("LIBERATOR_NODE_STATE_DIR"); v != "" {
-		cfg.API.StateDir = v
-	}
-	if v := os.Getenv("LIBERATOR_NODE_IDENTITY_FILE"); v != "" {
-		cfg.API.IdentityFile = v
-	}
-	if v := os.Getenv("LIBERATOR_NODE_NAME"); v != "" {
-		cfg.API.NodeName = v
-	}
-	if v := os.Getenv("LIBERATOR_NODE_AGENT_VERSION"); v != "" {
-		cfg.API.AgentVersion = v
 	}
 
 	application, err := app.New(ctx, cfg)

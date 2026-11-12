@@ -19,6 +19,19 @@ type Client struct {
 	hc     *http.Client
 }
 
+// APIError — HTTP-ошибка control-plane с кодом ответа. Нужна, чтобы
+// отличать протухшую identity (401/403) от сетевой недоступности API.
+type APIError struct {
+	Method     string
+	Path       string
+	StatusCode int
+	Message    string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("api %s %s -> %d: %s", e.Method, e.Path, e.StatusCode, e.Message)
+}
+
 func New(base, secret string) *Client {
 	if base == "" {
 		return nil
@@ -51,6 +64,19 @@ type EnrollResult struct {
 	Secret      string `json:"secret"`
 	GatewayAddr string `json:"gateway_addr"`
 	GlobalCIDR  string `json:"global_cidr"`
+}
+
+type WhoamiResult struct {
+	NodeID      string `json:"node_id"`
+	GatewayAddr string `json:"gateway_addr"`
+}
+
+func (c *Client) Whoami(ctx context.Context, nodeID string) (*WhoamiResult, error) {
+	var out WhoamiResult
+	if err := c.do(ctx, http.MethodGet, "/v1/node/whoami", nodeID, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 func (c *Client) Enroll(ctx context.Context, req EnrollRequest) (*EnrollResult, error) {
@@ -264,7 +290,7 @@ func (c *Client) do(ctx context.Context, method, path, nodeID string, body, out 
 		if msg == "" {
 			msg = resp.Status
 		}
-		return fmt.Errorf("api %s %s -> %s: %s", method, path, resp.Status, msg)
+		return &APIError{Method: method, Path: path, StatusCode: resp.StatusCode, Message: msg}
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)

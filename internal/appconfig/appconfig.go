@@ -64,8 +64,9 @@ type APIConfig struct {
 	SyncInterval      time.Duration `yaml:"sync_interval"`
 	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
 
-	// Первичная регистрация ноды в API. Токен одноразовый; после enroll
-	// нода хранит node_id+secret в state_dir и больше токен не использует.
+	// Регистрация/перерегистрация ноды в API. Токен может быть одноразовым
+	// или reusable (общий вечный токен). После enroll нода хранит
+	// node_id+secret в state_dir и использует их, пока API их принимает.
 	EnrollmentToken string            `yaml:"enrollment_token"`
 	NodeName        string            `yaml:"node_name"`
 	Zone            string            `yaml:"zone"`

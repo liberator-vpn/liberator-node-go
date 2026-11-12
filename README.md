@@ -23,7 +23,7 @@ VPN-шлюз (egress/ingress нода) в распределённой сети 
 - Держит **QUIC-пул** к остальным нодам (общий `auth.secret_key`, список соседей
   из `mesh.dns_service`/`mesh.static`).
 - По контракту `/v1/node` с API:
-  - enroll по одноразовому токену (`/v1/node/enroll`) и получает `node_id`, per-node secret, `gateway_addr`;
+  - enroll/перерегистрация по enrollment-токену (`/v1/node/enroll`) и получает `node_id`, per-node secret, `gateway_addr`;
   - шлёт `heartbeat`;
   - тянет желаемое состояние (`/state`) и **реконсилит** локальных клиентов
     (создание/обновление/удаление awg-пиров по `peer_ip`+`client_public_key`,
@@ -76,22 +76,25 @@ IP-туннельный протокол (AWG/WireGuard) или отдельны
 Кратко:
 - Аутентификация: заголовки `X-Node-Id: <node_id>` + `Authorization: Bearer <per-node secret>`.
   Секрет выдаётся API при enroll и хранится в `api.state_dir/node-identity.json`.
-  Первичный enroll — по одноразовому `api.enrollment_token`
+  Enroll/перерегистрация — по `api.enrollment_token` (одноразовому или общему reusable).
 - `api.base_url` — адрес API; `api.public_endpoint` — куда клиентам подключаться к
   awg-listen ноды; `api.mesh_endpoint` — QUIC listen этой ноды (host:port), по нему
   остальные ноды форвардят ей пакеты client→client; `api.region_code` — регион.
 
 ## Как добавить ноду в сеть
 
-1. В API создать одноразовый enrollment-token:
+1. В API создать общий вечный enrollment-token (reusable, без срока):
 
    ```bash
    curl -sS \
      -H "X-Admin-Key: $LIBERATOR_ADMIN_KEY" \
      -H 'Content-Type: application/json' \
-     -d '{"ttl":"1h"}' \
+     -d '{"reusable":true,"ttl":""}' \
      http://liberator-api:8080/v1/admin/cluster/enrollment-tokens
    ```
+
+   Для одной ноды можно выпустить персональный токен: `{"reusable":true,"ttl":"","name":"edge-1"}`.
+   Одноразовый токен тоже поддерживается: `{"ttl":"1h"}`.
 
 2. В `config.yaml` ноды указать:
 
@@ -102,7 +105,9 @@ IP-туннельный протокол (AWG/WireGuard) или отдельны
      public_endpoint: "<IP_НОДЫ>:2200"
      mesh_endpoint: "<IP_НОДЫ>:9000"
      enrollment_token: "<token>"
+     node_name: "edge-1"          # стабильное имя ноды
      state_dir: "/var/lib/liberator"
+     agent_version: "1.0.0"
    ```
 
 3. Открыть на хосте:
@@ -121,8 +126,11 @@ IP-туннельный протокол (AWG/WireGuard) или отдельны
    heartbeat. В админке нода появится в `/v1/admin/cluster/nodes`, а `live`
    станет `true` после первого heartbeat.
 
-`state_dir` должен быть persistent. Если identity потеряна, ноду нужно удалить в
-API, выпустить новый enrollment-token и запустить ноду заново.
+`state_dir` может быть и не persistent: при потере identity нода снова вызовет
+`POST /v1/node/enroll` по reusable-токену, API найдёт её по `node_name`, сохранит
+`node_id`/`gateway_addr`/группы/размещение ключей и выдаст новый per-node secret.
+Поэтому `node_name` должен быть стабильным (в k8s — `NODE_NAME`/`spec.nodeName`,
+в Docker — явный `api.node_name`).
 
 Ротация секрета (`rotate-secret`) выдаёт новый secret; нода читает identity только
 при старте, поэтому после ротации нужно обновить `node-identity.json` и
