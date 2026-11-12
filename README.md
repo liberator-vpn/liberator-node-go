@@ -33,9 +33,11 @@ VPN-шлюз (egress/ingress нода) в распределённой сети 
   - тянет глобальную директорию клиентов (`/v1/node/clients`) и ставит **remote-маршруты**:
     клиент другой ноды → пересылка датаграмм через QUIC-пул на её `mesh_endpoint`
     (client→client);
-  - применяет **policy-egress** из `/state.egress` (`{peer_ip, prefix, exit_mesh_endpoint}`):
-    интернет-dst клиента, попавший под prefix, форвардится на ноду-выход (она NATит);
-    не совпало ни с одним правилом — локальный NAT;
+  - применяет **policy** из `/state.policies` (`{peer_ip, prefix, action, exit_mesh_endpoint, tier, ...}`):
+    `exit` форвардит трафик на ноду-выход (она NATит), `direct` отправляет в локальный NAT,
+    `deny` дропает пакеты. Приоритет: user-правила (`tier=0`) всегда выше групповых (`tier=1`),
+    внутри уровня — specificity → group priority → rule priority → стабильный ID;
+  - `blocked_prefixes` (`{peer_ip, prefix}`) дублирует `deny`-правила для обратной совместимости;
   - подтверждает активацию сессий (`sessions/activate`, `issued → active`);
   - пушит дельты трафика по сессиям (`/v1/node/usage`); это телеметрия, не billing.
 - Отдаёт метрики Prometheus (`node_traffic_bytes_total`, `node_packet_lifetime_seconds`,

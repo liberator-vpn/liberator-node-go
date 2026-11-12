@@ -79,6 +79,7 @@ type Session struct {
 	ID              string `json:"id"`
 	AccountID       string `json:"account_id"`
 	DeviceID        string `json:"device_id"`
+	KeyID           string `json:"key_id,omitempty"`
 	Protocol        string `json:"protocol"`
 	PeerIP          string `json:"peer_ip"`
 	ClientPublicKey string `json:"client_public_key"`
@@ -89,6 +90,7 @@ type Session struct {
 
 type Quota struct {
 	AccountID         string `json:"account_id"`
+	KeyID             string `json:"key_id,omitempty"`
 	Kind              string `json:"kind"`
 	TrafficLimitBytes *int64 `json:"traffic_limit_bytes"`
 	TrafficUsedBytes  *int64 `json:"traffic_used_bytes"`
@@ -108,20 +110,22 @@ type RouteRule struct {
 }
 
 type State struct {
-	NodeID         string          `json:"node_id"`
-	RegionCode     string          `json:"region_code"`
-	Hostname       string          `json:"hostname"`
-	PublicEndpoint string          `json:"public_endpoint"`
-	GatewayAddr    string          `json:"gateway_addr"`
-	Status         string          `json:"status"`
-	ConfigVersion  int64           `json:"config_version"`
-	Config         json.RawMessage `json:"config,omitempty"`
-	Protocols      []Protocol      `json:"protocols"`
-	Sessions       []Session       `json:"sessions"`
-	Quotas         []Quota         `json:"quotas"`
-	RouteRules     []RouteRule     `json:"route_rules"`
-	FirewallPairs  []FirewallPair  `json:"firewall_pairs"`
-	Egress         []Egress        `json:"egress"`
+	NodeID          string          `json:"node_id"`
+	RegionCode      string          `json:"region_code"`
+	Hostname        string          `json:"hostname"`
+	PublicEndpoint  string          `json:"public_endpoint"`
+	GatewayAddr     string          `json:"gateway_addr"`
+	Status          string          `json:"status"`
+	ConfigVersion   int64           `json:"config_version"`
+	Config          json.RawMessage `json:"config,omitempty"`
+	Protocols       []Protocol      `json:"protocols"`
+	Sessions        []Session       `json:"sessions"`
+	Quotas          []Quota         `json:"quotas"`
+	RouteRules      []RouteRule     `json:"route_rules"`
+	FirewallPairs   []FirewallPair  `json:"firewall_pairs"`
+	Egress          []Egress        `json:"egress"`
+	BlockedPrefixes []DenyRule      `json:"blocked_prefixes"`
+	Policies        []PolicyRule    `json:"policies"`
 }
 
 type Egress struct {
@@ -133,6 +137,21 @@ type Egress struct {
 type FirewallPair struct {
 	RecipientIP string `json:"recipient_ip"`
 	SenderIP    string `json:"sender_ip"`
+}
+
+type DenyRule struct {
+	PeerIP string `json:"peer_ip"`
+	Prefix string `json:"prefix"`
+}
+
+type PolicyRule struct {
+	PeerIP           string `json:"peer_ip"`
+	Prefix           string `json:"prefix"`
+	Action           string `json:"action"`
+	ExitMeshEndpoint string `json:"exit_mesh_endpoint,omitempty"`
+	Tier             int    `json:"tier"`
+	Priority         int32  `json:"priority"`
+	GroupPriority    int32  `json:"group_priority,omitempty"`
 }
 
 func (c *Client) GetState(ctx context.Context, nodeID string) (*State, error) {

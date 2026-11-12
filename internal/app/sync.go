@@ -61,7 +61,7 @@ func (app *App) syncLoop(ctx context.Context) {
 			app.pushUsage(ctx, client, nodeID, usageIndex)
 			app.pushAlive(ctx, client, nodeID, usageIndex)
 			app.applyFirewallPairs(st.FirewallPairs)
-			app.reconcileEgress(st.Egress)
+			app.reconcileEgress(st.Policies, st.Egress, st.BlockedPrefixes)
 			app.reconcileRemotes(ctx, client, nodeID)
 		}
 
@@ -143,7 +143,12 @@ func (app *App) pushUsage(ctx context.Context, client *apiclient.Client, nodeID 
 func (app *App) reconcileState(ctx context.Context, client *apiclient.Client, nodeID string, st *apiclient.State) map[uint32]string {
 	quota := make(map[string]*apiclient.Quota, len(st.Quotas))
 	for i := range st.Quotas {
-		quota[st.Quotas[i].AccountID] = &st.Quotas[i]
+		q := &st.Quotas[i]
+		if q.KeyID != "" {
+			quota[q.KeyID] = q
+		} else {
+			quota[q.AccountID] = q
+		}
 	}
 
 	// Сессии группируются по транспорту: awg идёт в AWG-транспорт,
@@ -186,7 +191,11 @@ func (app *App) reconcileState(ctx context.Context, client *apiclient.Client, no
 			VirtualIP:    ip,
 			AwgPublicKey: s.ClientPublicKey,
 		}
-		applyQuotaLimits(&c, quota[s.AccountID])
+		quotaID := s.AccountID
+		if s.KeyID != "" {
+			quotaID = s.KeyID
+		}
+		applyQuotaLimits(&c, quota[quotaID])
 		byTransport[transportName] = append(byTransport[transportName], c)
 	}
 	metrics.SetActiveClients(len(ipToSession))
@@ -258,23 +267,59 @@ func applyQuotaLimits(c *appconfig.ClientConfig, q *apiclient.Quota) {
 // reconcileEgress приводит правила выхода роутера (userRules) в соответствие
 // желаемому /state.egress. Набор собирается целиком и подменяется атомарно:
 // иначе между Clear и Set был бы интервал, когда весь egress шёл в локальный NAT.
-func (app *App) reconcileEgress(items []apiclient.Egress) {
-	entries := make([]userrules.Entry, 0, len(items))
-	for _, eg := range items {
-		if eg.PeerIP == "" || eg.Prefix == "" || eg.ExitMeshEndpoint == "" {
-			continue
+func (app *App) reconcileEgress(policies []apiclient.PolicyRule, items []apiclient.Egress, deny []apiclient.DenyRule) {
+	entries := make([]userrules.Entry, 0, len(policies)+len(items)+len(deny))
+	if len(policies) > 0 {
+		for _, p := range policies {
+			if p.PeerIP == "" || p.Prefix == "" {
+				continue
+			}
+			ip := netutils.IPStringToUint32(p.PeerIP)
+			if ip == 0 {
+				continue
+			}
+			entries = append(entries, userrules.Entry{
+				ClientIP:      ip,
+				PrefixCIDR:    p.Prefix,
+				Action:        p.Action,
+				Exit:          p.ExitMeshEndpoint,
+				Tier:          p.Tier,
+				GroupPriority: p.GroupPriority,
+				Priority:      p.Priority,
+			})
 		}
-		ip := netutils.IPStringToUint32(eg.PeerIP)
-		if ip == 0 {
-			continue
+	} else {
+		for _, eg := range items {
+			if eg.PeerIP == "" || eg.Prefix == "" || eg.ExitMeshEndpoint == "" {
+				continue
+			}
+			ip := netutils.IPStringToUint32(eg.PeerIP)
+			if ip == 0 {
+				continue
+			}
+			entries = append(entries, userrules.Entry{
+				ClientIP:   ip,
+				PrefixCIDR: eg.Prefix,
+				Action:     userrules.ActionExit,
+				Exit:       eg.ExitMeshEndpoint,
+			})
 		}
-		entries = append(entries, userrules.Entry{
-			ClientIP:   ip,
-			PrefixCIDR: eg.Prefix,
-			Exit:       eg.ExitMeshEndpoint,
-		})
+		for _, dr := range deny {
+			if dr.PeerIP == "" || dr.Prefix == "" {
+				continue
+			}
+			ip := netutils.IPStringToUint32(dr.PeerIP)
+			if ip == 0 {
+				continue
+			}
+			entries = append(entries, userrules.Entry{
+				ClientIP:   ip,
+				PrefixCIDR: dr.Prefix,
+				Action:     userrules.ActionDeny,
+			})
+		}
 	}
 	if invalid := app.router.ReplaceEgressRules(entries); invalid > 0 {
-		log.Printf("egress: dropped %d invalid rules from desired state", invalid)
+		log.Printf("policy: dropped %d invalid rules from desired state", invalid)
 	}
 }

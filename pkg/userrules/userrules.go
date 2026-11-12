@@ -1,10 +1,11 @@
 // Package userrules — таблица правил интернет-выхода пользователей
 // (аналог routingtable, но по префиксам назначения, а не по virtual IP).
-// Данные живут здесь, роутер лишь делает Lookup для решения об exit.
+// Данные живут здесь, роутер лишь делает Lookup для решения об exit/deny/direct.
 package userrules
 
 import (
 	"errors"
+	"math/bits"
 	"net"
 	"sync"
 
@@ -13,22 +14,33 @@ import (
 
 var errIPv6NotSupported = errors.New("userrules: only ipv4 prefixes are supported")
 
+const (
+	ActionDirect = "direct"
+	ActionDeny   = "deny"
+	ActionExit   = "exit"
+)
+
 type rule struct {
-	base uint32 // сеть (IP & mask)
-	mask uint32 // сетевая маска
-	exit string // mesh endpoint ноды-выхода
+	base          uint32 // сеть (IP & mask)
+	mask          uint32 // сетевая маска
+	action        string
+	exit          string // mesh endpoint ноды-выхода (для action=exit)
+	tier          int    // 0 = user, 1 = group
+	groupPriority int32
+	priority      int32
 }
 
-// Entry — одна запись желаемого состояния egress: для клиента clientIP
-// префикс prefixCIDR должен выходить через ноду exit.
+// Entry — одна запись желаемого состояния.
 type Entry struct {
-	ClientIP   uint32
-	PrefixCIDR string
-	Exit       string
+	ClientIP      uint32
+	PrefixCIDR    string
+	Action        string // exit | direct | deny; пусто = exit
+	Exit          string
+	Tier          int
+	GroupPriority int32
+	Priority      int32
 }
 
-// UserRules хранит для каждого клиента (src virtual IP) список правил
-// (prefix dst -> exit) и отвечает на lookup по longest-prefix.
 type UserRules struct {
 	mu sync.RWMutex
 	m  map[uint32][]rule
@@ -39,7 +51,7 @@ func New() *UserRules {
 }
 
 // parseRule превращает CIDR в внутреннее представление.
-func parseRule(prefixCIDR, exit string) (rule, error) {
+func parseRule(prefixCIDR, action, exit string, tier int, groupPriority, priority int32) (rule, error) {
 	_, ipnet, err := net.ParseCIDR(prefixCIDR)
 	if err != nil {
 		return rule{}, err
@@ -48,33 +60,36 @@ func parseRule(prefixCIDR, exit string) (rule, error) {
 	if bits != 32 || ones > 32 {
 		return rule{}, errIPv6NotSupported
 	}
+	if action == "" {
+		action = ActionExit
+	}
 	maskB := net.CIDRMask(ones, 32)
 	maskU := uint32(maskB[0])<<24 | uint32(maskB[1])<<16 | uint32(maskB[2])<<8 | uint32(maskB[3])
-	return rule{base: netutils.IPToUint32(ipnet.IP) & maskU, mask: maskU, exit: exit}, nil
+	return rule{
+		base: netutils.IPToUint32(ipnet.IP) & maskU, mask: maskU,
+		action: action, exit: exit, tier: tier,
+		groupPriority: groupPriority, priority: priority,
+	}, nil
 }
 
-// Set добавляет клиенту правило выхода для префикса (CIDR). exit == "" — запись
-// не нужна (локальный NAT), вызывающий просто не добавляет её.
+// Set добавляет клиенту правило (по умолчанию action=exit).
 func (r *UserRules) Set(clientIP uint32, prefixCIDR, exit string) error {
-	rl, err := parseRule(prefixCIDR, exit)
+	rl, err := parseRule(prefixCIDR, ActionExit, exit, 0, 0, 0)
 	if err != nil {
 		return err
 	}
-
 	r.mu.Lock()
 	r.m[clientIP] = append(r.m[clientIP], rl)
 	r.mu.Unlock()
 	return nil
 }
 
-// ReplaceAll атомарно заменяет всю таблицу новым набором правил. Так между
-// очисткой и заполнением нет окна, в котором egress-трафик уходит в локальный
-// NAT. Возвращает число отброшенных невалидных записей.
+// ReplaceAll атомарно заменяет всю таблицу новым набором правил.
 func (r *UserRules) ReplaceAll(entries []Entry) int {
 	next := make(map[uint32][]rule, len(entries)/4+1)
 	invalid := 0
 	for _, e := range entries {
-		rl, err := parseRule(e.PrefixCIDR, e.Exit)
+		rl, err := parseRule(e.PrefixCIDR, e.Action, e.Exit, e.Tier, e.GroupPriority, e.Priority)
 		if err != nil {
 			invalid++
 			continue
@@ -95,19 +110,47 @@ func (r *UserRules) Clear() {
 	r.mu.Unlock()
 }
 
-// Lookup возвращает ноду-выход для (src client, dst) по longest-prefix.
-// "" — локальный NAT.
-func (r *UserRules) Lookup(src, dst uint32) string {
+// Lookup возвращает действие и exit-endpoint для (src client, dst) по longest-prefix.
+func (r *UserRules) Lookup(src, dst uint32) (action, exit string) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	best := ""
-	bestMask := uint32(0)
+	bestAction := ActionDirect
+	bestExit := ""
+	bestTier := 1 << 30
+	bestBits := -1
+	bestGroupPriority := int32(1 << 30)
+	bestPriority := int32(1 << 30)
 	for _, rl := range r.m[src] {
-		if (dst&rl.mask) == rl.base && rl.mask > bestMask {
-			best = rl.exit
-			bestMask = rl.mask
+		if (dst & rl.mask) != rl.base {
+			continue
+		}
+		ruleBits := bits.OnesCount32(rl.mask)
+		better := false
+		switch {
+		case rl.tier < bestTier:
+			better = true
+		case rl.tier > bestTier:
+			better = false
+		case ruleBits > bestBits:
+			better = true
+		case ruleBits < bestBits:
+			better = false
+		case rl.groupPriority < bestGroupPriority:
+			better = true
+		case rl.groupPriority > bestGroupPriority:
+			better = false
+		case rl.priority < bestPriority:
+			better = true
+		}
+		if better {
+			bestAction = rl.action
+			bestExit = rl.exit
+			bestTier = rl.tier
+			bestBits = ruleBits
+			bestGroupPriority = rl.groupPriority
+			bestPriority = rl.priority
 		}
 	}
-	return best
+	return bestAction, bestExit
 }

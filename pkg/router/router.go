@@ -221,21 +221,27 @@ func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage
 			packet.Free()
 			return
 		}
-		// Policy-egress: если dst попадает под правило клиента и выход удалённый —
-		// форвардим пакет на ноду-выход.
-		if ep := r.userRules.Lookup(packet.HoleInfo.SrcIP, packet.HoleInfo.DstIP); ep != "" {
-			r.exitMu.RLock()
-			fn := r.exitFn
-			r.exitMu.RUnlock()
-			if fn != nil {
-				if err := fn(ep, packet.Data); err != nil {
-					log.Printf("failed to forward egress to exit %s: %v", ep, err)
+		// Policy: deny / exit / direct.
+		action, ep := r.userRules.Lookup(packet.HoleInfo.SrcIP, packet.HoleInfo.DstIP)
+		switch action {
+		case userrules.ActionDeny:
+			packet.Free()
+			return
+		case userrules.ActionExit:
+			if ep != "" {
+				r.exitMu.RLock()
+				fn := r.exitFn
+				r.exitMu.RUnlock()
+				if fn != nil {
+					if err := fn(ep, packet.Data); err != nil {
+						log.Printf("failed to forward egress to exit %s: %v", ep, err)
+					}
+					packet.Free()
+					return
 				}
-				packet.Free()
-				return
 			}
 		}
-		r.deliverToIface(packet) // TUN → интернет через NAT
+		r.deliverToIface(packet) // TUN → интернет через NAT (direct)
 		return
 	}
 	hi := dgmessage.HoleInfo{
