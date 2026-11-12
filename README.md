@@ -31,6 +31,11 @@ VPN-шлюз (egress/ingress нода) в распределённой сети 
   - применяет **firewall-pairs** (`/state.firewall_pairs`) — разрешённые
     client→client потоки по IP-парам (enforcement на источнике). API компилирует
     их из `VirtualNetwork`: полный mesh внутри сети и изоляция между сетями;
+  - поднимает **DNS-прокси** (`dns.enabled`) на gateway IP:53, резолвит домены
+    через список upstream'ов параллельно, кэширует `domain → IP` и
+    `client → IP → domain`, применяет domain-правила `direct`/`exit`/`deny`;
+    клиентам DNS выдаётся в AWG-конфиге, UDP-запросы на другие DNS-серверы
+    перехватываются;
   - тянет глобальную директорию клиентов (`/v1/node/clients`) и ставит **remote-маршруты**:
     клиент другой ноды → пересылка датаграмм через QUIC-пул на её `mesh_endpoint`
     (client→client);
@@ -46,6 +51,41 @@ VPN-шлюз (egress/ingress нода) в распределённой сети 
 
 Нода ничего не аллоцирует и не хранит в БД: `peer_ip` клиентам и `gateway_addr`
 ноде выдаёт API из общего overlay-пула.
+
+### DNS и доменные правила
+
+API больше не резолвит домены: в `/state.policies` уходят записи с `domain`,
+а нода сама резолвит их через DNS-прокси.
+
+```yaml
+dns:
+  enabled: true
+  listen_addr: "auto"   # gateway IP ноды
+  listen_port: 53
+  upstreams:
+    - "1.1.1.1:53"
+    - "8.8.8.8:53"
+    - "9.9.9.9:53"
+  timeout: "2s"
+  cache:
+    ttl: "5m"
+    max_entries: 10000
+```
+
+- Запрос идёт ко всем upstream'ам параллельно; первый ответ отдаётся клиенту,
+  остальные доливаются в кэш.
+- Кэш many-to-many: `domain → set(IP)`, `IP → set(domain)`,
+  `client → IP → set(domain)`.
+- `ttl` — максимальный возраст записи, `max_entries` — жёсткий лимит с LRU.
+- В AWG-конфиг клиента выдаётся `DNS = <gateway_ip>`.
+- UDP 53 на другие адреса перехватывается роутером и обслуживается локальным
+  DNS-прокси. TCP DNS и DoH/DoT не перехватываются: при их использовании
+  domain-правила не применяются, остаются IP-правила.
+- IPv6/AAAA пока не участвует в domain-правилах.
+- Для активных потоков создаётся routing pin: выбранный `direct`/`exit`
+  сохраняется 10 минут и не меняется при eviction DNS-кэша.
+
+Будущая оптимизация exit/GeoDNS описана в `TODO.md`.
 
 ### Proxy-протоколы и control-plane
 

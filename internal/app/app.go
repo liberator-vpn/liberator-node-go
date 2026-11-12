@@ -16,6 +16,8 @@ import (
 
 	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/safemap"
+	"github.com/liberator-vpn/liberator-node-go/pkg/dnsproxy"
+	"github.com/liberator-vpn/liberator-node-go/pkg/domainrules"
 	"github.com/liberator-vpn/liberator-node-go/pkg/iface"
 	"github.com/liberator-vpn/liberator-node-go/pkg/mesh"
 	"github.com/liberator-vpn/liberator-node-go/pkg/router"
@@ -46,6 +48,10 @@ type App struct {
 
 	// Установленные firewall-правила (по стабильному RuleID).
 	fwRules map[uint64]struct{}
+
+	domainRules *domainrules.Table
+	dnsCache    *dnsproxy.Cache
+	dnsServer   *dnsproxy.Server
 
 	// Только /healthz и /metrics (нода пассивная, без control-plane).
 	httpMux    *http.ServeMux
@@ -143,6 +149,28 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	if app.router, err = router.New(ctx, gatewayAddr, globalNet); err != nil {
 		return nil, fmt.Errorf("failed to create router: %v", err)
 	}
+	app.domainRules = domainrules.New()
+	app.dnsCache = dnsproxy.NewCache(dnsproxy.CacheConfig{
+		TTL: cfg.DNS.Cache.TTL, MaxEntries: cfg.DNS.Cache.MaxEntries,
+	})
+	app.router.SetDomainPolicy(app.domainRules, app.dnsCache)
+	if cfg.DNS.Enabled {
+		listenIP := cfg.DNS.ListenAddr
+		if listenIP == "" || listenIP == "auto" {
+			listenIP = gatewayAddr
+		}
+		dnsSrv, err := dnsproxy.NewServer(ctx, dnsproxy.ServerConfig{
+			ListenAddr: listenIP,
+			ListenPort: cfg.DNS.ListenPort,
+			Upstreams:  cfg.DNS.Upstreams,
+			Timeout:    cfg.DNS.Timeout,
+		}, app.dnsCache)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create DNS proxy: %w", err)
+		}
+		app.dnsServer = dnsSrv
+		app.router.SetDNSHandler(dnsSrv)
+	}
 
 	if app.node, err = mesh.New(ctx, cfg.Mesh, secret, app.router); err != nil {
 		return nil, fmt.Errorf("failed to create mesh node: %v", err)
@@ -229,6 +257,9 @@ func (app *App) Run() error {
 	workers.Go(app.router.Run)
 	workers.Go(app.node.Run)
 	workers.Go(app.tunIface.Run)
+	if app.dnsServer != nil {
+		workers.Go(app.dnsServer.Run)
+	}
 	app.transports.Foreach(func(_ string, t transport.Transport) {
 		workers.Go(t.Run)
 	})
@@ -280,6 +311,9 @@ func (app *App) metricsLoop(ctx context.Context) {
 
 func (app *App) stopRuntime() {
 	app.cancel()
+	if app.dnsServer != nil {
+		app.dnsServer.Close()
+	}
 	// Транспорты могут владеть TUN/dummy/policy-routing и дочерним Xray.
 	// Закрываем их и на аварийном пути app.New, когда Run ещё не стартовал.
 	app.transports.Foreach(func(_ string, t transport.Transport) {

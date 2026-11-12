@@ -112,6 +112,12 @@ func (r *UserRules) Clear() {
 
 // Lookup возвращает действие и exit-endpoint для (src client, dst) по longest-prefix.
 func (r *UserRules) Lookup(src, dst uint32) (action, exit string) {
+	action, exit, _ = r.LookupWithTier(src, dst)
+	return
+}
+
+// LookupWithTier дополнительно возвращает tier найденного правила.
+func (r *UserRules) LookupWithTier(src, dst uint32) (action, exit string, tier int) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -152,5 +158,5 @@ func (r *UserRules) Lookup(src, dst uint32) (action, exit string) {
 			bestPriority = rl.priority
 		}
 	}
-	return bestAction, bestExit
+	return bestAction, bestExit, bestTier
 }

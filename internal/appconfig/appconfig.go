@@ -77,6 +77,22 @@ type APIConfig struct {
 	IdentityFile    string            `yaml:"identity_file"`
 }
 
+// DNSCacheConfig — настройки кэша DNS-прокси.
+type DNSCacheConfig struct {
+	TTL        time.Duration `yaml:"ttl"`
+	MaxEntries int           `yaml:"max_entries"`
+}
+
+// DNSConfig — локальный DNS-прокси ноды.
+type DNSConfig struct {
+	Enabled    bool           `yaml:"enabled"`
+	ListenAddr string         `yaml:"listen_addr"` // "auto" = gateway IP
+	ListenPort int            `yaml:"listen_port"`
+	Upstreams  []string       `yaml:"upstreams"`
+	Timeout    time.Duration  `yaml:"timeout"`
+	Cache      DNSCacheConfig `yaml:"cache"`
+}
+
 // AppConfig общая структура конфигурации
 type AppConfig struct {
 	Auth        AuthConfig   `yaml:"auth"`
@@ -85,6 +101,7 @@ type AppConfig struct {
 	VPN         VPNConfig    `yaml:"vpn"`
 	Mesh        MeshConfig   `yaml:"mesh"`
 	Server      ServerConfig `yaml:"server"`
+	DNS         DNSConfig    `yaml:"dns"`
 	API         APIConfig    `yaml:"api"`
 	CountryCode string       `yaml:"country_code"`
 }

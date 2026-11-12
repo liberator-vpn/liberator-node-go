@@ -172,7 +172,8 @@ type DenyRule struct {
 
 type PolicyRule struct {
 	PeerIP           string `json:"peer_ip"`
-	Prefix           string `json:"prefix"`
+	Prefix           string `json:"prefix,omitempty"`
+	Domain           string `json:"domain,omitempty"`
 	Action           string `json:"action"`
 	ExitMeshEndpoint string `json:"exit_mesh_endpoint,omitempty"`
 	Tier             int    `json:"tier"`

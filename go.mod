@@ -7,6 +7,7 @@ require (
 	github.com/coreos/go-iptables v0.8.0
 	github.com/google/uuid v1.6.0
 	github.com/ilyakaznacheev/cleanenv v1.5.0
+	github.com/miekg/dns v1.1.73
 	github.com/prometheus/client_golang v1.24.1
 	github.com/quic-go/quic-go v0.60.0
 	github.com/vishvananda/netlink v1.3.1

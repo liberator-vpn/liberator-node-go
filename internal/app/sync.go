@@ -9,6 +9,7 @@ import (
 	"github.com/liberator-vpn/liberator-node-go/internal/appconfig"
 	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/netutils"
+	"github.com/liberator-vpn/liberator-node-go/pkg/domainrules"
 	"github.com/liberator-vpn/liberator-node-go/pkg/services/peersmanager"
 	"github.com/liberator-vpn/liberator-node-go/pkg/transport/awg"
 	"github.com/liberator-vpn/liberator-node-go/pkg/userrules"
@@ -270,13 +271,29 @@ func applyQuotaLimits(c *appconfig.ClientConfig, q *apiclient.Quota) {
 // иначе между Clear и Set был бы интервал, когда весь egress шёл в локальный NAT.
 func (app *App) reconcileEgress(policies []apiclient.PolicyRule, items []apiclient.Egress, deny []apiclient.DenyRule) {
 	entries := make([]userrules.Entry, 0, len(policies)+len(items)+len(deny))
+	domainEntries := make([]domainrules.Entry, 0, len(policies))
 	if len(policies) > 0 {
 		for _, p := range policies {
-			if p.PeerIP == "" || p.Prefix == "" {
+			if p.PeerIP == "" {
 				continue
 			}
 			ip := netutils.IPStringToUint32(p.PeerIP)
 			if ip == 0 {
+				continue
+			}
+			if p.Domain != "" {
+				domainEntries = append(domainEntries, domainrules.Entry{
+					ClientIP:      ip,
+					Domain:        p.Domain,
+					Action:        p.Action,
+					Exit:          p.ExitMeshEndpoint,
+					Tier:          p.Tier,
+					GroupPriority: p.GroupPriority,
+					Priority:      p.Priority,
+				})
+				continue
+			}
+			if p.Prefix == "" {
 				continue
 			}
 			entries = append(entries, userrules.Entry{
@@ -320,6 +337,7 @@ func (app *App) reconcileEgress(policies []apiclient.PolicyRule, items []apiclie
 			})
 		}
 	}
+	app.router.ReplaceDomainRules(domainEntries)
 	if invalid := app.router.ReplaceEgressRules(entries); invalid > 0 {
 		log.Printf("policy: dropped %d invalid rules from desired state", invalid)
 	}

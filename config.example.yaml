@@ -132,6 +132,20 @@ router:
           auth: "CHANGE_ME_hysteria2_password"
           virtual_ip: "100.64.0.11"
 
+dns:
+  enabled: true
+  # auto = gateway IP ноды (клиенты получают его в AWG-конфиге).
+  listen_addr: "auto"
+  listen_port: 53
+  upstreams:
+    - "1.1.1.1:53"
+    - "8.8.8.8:53"
+    - "9.9.9.9:53"
+  timeout: "2s"
+  cache:
+    ttl: "5m"
+    max_entries: 10000
+
 # Нужно только когда api.base_url пуст (локальный запуск без API). В проде
 # global_cidr и gateway_addr нода получает из API при регистрации.
 # 100.64.0.0/10 (CGNAT, RFC 6598) — не пересекается с pod/service CIDR и LAN;

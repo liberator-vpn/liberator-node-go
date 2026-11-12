@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"math"
@@ -12,10 +13,16 @@ import (
 	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/dgmessage"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/netutils"
+	"github.com/liberator-vpn/liberator-node-go/pkg/dnsproxy"
+	"github.com/liberator-vpn/liberator-node-go/pkg/domainrules"
 	"github.com/liberator-vpn/liberator-node-go/pkg/firewall"
 	"github.com/liberator-vpn/liberator-node-go/pkg/routingtable"
 	"github.com/liberator-vpn/liberator-node-go/pkg/userrules"
 )
+
+type UDPDNSHandler interface {
+	HandleUDPQuery(clientIP uint32, query []byte) []byte
+}
 
 type Router struct {
 	ctx         context.Context
@@ -43,6 +50,19 @@ type Router struct {
 	exitMu    sync.RWMutex
 	exitFn    func(endpoint string, data []byte) error
 	userRules *userrules.UserRules
+
+	domainRules *domainrules.Table
+	domainCache *dnsproxy.Cache
+	dnsHandler  UDPDNSHandler
+
+	pinsMu sync.Mutex
+	pins   map[uint64]pin
+}
+
+type pin struct {
+	action  string
+	exit    string
+	expires time.Time
 }
 
 func New(
@@ -84,6 +104,7 @@ func New(
 		routingsubs:  make(map[chan RouterEvent]struct{}),
 		firewallsubs: make(map[chan FirewallEvent]struct{}),
 		userRules:    userrules.New(),
+		pins:         make(map[uint64]pin),
 	}
 	return br, nil
 }
@@ -93,6 +114,91 @@ func (r *Router) SetExitSender(f func(endpoint string, data []byte) error) {
 	r.exitMu.Lock()
 	r.exitFn = f
 	r.exitMu.Unlock()
+}
+
+// SetDomainPolicy подключает доменные правила и DNS-кэш.
+func (r *Router) SetDomainPolicy(rules *domainrules.Table, cache *dnsproxy.Cache) {
+	r.domainRules = rules
+	r.domainCache = cache
+}
+
+func (r *Router) ReplaceDomainRules(entries []domainrules.Entry) {
+	if r.domainRules != nil {
+		r.domainRules.ReplaceAll(entries)
+	}
+}
+
+func (r *Router) SetDNSHandler(h UDPDNSHandler) {
+	r.dnsHandler = h
+}
+
+func (r *Router) lookupPolicy(src, dst uint32) (string, string) {
+	ipAction, ipExit, ipTier := r.userRules.LookupWithTier(src, dst)
+	if ipAction == userrules.ActionDeny {
+		return userrules.ActionDeny, ""
+	}
+	if action, exit, ok := r.getPin(src, dst); ok {
+		return action, exit
+	}
+	if r.domainRules == nil || r.domainCache == nil {
+		return ipAction, ipExit
+	}
+
+	// Если хотя бы один домен на этом IP запрещён — IP блокируется.
+	for _, domain := range r.domainCache.GlobalDomains(dst) {
+		if rule, ok := r.domainRules.Lookup(src, domain); ok && rule.Action == userrules.ActionDeny {
+			return userrules.ActionDeny, ""
+		}
+	}
+
+	var best *domainrules.Rule
+	for _, hit := range r.domainCache.DomainsForClient(src, dst) {
+		rule, ok := r.domainRules.Lookup(src, hit.Domain)
+		if !ok {
+			continue
+		}
+		if best == nil || betterDomain(rule, *best) {
+			ruleCopy := rule
+			best = &ruleCopy
+		}
+	}
+	if best != nil && best.Tier <= ipTier {
+		r.setPin(src, dst, best.Action, best.Exit)
+		return best.Action, best.Exit
+	}
+	return ipAction, ipExit
+}
+
+func betterDomain(a, b domainrules.Rule) bool {
+	if a.Tier != b.Tier {
+		return a.Tier < b.Tier
+	}
+	if a.GroupPriority != b.GroupPriority {
+		return a.GroupPriority < b.GroupPriority
+	}
+	return a.Priority < b.Priority
+}
+
+func (r *Router) getPin(src, dst uint32) (string, string, bool) {
+	key := uint64(src)<<32 | uint64(dst)
+	r.pinsMu.Lock()
+	defer r.pinsMu.Unlock()
+	p, ok := r.pins[key]
+	if !ok {
+		return "", "", false
+	}
+	if time.Now().After(p.expires) {
+		delete(r.pins, key)
+		return "", "", false
+	}
+	return p.action, p.exit, true
+}
+
+func (r *Router) setPin(src, dst uint32, action, exit string) {
+	key := uint64(src)<<32 | uint64(dst)
+	r.pinsMu.Lock()
+	r.pins[key] = pin{action: action, exit: exit, expires: time.Now().Add(10 * time.Minute)}
+	r.pinsMu.Unlock()
 }
 
 // sudo sysctl -w net.core.default_qdisc=fq                                                                                                                                                                                                             ✔
@@ -209,6 +315,20 @@ func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage
 		}
 	}
 
+	if r.dnsHandler != nil && packet.HoleInfo.Protocol == "udp" && packet.HoleInfo.DstPort == 53 && packet.HoleInfo.DstIP != r.gatewayAddr {
+		if payload := udpPayload(packet.Data); len(payload) > 0 {
+			if answer := r.dnsHandler.HandleUDPQuery(packet.HoleInfo.SrcIP, payload); len(answer) > 0 {
+				if out := buildUDPResponse(packet, answer); out != nil {
+					if peer, ok := r.routingTable.GetByIP(packet.HoleInfo.SrcIP); ok {
+						_ = peer.SendDatagram(out)
+					}
+				}
+				packet.Free()
+				return
+			}
+		}
+	}
+
 	if packet.HoleInfo.DstIP == r.gatewayAddr {
 		r.deliverToIface(packet) // TUN (локальные сервисы ноды: DNS и т.п.)
 		return
@@ -222,7 +342,7 @@ func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage
 			return
 		}
 		// Policy: deny / exit / direct.
-		action, ep := r.userRules.Lookup(packet.HoleInfo.SrcIP, packet.HoleInfo.DstIP)
+		action, ep := r.lookupPolicy(packet.HoleInfo.SrcIP, packet.HoleInfo.DstIP)
 		switch action {
 		case userrules.ActionDeny:
 			packet.Free()
@@ -301,4 +421,67 @@ func isForbiddenEgress(ip uint32) bool {
 	default:
 		return false
 	}
+}
+
+// udpPayload возвращает UDP payload из IPv4-пакета.
+func udpPayload(data []byte) []byte {
+	if len(data) < 20 || data[0]>>4 != 4 || data[9] != 17 {
+		return nil
+	}
+	ihl := int(data[0]&0x0f) * 4
+	if len(data) < ihl+8 {
+		return nil
+	}
+	return data[ihl+8:]
+}
+
+// buildUDPResponse собирает ответ от исходного destination (например, 8.8.8.8:53)
+// обратно клиенту. Нужен для перехвата DNS-запросов, ушедших не на gateway.
+func buildUDPResponse(orig *dgmessage.DatagramMessage, payload []byte) []byte {
+	srcIP := orig.HoleInfo.DstIP
+	dstIP := orig.HoleInfo.SrcIP
+	srcPort := orig.HoleInfo.DstPort
+	dstPort := orig.HoleInfo.SrcPort
+	total := 20 + 8 + len(payload)
+	pkt := make([]byte, total)
+
+	pkt[0] = 0x45
+	binary.BigEndian.PutUint16(pkt[2:4], uint16(total))
+	pkt[8] = 64
+	pkt[9] = 17
+	binary.BigEndian.PutUint32(pkt[12:16], srcIP)
+	binary.BigEndian.PutUint32(pkt[16:20], dstIP)
+	binary.BigEndian.PutUint16(pkt[10:12], checksum16(pkt[:20], 0))
+
+	udp := pkt[20:]
+	binary.BigEndian.PutUint16(udp[0:2], srcPort)
+	binary.BigEndian.PutUint16(udp[2:4], dstPort)
+	binary.BigEndian.PutUint16(udp[4:6], uint16(8+len(payload)))
+	copy(udp[8:], payload)
+
+	pseudo := make([]byte, 12)
+	binary.BigEndian.PutUint32(pseudo[0:4], srcIP)
+	binary.BigEndian.PutUint32(pseudo[4:8], dstIP)
+	pseudo[9] = 17
+	binary.BigEndian.PutUint16(pseudo[10:12], uint16(8+len(payload)))
+	cs := checksum16(append(pseudo, udp...), 0)
+	if cs == 0 {
+		cs = 0xffff
+	}
+	binary.BigEndian.PutUint16(udp[6:8], cs)
+	return pkt
+}
+
+func checksum16(data []byte, initial uint32) uint16 {
+	sum := initial
+	for i := 0; i+1 < len(data); i += 2 {
+		sum += uint32(binary.BigEndian.Uint16(data[i : i+2]))
+	}
+	if len(data)%2 == 1 {
+		sum += uint32(data[len(data)-1]) << 8
+	}
+	for sum>>16 != 0 {
+		sum = (sum & 0xffff) + (sum >> 16)
+	}
+	return ^uint16(sum)
 }
