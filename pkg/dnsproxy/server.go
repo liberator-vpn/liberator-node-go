@@ -67,6 +67,12 @@ func (s *Server) Run() {
 
 	janitor := time.NewTicker(time.Minute)
 	defer janitor.Stop()
+	refreshEvery := s.cache.ttl / 2
+	if refreshEvery < 30*time.Second {
+		refreshEvery = 30 * time.Second
+	}
+	refresh := time.NewTicker(refreshEvery)
+	defer refresh.Stop()
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -74,7 +80,22 @@ func (s *Server) Run() {
 			return
 		case <-janitor.C:
 			s.cache.Cleanup()
+		case <-refresh.C:
+			s.refreshProtected()
 		}
+	}
+}
+
+// refreshProtected заранее обновляет домены, для которых есть правила,
+// чтобы их нельзя было вытеснить/просрочить обычными запросами.
+func (s *Server) refreshProtected() {
+	for _, domain := range s.cache.ProtectedDomains() {
+		if _, ok := s.cache.Lookup(domain); ok {
+			continue
+		}
+		m := new(dns.Msg)
+		m.SetQuestion(dns.Fqdn(domain), dns.TypeA)
+		_, _ = s.resolve(context.Background(), m, 0)
 	}
 }
 

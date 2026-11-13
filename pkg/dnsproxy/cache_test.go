@@ -53,3 +53,13 @@ func TestCacheTTLAndMaxEntries(t *testing.T) {
 func ipToUint32(ip net.IP) uint32 {
 	return uint32(ip[12])<<24 | uint32(ip[13])<<16 | uint32(ip[14])<<8 | uint32(ip[15])
 }
+
+func TestProtectedEntriesAreNotEvicted(t *testing.T) {
+	c := NewCache(CacheConfig{TTL: time.Minute, MaxEntries: 1})
+	c.Put("rule.com", []net.IP{net.ParseIP("1.1.1.1")})
+	c.SetProtected([]string{"rule.com"})
+	c.Put("flood.com", []net.IP{net.ParseIP("2.2.2.2")})
+	if _, ok := c.Lookup("rule.com"); !ok {
+		t.Fatal("protected domain was evicted")
+	}
+}

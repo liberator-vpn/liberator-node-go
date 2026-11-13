@@ -39,6 +39,7 @@ type Cache struct {
 	forward    map[string]*entry
 	reverse    map[uint32]map[string]struct{}
 	clients    map[uint32]map[uint32]map[string]time.Time
+	protected  map[string]struct{}
 }
 
 func NewCache(cfg CacheConfig) *Cache {
@@ -54,6 +55,7 @@ func NewCache(cfg CacheConfig) *Cache {
 		forward:    make(map[string]*entry),
 		reverse:    make(map[uint32]map[string]struct{}),
 		clients:    make(map[uint32]map[uint32]map[string]time.Time),
+		protected:  make(map[string]struct{}),
 	}
 }
 
@@ -226,11 +228,16 @@ func (c *Cache) evictLocked(now time.Time) {
 		var oldestDomain string
 		var oldest *entry
 		for d, e := range c.forward {
+			if _, keep := c.protected[d]; keep {
+				continue
+			}
 			if oldest == nil || e.lastUsed.Before(oldest.lastUsed) {
 				oldestDomain, oldest = d, e
 			}
 		}
 		if oldest == nil {
+			// Все записи защищены правилами; лучше превысить max_entries,
+			// чем потерять маппинг domain->IP и обойти deny/exit.
 			return
 		}
 		c.removeDomainLocked(oldestDomain, oldest)
@@ -249,6 +256,33 @@ func (c *Cache) removeDomainLocked(domain string, e *entry) {
 			delete(c.reverse, ip)
 		}
 	}
+}
+
+// SetProtected помечает домены, для которых есть правила. Такие записи
+// не вытесняются обычными запросами при переполнении кэша.
+func (c *Cache) SetProtected(domains []string) {
+	next := make(map[string]struct{}, len(domains))
+	for _, d := range domains {
+		d = normalizeDomain(d)
+		if d != "" {
+			next[d] = struct{}{}
+		}
+	}
+	now := time.Now()
+	c.mu.Lock()
+	c.protected = next
+	c.evictLocked(now)
+	c.mu.Unlock()
+}
+
+func (c *Cache) ProtectedDomains() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, 0, len(c.protected))
+	for d := range c.protected {
+		out = append(out, d)
+	}
+	return out
 }
 
 func (c *Cache) Len() int {

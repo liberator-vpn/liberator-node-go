@@ -126,6 +126,15 @@ func (r *Router) ReplaceDomainRules(entries []domainrules.Entry) {
 	if r.domainRules != nil {
 		r.domainRules.ReplaceAll(entries)
 	}
+	if r.domainCache != nil {
+		domains := make([]string, 0, len(entries))
+		for _, e := range entries {
+			if e.Domain != "" {
+				domains = append(domains, e.Domain)
+			}
+		}
+		r.domainCache.SetProtected(domains)
+	}
 }
 
 func (r *Router) SetDNSHandler(h UDPDNSHandler) {
@@ -187,10 +196,14 @@ func (r *Router) getPin(src, dst uint32) (string, string, bool) {
 	if !ok {
 		return "", "", false
 	}
-	if time.Now().After(p.expires) {
+	now := time.Now()
+	if now.After(p.expires) {
 		delete(r.pins, key)
 		return "", "", false
 	}
+	// Продлеваем пин, пока по flow идёт трафик.
+	p.expires = now.Add(10 * time.Minute)
+	r.pins[key] = p
 	return p.action, p.exit, true
 }
 
@@ -330,7 +343,11 @@ func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage
 	}
 
 	if packet.HoleInfo.DstIP == r.gatewayAddr {
-		r.deliverToIface(packet) // TUN (локальные сервисы ноды: DNS и т.п.)
+		if isAllowedGatewayPacket(packet.HoleInfo) {
+			r.deliverToIface(packet) // TUN: только DNS/ICMP к локальным сервисам ноды
+		} else {
+			packet.Free()
+		}
 		return
 	}
 	if !r.globalNetwork.Contains(packet.HoleInfo.DstIP) {
@@ -400,6 +417,13 @@ func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage
 // приватные сети хоста (RFC1918), multicast и reserved. Мешевые адреса сюда не
 // попадают — они отсекаются раньше по globalNetwork.Contains.
 // ponytail: денйлист захардкожен. Если деплою нужен доступ клиента в LAN — вынести в конфиг.
+func isAllowedGatewayPacket(hi dgmessage.HoleInfo) bool {
+	if hi.Protocol == "icmp" {
+		return true
+	}
+	return hi.DstPort == 53
+}
+
 func isForbiddenEgress(ip uint32) bool {
 	switch {
 	case ip>>24 == 0x00: // 0.0.0.0/8
@@ -415,6 +439,18 @@ func isForbiddenEgress(ip uint32) bool {
 	case ip >= 0xAC100000 && ip <= 0xAC1FFFFF: // 172.16.0.0/12
 		return true
 	case ip >= 0xC6120000 && ip <= 0xC613FFFF: // 198.18.0.0/15 (proxy local IP pool)
+		return true
+	case ip >= 0x64400000 && ip <= 0x647FFFFF: // 100.64.0.0/10 CGNAT
+		return true
+	case ip >= 0xC0000000 && ip <= 0xC00000FF: // 192.0.0.0/24 IETF
+		return true
+	case ip >= 0xC0000200 && ip <= 0xC00002FF: // 192.0.2.0/24 TEST-NET-1
+		return true
+	case ip >= 0xC6336400 && ip <= 0xC63364FF: // 198.51.100.0/24 TEST-NET-2
+		return true
+	case ip >= 0xCB007100 && ip <= 0xCB0071FF: // 203.0.113.0/24 TEST-NET-3
+		return true
+	case ip == 0x646464C8: // 100.100.100.200 Alibaba metadata
 		return true
 	case ip >= 0xE0000000: // 224.0.0.0/4 multicast + 240.0.0.0/4 reserved + broadcast
 		return true

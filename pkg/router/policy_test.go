@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/liberator-vpn/liberator-node-go/internal/utils/dgmessage"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/netutils"
 	"github.com/liberator-vpn/liberator-node-go/pkg/dnsproxy"
 	"github.com/liberator-vpn/liberator-node-go/pkg/domainrules"
@@ -83,5 +84,37 @@ func TestPolicySharedIPDenyFromGlobalDomain(t *testing.T) {
 	action, _ := r.lookupPolicy(src, dst)
 	if action != userrules.ActionDeny {
 		t.Fatalf("action = %q, want deny", action)
+	}
+}
+
+func TestGatewayAllowsOnlyDNSAndICMP(t *testing.T) {
+	cases := []struct {
+		hi   dgmessage.HoleInfo
+		want bool
+	}{
+		{dgmessage.HoleInfo{Protocol: "udp", DstPort: 53}, true},
+		{dgmessage.HoleInfo{Protocol: "tcp", DstPort: 53}, true},
+		{dgmessage.HoleInfo{Protocol: "icmp"}, true},
+		{dgmessage.HoleInfo{Protocol: "tcp", DstPort: 8080}, false},
+		{dgmessage.HoleInfo{Protocol: "tcp", DstPort: 22}, false},
+		{dgmessage.HoleInfo{Protocol: "udp", DstPort: 443}, false},
+	}
+	for _, c := range cases {
+		if got := isAllowedGatewayPacket(c.hi); got != c.want {
+			t.Fatalf("isAllowedGatewayPacket(%+v) = %v, want %v", c.hi, got, c.want)
+		}
+	}
+}
+
+func TestForbiddenEgressHardening(t *testing.T) {
+	for _, ip := range []string{"10.0.0.1", "192.168.1.1", "100.64.0.1", "100.100.100.200", "192.0.2.1", "198.51.100.1", "203.0.113.1"} {
+		if !isForbiddenEgress(netutils.IPStringToUint32(ip)) {
+			t.Fatalf("%s must be forbidden", ip)
+		}
+	}
+	for _, ip := range []string{"8.8.8.8", "1.1.1.1", "203.0.114.1"} {
+		if isForbiddenEgress(netutils.IPStringToUint32(ip)) {
+			t.Fatalf("%s must be allowed", ip)
+		}
 	}
 }
