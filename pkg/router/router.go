@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"math"
 	"runtime"
+	"sort"
 	"sync"
 	"time"
 
@@ -57,11 +59,21 @@ type Router struct {
 
 	pinsMu sync.Mutex
 	pins   map[uint64]pin
+
+	// rulesGen — поколение набора правил. Пин, поставленный при старом
+	// поколении, недействителен: иначе после выключения domain-правила
+	// кэш продолжал бы слать трафик на старую exit-ноду.
+	rulesGen      uint64
+	domainRulesFP uint64
+	domainFPReady bool
+	egressRulesFP uint64
+	egressFPReady bool
 }
 
 type pin struct {
 	action  string
 	exit    string
+	gen     uint64
 	expires time.Time
 }
 
@@ -123,6 +135,7 @@ func (r *Router) SetDomainPolicy(rules *domainrules.Table, cache *dnsproxy.Cache
 }
 
 func (r *Router) ReplaceDomainRules(entries []domainrules.Entry) {
+	r.invalidatePinsIfChanged(domainRulesFingerprint(entries), true)
 	if r.domainRules != nil {
 		r.domainRules.ReplaceAll(entries)
 	}
@@ -197,7 +210,7 @@ func (r *Router) getPin(src, dst uint32) (string, string, bool) {
 		return "", "", false
 	}
 	now := time.Now()
-	if now.After(p.expires) {
+	if p.gen != r.rulesGen || now.After(p.expires) {
 		delete(r.pins, key)
 		return "", "", false
 	}
@@ -210,8 +223,58 @@ func (r *Router) getPin(src, dst uint32) (string, string, bool) {
 func (r *Router) setPin(src, dst uint32, action, exit string) {
 	key := uint64(src)<<32 | uint64(dst)
 	r.pinsMu.Lock()
-	r.pins[key] = pin{action: action, exit: exit, expires: time.Now().Add(10 * time.Minute)}
+	r.pins[key] = pin{
+		action: action, exit: exit,
+		gen: r.rulesGen, expires: time.Now().Add(10 * time.Minute),
+	}
 	r.pinsMu.Unlock()
+}
+
+// invalidatePinsIfChanged сбрасывает кэш решений, если набор правил изменился.
+// Сравнение по отпечатку нужно, чтобы реконсиляция раз в 5 секунд с теми же
+// правилами не убивала stickiness уже установленных flow.
+func (r *Router) invalidatePinsIfChanged(fp uint64, domain bool) {
+	r.pinsMu.Lock()
+	defer r.pinsMu.Unlock()
+	ready, prev := &r.egressFPReady, &r.egressRulesFP
+	if domain {
+		ready, prev = &r.domainFPReady, &r.domainRulesFP
+	}
+	if *ready && *prev == fp {
+		return
+	}
+	*ready = true
+	*prev = fp
+	r.rulesGen++
+	r.pins = make(map[uint64]pin)
+}
+
+func domainRulesFingerprint(entries []domainrules.Entry) uint64 {
+	lines := make([]string, 0, len(entries))
+	for _, e := range entries {
+		lines = append(lines, fmt.Sprintf("%d|%s|%s|%s|%d|%d|%d",
+			e.ClientIP, e.Domain, e.Action, e.Exit, e.Tier, e.GroupPriority, e.Priority))
+	}
+	return hashLines(lines)
+}
+
+func egressRulesFingerprint(entries []userrules.Entry) uint64 {
+	lines := make([]string, 0, len(entries))
+	for _, e := range entries {
+		lines = append(lines, fmt.Sprintf("%d|%s|%s|%s|%d|%d|%d",
+			e.ClientIP, e.PrefixCIDR, e.Action, e.Exit, e.Tier, e.GroupPriority, e.Priority))
+	}
+	return hashLines(lines)
+}
+
+func hashLines(lines []string) uint64 {
+	sort.Strings(lines)
+	h := fnv.New64a()
+	for _, line := range lines {
+		_, _ = h.Write([]byte(line))
+		_, _ = h.Write([]byte{'\n'})
+	}
+	return h.Sum64()
 }
 
 // sudo sysctl -w net.core.default_qdisc=fq                                                                                                                                                                                                             ✔
