@@ -5,6 +5,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/liberator-vpn/liberator-node-go/pkg/mesh"
+
 	"github.com/liberator-vpn/liberator-node-go/internal/apiclient"
 	"github.com/liberator-vpn/liberator-node-go/internal/appconfig"
 	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
@@ -49,6 +51,8 @@ func (app *App) syncLoop(ctx context.Context) {
 			if err := client.Heartbeat(ctx, nodeID, apiclient.Heartbeat{
 				ActiveSessions: int32(app.peersManager.ActiveCountAll()),
 				AgentVersion:   cfg.AgentVersion,
+				MeshID:         app.node.NodeID(),
+				MeshPeers:      meshPeers(app.node.Snapshot()),
 			}); err != nil {
 				log.Printf("api heartbeat failed: %v", err)
 			}
@@ -65,6 +69,7 @@ func (app *App) syncLoop(ctx context.Context) {
 			app.applyFirewallPairs(st.FirewallPairs)
 			app.reconcileEgress(st.Policies, st.Egress, st.BlockedPrefixes)
 			app.reconcileRemotes(ctx, client, nodeID)
+			app.reconcileMeshPeers(ctx, client, nodeID)
 		}
 
 		select {
@@ -341,4 +346,36 @@ func (app *App) reconcileEgress(policies []apiclient.PolicyRule, items []apiclie
 	if invalid := app.router.ReplaceEgressRules(entries); invalid > 0 {
 		log.Printf("policy: dropped %d invalid rules from desired state", invalid)
 	}
+}
+
+func meshPeers(peers []mesh.MeshPeer) []apiclient.MeshPeer {
+	out := make([]apiclient.MeshPeer, 0, len(peers))
+	for _, p := range peers {
+		out = append(out, apiclient.MeshPeer{
+			PeerID: p.PeerID, RemoteAddr: p.RemoteAddr, RTTMillis: p.RTTMillis,
+			Initiator: p.Initiator, SentBytes: p.SentBytes, RecvBytes: p.RecvBytes,
+		})
+	}
+	return out
+}
+
+// reconcileMeshPeers подтягивает список нод из API и передаёт его mesh.
+// Это позволяет добавлять ноды без изменения конфигов старых нод.
+func (app *App) reconcileMeshPeers(ctx context.Context, client *apiclient.Client, nodeID string) {
+	dir, err := client.GetDirectory(ctx, nodeID)
+	if err != nil {
+		log.Printf("api directory pull failed: %v", err)
+		return
+	}
+	peers := make([]string, 0, len(dir.Nodes))
+	for _, n := range dir.Nodes {
+		if n.NodeID == app.apiNodeID {
+			continue
+		}
+		if n.Status != "active" || n.MeshEndpoint == "" {
+			continue
+		}
+		peers = append(peers, n.MeshEndpoint)
+	}
+	app.node.SetDynamicPeers(peers)
 }

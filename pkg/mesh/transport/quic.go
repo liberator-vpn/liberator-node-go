@@ -257,6 +257,10 @@ func (pc *quicPeerConnection) TotalRecv() uint64 {
 	return pc.totalRecv.Load()
 }
 
+func (pc *quicPeerConnection) RTT() time.Duration {
+	return pc.conn.ConnectionStats().SmoothedRTT
+}
+
 func (pc *quicPeerConnection) Context() context.Context { return pc.ctx }
 func (pc *quicPeerConnection) ID() string               { return pc.id }
 func (pc *quicPeerConnection) RemoteAddr() net.Addr     { return pc.conn.RemoteAddr() }

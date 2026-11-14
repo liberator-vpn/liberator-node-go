@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +31,9 @@ type MeshNode struct {
 	dnsService string
 	dnsPort    int
 	static     []string
+
+	dynamicMu sync.RWMutex
+	dynamic   []string
 
 	outboundMu sync.Mutex
 	outbound   map[string]transport.PeerConnection // "ip:port" -> живое соединение
@@ -82,6 +86,62 @@ func New(ctx context.Context, cfg appconfig.MeshConfig, secret string, router se
 func (n *MeshNode) NodeID() string { return n.localID }
 
 func (n *MeshNode) CountConnections() int { return len(n.registry.ListActive()) }
+
+type MeshPeer struct {
+	PeerID     string  `json:"peer_id"`
+	RemoteAddr string  `json:"remote_addr"`
+	RTTMillis  float64 `json:"rtt_ms"`
+	Initiator  bool    `json:"initiator"`
+	SentBytes  uint64  `json:"sent_bytes"`
+	RecvBytes  uint64  `json:"recv_bytes"`
+}
+
+// Snapshot возвращает текущие mesh-соединения с RTT из QUIC.
+func (n *MeshNode) Snapshot() []MeshPeer {
+	sessions := n.registry.ListActive()
+	out := make([]MeshPeer, 0, len(sessions))
+	for _, s := range sessions {
+		if s == nil || s.Conn == nil {
+			continue
+		}
+		rtt := s.Conn.RTT()
+		out = append(out, MeshPeer{
+			PeerID:     s.PeerID,
+			RemoteAddr: s.Conn.RemoteAddr().String(),
+			RTTMillis:  float64(rtt.Microseconds()) / 1000.0,
+			Initiator:  s.Conn.IsInitiator(),
+			SentBytes:  s.Conn.TotalSent(),
+			RecvBytes:  s.Conn.TotalRecv(),
+		})
+	}
+	return out
+}
+
+// SetDynamicPeers обновляет список соседей, полученный из API directory.
+func (n *MeshNode) SetDynamicPeers(peers []string) {
+	seen := make(map[string]struct{}, len(peers))
+	out := make([]string, 0, len(peers))
+	for _, p := range peers {
+		p = strings.TrimSpace(p)
+		if p == "" || n.isSelfHost(p) {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	n.dynamicMu.Lock()
+	n.dynamic = out
+	n.dynamicMu.Unlock()
+}
+
+func (n *MeshNode) dynamicPeers() []string {
+	n.dynamicMu.RLock()
+	defer n.dynamicMu.RUnlock()
+	return append([]string(nil), n.dynamic...)
+}
 func (n *MeshNode) ListenAddress() net.Addr {
 	return n.transport.Addr()
 }
@@ -200,7 +260,7 @@ func (n *MeshNode) Run() {
 
 // runPeersSync периодически обновляет целевой список нод и держит пул соединений.
 func (n *MeshNode) runPeersSync(ctx context.Context) {
-	refresh := time.NewTicker(30 * time.Second)
+	refresh := time.NewTicker(10 * time.Second)
 	defer refresh.Stop()
 
 	supervisors := make(map[string]context.CancelFunc)
@@ -256,6 +316,9 @@ func (n *MeshNode) discoveredPeers() []string {
 		if s == "" || n.isSelfHost(s) {
 			continue
 		}
+		addrs[s] = struct{}{}
+	}
+	for _, s := range n.dynamicPeers() {
 		addrs[s] = struct{}{}
 	}
 

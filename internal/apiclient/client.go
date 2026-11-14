@@ -87,6 +87,15 @@ func (c *Client) Enroll(ctx context.Context, req EnrollRequest) (*EnrollResult, 
 	return &out, nil
 }
 
+type MeshPeer struct {
+	PeerID     string  `json:"peer_id"`
+	RemoteAddr string  `json:"remote_addr"`
+	RTTMillis  float64 `json:"rtt_ms"`
+	Initiator  bool    `json:"initiator"`
+	SentBytes  uint64  `json:"sent_bytes"`
+	RecvBytes  uint64  `json:"recv_bytes"`
+}
+
 type Heartbeat struct {
 	ActiveSessions int32          `json:"active_sessions"`
 	CPU            float64        `json:"cpu"`
@@ -95,6 +104,30 @@ type Heartbeat struct {
 	BytesDown      int64          `json:"bytes_down"`
 	AgentVersion   string         `json:"agent_version,omitempty"`
 	Capabilities   map[string]any `json:"capabilities,omitempty"`
+	MeshID         string         `json:"mesh_id,omitempty"`
+	MeshPeers      []MeshPeer     `json:"mesh_peers,omitempty"`
+}
+
+type DirectoryNode struct {
+	NodeID         string `json:"node_id"`
+	Hostname       string `json:"hostname"`
+	PublicEndpoint string `json:"public_endpoint"`
+	MeshEndpoint   string `json:"mesh_endpoint"`
+	RegionCode     string `json:"region_code"`
+	Status         string `json:"status"`
+	GatewayAddr    string `json:"gateway_addr"`
+}
+
+type Directory struct {
+	Nodes []DirectoryNode `json:"nodes"`
+}
+
+func (c *Client) GetDirectory(ctx context.Context, nodeID string) (*Directory, error) {
+	var out Directory
+	if err := c.do(ctx, http.MethodGet, "/v1/node/directory", nodeID, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 func (c *Client) Heartbeat(ctx context.Context, nodeID string, hb Heartbeat) error {

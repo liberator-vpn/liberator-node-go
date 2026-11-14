@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"net"
+	"time"
 )
 
 // PeerConnection представляет абстракцию над QUIC Connection.
@@ -17,6 +18,7 @@ type PeerConnection interface {
 
 	TotalSent() uint64
 	TotalRecv() uint64
+	RTT() time.Duration
 }
 
 // NetworkTransport — интерфейс для создания входящих и исходящих соединений ноды.

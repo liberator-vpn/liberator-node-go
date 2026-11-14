@@ -37,6 +37,7 @@ func (c *fakeConn) Close() error                                   { c.cancel();
 func (c *fakeConn) Context() context.Context                       { return c.ctx }
 func (c *fakeConn) TotalSent() uint64                              { return 0 }
 func (c *fakeConn) TotalRecv() uint64                              { return 0 }
+func (c *fakeConn) RTT() time.Duration                             { return 0 }
 
 var _ transport.PeerConnection = (*fakeConn)(nil)
 

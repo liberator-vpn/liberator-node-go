@@ -36,6 +36,8 @@ VPN-шлюз (egress/ingress нода) в распределённой сети 
     `client → IP → domain`, применяет domain-правила `direct`/`exit`/`deny`;
     клиентам DNS выдаётся в AWG-конфиге, UDP-запросы на другие DNS-серверы
     перехватываются;
+  - тянет `/v1/node/directory` и передаёт mesh список соседних нод, поэтому
+    новые ноды подхватываются без изменения конфигов старых нод;
   - тянет глобальную директорию клиентов (`/v1/node/clients`) и ставит **remote-маршруты**:
     клиент другой ноды → пересылка датаграмм через QUIC-пул на её `mesh_endpoint`
     (client→client);
@@ -44,6 +46,7 @@ VPN-шлюз (egress/ingress нода) в распределённой сети 
     `deny` дропает пакеты. Приоритет: user-правила (`tier=0`) всегда выше групповых (`tier=1`),
     внутри уровня — specificity → group priority → rule priority → стабильный ID;
   - `blocked_prefixes` (`{peer_ip, prefix}`) дублирует `deny`-правила для обратной совместимости;
+  - отправляет в heartbeat `mesh_id` и RTT/peers текущих QUIC-соединений;
   - подтверждает активацию сессий (`sessions/activate`, `issued → active`);
   - пушит дельты трафика по сессиям (`/v1/node/usage`); это телеметрия, не billing.
 - Отдаёт метрики Prometheus (`node_traffic_bytes_total`, `node_packet_lifetime_seconds`,
