@@ -128,3 +128,21 @@ func mustPrefix(t *testing.T, s string) netip.Prefix {
 	}
 	return p
 }
+
+func BenchmarkGroupTrieLookup(b *testing.B) {
+	trie := newPrefixTrie()
+	trie.insert(netip.MustParsePrefix("0.0.0.0/0"), groupRule{action: userrules.ActionExit})
+	for i := 0; i < 40000; i++ {
+		p := netip.PrefixFrom(netip.AddrFrom4([4]byte{10, byte(i / 256), byte(i % 256), 0}), 24)
+		trie.insert(p, groupRule{action: userrules.ActionDirect})
+	}
+	b.ResetTimer()
+	sink := 0
+	for i := 0; i < b.N; i++ {
+		rule, bits, ok := trie.lookup(uint32(i))
+		if ok {
+			sink += bits + len(rule.action)
+		}
+	}
+	_ = sink
+}
