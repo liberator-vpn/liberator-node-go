@@ -10,7 +10,10 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/miekg/dns"
 
 	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/dgmessage"
@@ -56,6 +59,10 @@ type Router struct {
 	domainRules *domainrules.Table
 	domainCache *dnsproxy.Cache
 	dnsHandler  UDPDNSHandler
+
+	// mtu — размер внутреннего пакета (TUN). Нужен, чтобы не отдавать
+	// клиенту DNS-ответ, который после инкапсуляции не влезет в путь.
+	mtu atomic.Int32
 
 	pinsMu sync.Mutex
 	pins   map[uint64]pin
@@ -126,6 +133,14 @@ func (r *Router) SetExitSender(f func(endpoint string, data []byte) error) {
 	r.exitMu.Lock()
 	r.exitFn = f
 	r.exitMu.Unlock()
+}
+
+// SetMTU задаёт MTU туннеля (внутренний пакет). 0 — без ограничения.
+func (r *Router) SetMTU(mtu int) {
+	if mtu < 0 {
+		mtu = 0
+	}
+	r.mtu.Store(int32(mtu))
 }
 
 // SetDomainPolicy подключает доменные правила и DNS-кэш.
@@ -394,6 +409,10 @@ func (r *Router) handleTransportPacketInternal(packet *dgmessage.DatagramMessage
 	if r.dnsHandler != nil && packet.HoleInfo.Protocol == "udp" && packet.HoleInfo.DstPort == 53 && packet.HoleInfo.DstIP != r.gatewayAddr {
 		if payload := udpPayload(packet.Data); len(payload) > 0 {
 			if answer := r.dnsHandler.HandleUDPQuery(packet.HoleInfo.SrcIP, payload); len(answer) > 0 {
+				if answer = r.fitDNSAnswer(answer); len(answer) == 0 {
+					packet.Free()
+					return
+				}
 				if out := buildUDPResponse(packet, answer); out != nil {
 					if peer, ok := r.routingTable.GetByIP(packet.HoleInfo.SrcIP); ok {
 						_ = peer.SendDatagram(out)
@@ -532,6 +551,30 @@ func udpPayload(data []byte) []byte {
 		return nil
 	}
 	return data[ihl+8:]
+}
+
+// fitDNSAnswer обрезает DNS-ответ до размера, который влезает в туннель, и
+// выставляет TC=1: клиент повторит запрос по TCP. Без этого ответ на 1.5-4 КБ
+// уходил одним UDP-пакетом и падал с sendmmsg: message too long.
+func (r *Router) fitDNSAnswer(answer []byte) []byte {
+	mtu := int(r.mtu.Load())
+	if mtu <= 0 {
+		return answer
+	}
+	maxPayload := mtu - 20 - 8 // IP + UDP
+	if maxPayload <= 0 || len(answer) <= maxPayload {
+		return answer
+	}
+	var msg dns.Msg
+	if err := msg.Unpack(answer); err != nil {
+		return nil
+	}
+	msg.Truncate(maxPayload)
+	out, err := msg.Pack()
+	if err != nil || len(out) > maxPayload {
+		return nil
+	}
+	return out
 }
 
 // buildUDPResponse собирает ответ от исходного destination (например, 8.8.8.8:53)

@@ -153,6 +153,7 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 	app.dnsCache = dnsproxy.NewCache(dnsproxy.CacheConfig{
 		TTL: cfg.DNS.Cache.TTL, MaxEntries: cfg.DNS.Cache.MaxEntries,
 	})
+	app.router.SetMTU(cfg.TunConfig.MTU)
 	app.router.SetDomainPolicy(app.domainRules, app.dnsCache)
 	if cfg.DNS.Enabled {
 		listenIP := cfg.DNS.ListenAddr

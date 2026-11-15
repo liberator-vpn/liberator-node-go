@@ -59,6 +59,10 @@ func (p *AWGPeer) TouchLastSeen(now time.Time) {
 }
 
 func (p *AWGPeer) SendDatagram(data []byte) error {
+	if max := p.transport.cfg.MTU; max > 0 && len(data) > max {
+		p.transport.dropOversize(len(data))
+		return nil
+	}
 	p.totalToPeer.Add(uint64(len(data)))
 	return p.transport.writePacket(data)
 }

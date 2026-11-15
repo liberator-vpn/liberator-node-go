@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
@@ -61,6 +62,27 @@ type AWGTransport struct {
 
 	deltaChan chan transport.TransportPeerStats
 	closeOnce sync.Once
+
+	// Счётчик и троттлинг лога для пакетов, которые не влезают в MTU.
+	oversizeDropped atomic.Uint64
+	oversizeLastLog atomic.Int64
+}
+
+// dropOversize отбрасывает пакет, который после инкапсуляции не влезет в
+// путь: иначе amneziawg-go получает EMSGSIZE и спамит ошибкой на каждый
+// пакет. Лог — не чаще раза в 30 секунд.
+func (ig *AWGTransport) dropOversize(size int) {
+	ig.oversizeDropped.Add(1)
+	now := time.Now().UnixNano()
+	last := ig.oversizeLastLog.Load()
+	if now-last < int64(30*time.Second) {
+		return
+	}
+	if !ig.oversizeLastLog.CompareAndSwap(last, now) {
+		return
+	}
+	log.Printf("[%s] dropped %d-byte packet: larger than tunnel MTU %d",
+		ig.nodeID, size, ig.cfg.MTU)
 }
 
 func (ig *AWGTransport) Type() string {
