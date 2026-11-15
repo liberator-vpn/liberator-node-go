@@ -70,11 +70,20 @@ type Router struct {
 	// rulesGen — поколение набора правил. Пин, поставленный при старом
 	// поколении, недействителен: иначе после выключения domain-правила
 	// кэш продолжал бы слать трафик на старую exit-ноду.
-	rulesGen      uint64
-	domainRulesFP uint64
-	domainFPReady bool
-	egressRulesFP uint64
-	egressFPReady bool
+	rulesGen       uint64
+	domainRulesFP  uint64
+	domainFPReady  bool
+	egressRulesFP  uint64
+	egressFPReady  bool
+	groupRulesFP   uint64
+	groupFPReady   bool
+	clientGrpFP    uint64
+	clientGrpReady bool
+
+	groupsMu       sync.RWMutex
+	groupsByID     map[string]*groupPolicy
+	clientGroupIDs map[uint32][]string
+	clientGroups   map[uint32][]*groupPolicy
 }
 
 type pin struct {
@@ -150,7 +159,7 @@ func (r *Router) SetDomainPolicy(rules *domainrules.Table, cache *dnsproxy.Cache
 }
 
 func (r *Router) ReplaceDomainRules(entries []domainrules.Entry) {
-	r.invalidatePinsIfChanged(domainRulesFingerprint(entries), true)
+	r.invalidatePinsIfChanged(domainRulesFingerprint(entries), &r.domainFPReady, &r.domainRulesFP)
 	if r.domainRules != nil {
 		r.domainRules.ReplaceAll(entries)
 	}
@@ -177,33 +186,62 @@ func (r *Router) lookupPolicy(src, dst uint32) (string, string) {
 	if action, exit, ok := r.getPin(src, dst); ok {
 		return action, exit
 	}
-	if r.domainRules == nil || r.domainCache == nil {
-		return ipAction, ipExit
+
+	var clientDomains, globalDomains []string
+	if r.domainRules != nil && r.domainCache != nil {
+		for _, hit := range r.domainCache.DomainsForClient(src, dst) {
+			clientDomains = append(clientDomains, hit.Domain)
+		}
+		globalDomains = r.domainCache.GlobalDomains(dst)
 	}
 
-	// Если хотя бы один домен на этом IP запрещён — IP блокируется.
-	for _, domain := range r.domainCache.GlobalDomains(dst) {
-		if rule, ok := r.domainRules.Lookup(src, domain); ok && rule.Action == userrules.ActionDeny {
+	// deny по домену из user-правил.
+	for _, domain := range globalDomains {
+		if rule, ok := r.userDomainRule(src, domain); ok && rule.Action == userrules.ActionDeny {
 			return userrules.ActionDeny, ""
 		}
 	}
+	gl := r.lookupGroups(src, dst, clientDomains, globalDomains)
+	if gl.deny {
+		return userrules.ActionDeny, ""
+	}
 
-	var best *domainrules.Rule
-	for _, hit := range r.domainCache.DomainsForClient(src, dst) {
-		rule, ok := r.domainRules.Lookup(src, hit.Domain)
+	// Лучшее user-доменное правило (tier 0). Оно перебивает любой IP-rule.
+	var userDom *domainrules.Rule
+	for _, domain := range clientDomains {
+		rule, ok := r.userDomainRule(src, domain)
 		if !ok {
 			continue
 		}
-		if best == nil || betterDomain(rule, *best) {
+		if userDom == nil || betterDomain(rule, *userDom) {
 			ruleCopy := rule
-			best = &ruleCopy
+			userDom = &ruleCopy
 		}
 	}
-	if best != nil && best.Tier <= ipTier {
-		r.setPin(src, dst, best.Action, best.Exit)
-		return best.Action, best.Exit
+
+	// IP-решение: user (tier 0) -> группа (tier 1) -> direct.
+	action, exit, tier := ipAction, ipExit, ipTier
+	if tier != 0 && gl.ipOK {
+		action, exit, tier = gl.ipRule.action, gl.ipRule.exit, 1
 	}
-	return ipAction, ipExit
+
+	if userDom != nil {
+		r.setPin(src, dst, userDom.Action, userDom.Exit)
+		return userDom.Action, userDom.Exit
+	}
+	// Групповой домен (tier 1) не перебивает user IP-правило (tier 0).
+	if gl.domOK && tier != 0 {
+		r.setPin(src, dst, gl.domRule.action, gl.domRule.exit)
+		return gl.domRule.action, gl.domRule.exit
+	}
+	return action, exit
+}
+
+func (r *Router) userDomainRule(src uint32, domain string) (domainrules.Rule, bool) {
+	if r.domainRules == nil {
+		return domainrules.Rule{}, false
+	}
+	return r.domainRules.Lookup(src, domain)
 }
 
 func betterDomain(a, b domainrules.Rule) bool {
@@ -248,13 +286,9 @@ func (r *Router) setPin(src, dst uint32, action, exit string) {
 // invalidatePinsIfChanged сбрасывает кэш решений, если набор правил изменился.
 // Сравнение по отпечатку нужно, чтобы реконсиляция раз в 5 секунд с теми же
 // правилами не убивала stickiness уже установленных flow.
-func (r *Router) invalidatePinsIfChanged(fp uint64, domain bool) {
+func (r *Router) invalidatePinsIfChanged(fp uint64, ready *bool, prev *uint64) {
 	r.pinsMu.Lock()
 	defer r.pinsMu.Unlock()
-	ready, prev := &r.egressFPReady, &r.egressRulesFP
-	if domain {
-		ready, prev = &r.domainFPReady, &r.domainRulesFP
-	}
 	if *ready && *prev == fp {
 		return
 	}

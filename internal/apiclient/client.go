@@ -185,6 +185,29 @@ type State struct {
 	Egress          []Egress        `json:"egress"`
 	BlockedPrefixes []DenyRule      `json:"blocked_prefixes"`
 	Policies        []PolicyRule    `json:"policies"`
+	Groups          []GroupPolicy   `json:"groups"`
+	UserGroups      []UserGroups    `json:"user_groups"`
+}
+
+// GroupPolicy — общие правила группы. Передаются один раз на группу,
+// а не копией в каждого пользователя.
+type GroupPolicy struct {
+	GroupID  string      `json:"group_id"`
+	Priority int32       `json:"priority"`
+	Rules    []GroupRule `json:"rules"`
+}
+
+type GroupRule struct {
+	Prefix           string `json:"prefix,omitempty"`
+	Domain           string `json:"domain,omitempty"`
+	Action           string `json:"action"`
+	ExitMeshEndpoint string `json:"exit_mesh_endpoint,omitempty"`
+	Priority         int32  `json:"priority"`
+}
+
+type UserGroups struct {
+	PeerIP   string   `json:"peer_ip"`
+	GroupIDs []string `json:"group_ids"`
 }
 
 type Egress struct {

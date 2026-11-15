@@ -19,6 +19,6 @@ func (r *Router) SetEgressRule(clientIP uint32, prefixCIDR, exit string) error {
 // ReplaceEgressRules атомарно заменяет весь набор правил egress.
 // При изменении набора сбрасывает кэш решений (pins).
 func (r *Router) ReplaceEgressRules(entries []userrules.Entry) int {
-	r.invalidatePinsIfChanged(egressRulesFingerprint(entries), false)
+	r.invalidatePinsIfChanged(egressRulesFingerprint(entries), &r.egressFPReady, &r.egressRulesFP)
 	return r.userRules.ReplaceAll(entries)
 }

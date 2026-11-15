@@ -12,6 +12,7 @@ import (
 	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/netutils"
 	"github.com/liberator-vpn/liberator-node-go/pkg/domainrules"
+	"github.com/liberator-vpn/liberator-node-go/pkg/router"
 	"github.com/liberator-vpn/liberator-node-go/pkg/services/peersmanager"
 	"github.com/liberator-vpn/liberator-node-go/pkg/transport/awg"
 	"github.com/liberator-vpn/liberator-node-go/pkg/userrules"
@@ -67,7 +68,7 @@ func (app *App) syncLoop(ctx context.Context) {
 			app.pushUsage(ctx, client, nodeID, usageIndex)
 			app.pushAlive(ctx, client, nodeID, usageIndex)
 			app.applyFirewallPairs(st.FirewallPairs)
-			app.reconcileEgress(st.Policies, st.Egress, st.BlockedPrefixes)
+			app.reconcileEgress(st.Policies, st.Groups, st.UserGroups, st.Egress, st.BlockedPrefixes)
 			app.reconcileRemotes(ctx, client, nodeID)
 			app.reconcileMeshPeers(ctx, client, nodeID)
 		}
@@ -271,47 +272,52 @@ func applyQuotaLimits(c *appconfig.ClientConfig, q *apiclient.Quota) {
 	c.TrafficLimitGb = &gb
 }
 
-// reconcileEgress приводит правила выхода роутера (userRules) в соответствие
-// желаемому /state.egress. Набор собирается целиком и подменяется атомарно:
-// иначе между Clear и Set был бы интервал, когда весь egress шёл в локальный NAT.
-func (app *App) reconcileEgress(policies []apiclient.PolicyRule, items []apiclient.Egress, deny []apiclient.DenyRule) {
+// reconcileEgress приводит правила выхода роутера к желаемому состоянию.
+//
+// Пользовательские правила идут в userRules (tier 0), групповые — один раз
+// в общую таблицу групп (tier 1), а клиент получает только список group_id.
+// Наборы подменяются атомарно, чтобы между Clear и Set не было окна, когда
+// весь egress уходил в локальный NAT.
+func (app *App) reconcileEgress(policies []apiclient.PolicyRule, groups []apiclient.GroupPolicy, userGroups []apiclient.UserGroups, items []apiclient.Egress, deny []apiclient.DenyRule) {
 	entries := make([]userrules.Entry, 0, len(policies)+len(items)+len(deny))
 	domainEntries := make([]domainrules.Entry, 0, len(policies))
-	if len(policies) > 0 {
-		for _, p := range policies {
-			if p.PeerIP == "" {
-				continue
-			}
-			ip := netutils.IPStringToUint32(p.PeerIP)
-			if ip == 0 {
-				continue
-			}
-			if p.Domain != "" {
-				domainEntries = append(domainEntries, domainrules.Entry{
-					ClientIP:      ip,
-					Domain:        p.Domain,
-					Action:        p.Action,
-					Exit:          p.ExitMeshEndpoint,
-					Tier:          p.Tier,
-					GroupPriority: p.GroupPriority,
-					Priority:      p.Priority,
-				})
-				continue
-			}
-			if p.Prefix == "" {
-				continue
-			}
-			entries = append(entries, userrules.Entry{
+
+	for _, p := range policies {
+		if p.PeerIP == "" {
+			continue
+		}
+		ip := netutils.IPStringToUint32(p.PeerIP)
+		if ip == 0 {
+			continue
+		}
+		if p.Domain != "" {
+			domainEntries = append(domainEntries, domainrules.Entry{
 				ClientIP:      ip,
-				PrefixCIDR:    p.Prefix,
+				Domain:        p.Domain,
 				Action:        p.Action,
 				Exit:          p.ExitMeshEndpoint,
 				Tier:          p.Tier,
 				GroupPriority: p.GroupPriority,
 				Priority:      p.Priority,
 			})
+			continue
 		}
-	} else {
+		if p.Prefix == "" {
+			continue
+		}
+		entries = append(entries, userrules.Entry{
+			ClientIP:      ip,
+			PrefixCIDR:    p.Prefix,
+			Action:        p.Action,
+			Exit:          p.ExitMeshEndpoint,
+			Tier:          p.Tier,
+			GroupPriority: p.GroupPriority,
+			Priority:      p.Priority,
+		})
+	}
+
+	// Совместимость со старым API: если групп нет, берём legacy egress/deny.
+	if len(groups) == 0 && len(policies) == 0 {
 		for _, eg := range items {
 			if eg.PeerIP == "" || eg.Prefix == "" || eg.ExitMeshEndpoint == "" {
 				continue
@@ -321,10 +327,8 @@ func (app *App) reconcileEgress(policies []apiclient.PolicyRule, items []apiclie
 				continue
 			}
 			entries = append(entries, userrules.Entry{
-				ClientIP:   ip,
-				PrefixCIDR: eg.Prefix,
-				Action:     userrules.ActionExit,
-				Exit:       eg.ExitMeshEndpoint,
+				ClientIP: ip, PrefixCIDR: eg.Prefix,
+				Action: userrules.ActionExit, Exit: eg.ExitMeshEndpoint,
 			})
 		}
 		for _, dr := range deny {
@@ -336,13 +340,38 @@ func (app *App) reconcileEgress(policies []apiclient.PolicyRule, items []apiclie
 				continue
 			}
 			entries = append(entries, userrules.Entry{
-				ClientIP:   ip,
-				PrefixCIDR: dr.Prefix,
-				Action:     userrules.ActionDeny,
+				ClientIP: ip, PrefixCIDR: dr.Prefix, Action: userrules.ActionDeny,
 			})
 		}
 	}
+
+	groupInputs := make([]router.GroupInput, 0, len(groups))
+	for _, g := range groups {
+		rules := make([]router.GroupRuleInput, 0, len(g.Rules))
+		for _, ru := range g.Rules {
+			rules = append(rules, router.GroupRuleInput{
+				Prefix: ru.Prefix, Domain: ru.Domain, Action: ru.Action,
+				Exit: ru.ExitMeshEndpoint, Priority: ru.Priority,
+			})
+		}
+		groupInputs = append(groupInputs, router.GroupInput{
+			ID: g.GroupID, Priority: g.Priority, Rules: rules,
+		})
+	}
+	clientGroups := make([]router.ClientGroupsInput, 0, len(userGroups))
+	for _, ug := range userGroups {
+		ip := netutils.IPStringToUint32(ug.PeerIP)
+		if ip == 0 {
+			continue
+		}
+		clientGroups = append(clientGroups, router.ClientGroupsInput{
+			ClientIP: ip, GroupIDs: ug.GroupIDs,
+		})
+	}
+
 	app.router.ReplaceDomainRules(domainEntries)
+	app.router.ReplaceGroupRules(groupInputs)
+	app.router.ReplaceClientGroups(clientGroups)
 	if invalid := app.router.ReplaceEgressRules(entries); invalid > 0 {
 		log.Printf("policy: dropped %d invalid rules from desired state", invalid)
 	}
