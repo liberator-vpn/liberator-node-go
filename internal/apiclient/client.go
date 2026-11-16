@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -187,6 +188,17 @@ type State struct {
 	Policies        []PolicyRule    `json:"policies"`
 	Groups          []GroupPolicy   `json:"groups"`
 	UserGroups      []UserGroups    `json:"user_groups"`
+	PolicyVersion   string          `json:"policy_version,omitempty"`
+}
+
+// PolicyState — версионируемая часть состояния (правила и группы).
+type PolicyState struct {
+	PolicyVersion   string        `json:"policy_version"`
+	Policies        []PolicyRule  `json:"policies"`
+	Groups          []GroupPolicy `json:"groups"`
+	UserGroups      []UserGroups  `json:"user_groups"`
+	Egress          []Egress      `json:"egress"`
+	BlockedPrefixes []DenyRule    `json:"blocked_prefixes"`
 }
 
 // GroupPolicy — общие правила группы. Передаются один раз на группу,
@@ -239,10 +251,48 @@ type PolicyRule struct {
 
 func (c *Client) GetState(ctx context.Context, nodeID string) (*State, error) {
 	var out State
-	if err := c.do(ctx, http.MethodGet, "/v1/node/state", nodeID, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/v1/node/state?policy=1", nodeID, nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// GetPolicy запрашивает политику с известной версией. notModified=true при 304.
+func (c *Client) GetPolicy(ctx context.Context, nodeID, version string) (*PolicyState, bool, error) {
+	path := "/v1/node/policy"
+	if version != "" {
+		path += "?version=" + url.QueryEscape(version)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	if c.secret != "" {
+		req.Header.Set("Authorization", "Bearer "+c.secret)
+	}
+	if nodeID != "" {
+		req.Header.Set("X-Node-Id", nodeID)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotModified {
+		return nil, true, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, false, &APIError{
+			Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode,
+			Message: strings.TrimSpace(string(body)),
+		}
+	}
+	var out PolicyState
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, false, err
+	}
+	return &out, false, nil
 }
 
 type ClientEntry struct {

@@ -68,7 +68,7 @@ func (app *App) syncLoop(ctx context.Context) {
 			app.pushUsage(ctx, client, nodeID, usageIndex)
 			app.pushAlive(ctx, client, nodeID, usageIndex)
 			app.applyFirewallPairs(st.FirewallPairs)
-			app.reconcileEgress(st.Policies, st.Groups, st.UserGroups, st.Egress, st.BlockedPrefixes)
+			app.syncPolicy(ctx, client, nodeID, st)
 			app.reconcileRemotes(ctx, client, nodeID)
 			app.reconcileMeshPeers(ctx, client, nodeID)
 		}
@@ -79,6 +79,29 @@ func (app *App) syncLoop(ctx context.Context) {
 		case <-time.After(syncEvery):
 		}
 	}
+}
+
+// syncPolicy забирает политику только при смене policy_version. Старый API
+// присылает правила прямо в state — тогда используем их (совместимость).
+func (app *App) syncPolicy(ctx context.Context, client *apiclient.Client, nodeID string, st *apiclient.State) {
+	if st.PolicyVersion == "" {
+		app.reconcileEgress(st.Policies, st.Groups, st.UserGroups, st.Egress, st.BlockedPrefixes)
+		return
+	}
+	if st.PolicyVersion == app.policyVersion {
+		return
+	}
+	pol, notModified, err := client.GetPolicy(ctx, nodeID, app.policyVersion)
+	if err != nil {
+		log.Printf("api policy pull failed: %v", err)
+		return
+	}
+	if notModified {
+		app.policyVersion = st.PolicyVersion
+		return
+	}
+	app.reconcileEgress(pol.Policies, pol.Groups, pol.UserGroups, pol.Egress, pol.BlockedPrefixes)
+	app.policyVersion = pol.PolicyVersion
 }
 
 // pushAlive отправляет API отчёт о реально активных сессиях (по last_seen).

@@ -34,12 +34,14 @@ type App struct {
 
 	router *router.Router
 
-	node       *mesh.MeshNode
-	nodeID     string
-	apiNodeID  string // node_id, выданный API при enrollment
-	apiSecret  string // per-node secret для /v1/node/*
-	tunIface   *iface.TUNIface
-	transports safemap.Safemap[string, transport.Transport]
+	node      *mesh.MeshNode
+	nodeID    string
+	apiNodeID string // node_id, выданный API при enrollment
+	apiSecret string // per-node secret для /v1/node/*
+	// policyVersion — версия политики, уже применённой нодой.
+	policyVersion string
+	tunIface      *iface.TUNIface
+	transports    safemap.Safemap[string, transport.Transport]
 	// protocol -> имя транспорта. Позволяет направлять сессии из /state
 	// в awg/vless/hysteria2, а не в один «последний зарегистрированный».
 	protocolTransport map[string]string
