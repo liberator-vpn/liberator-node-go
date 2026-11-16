@@ -480,6 +480,88 @@ func (device *Device) RoutineHandshake(id int) {
 	}
 }
 
+// reorderWindow bounds the number of out-of-order inbound elements held per
+// peer. At 100 Mbps this is roughly 1.4 MB of inner packets.
+const reorderWindow = 1024
+
+// reorderTimeout is how long a gap is tolerated before the receiver skips to
+// the lowest buffered counter. WireGuard transport packets are not
+// retransmitted; the inner TCP retransmits with a new outer counter, so
+// waiting longer only adds latency to every packet behind the gap.
+const reorderTimeout = 10 * time.Millisecond
+
+// processInboundElem validates one decrypted element and appends its inner IP
+// packet to bufs. It is called in counter order by RoutineSequentialReceiver.
+func (peer *Peer) processInboundElem(device *Device, elem *QueueInboundElement, bufs *[][]byte) (valid, data bool, rx uint64) {
+	if elem.packet == nil || elem.keypair == nil {
+		return false, false, 0
+	}
+	if !elem.keypair.replayFilter.ValidateCounter(elem.counter, RejectAfterMessages) {
+		return false, false, 0
+	}
+	valid = true
+	if peer.ReceivedWithKeypair(elem.keypair) {
+		peer.SetEndpointFromPacket(elem.endpoint)
+		peer.timersHandshakeComplete()
+		peer.SendStagedPackets()
+	}
+	peer.SetEndpointFromPacket(elem.endpoint)
+
+	rx = uint64(len(elem.packet) + MinMessageSize)
+	udpWindow := elem.padding + MessageTransportHeaderSize + uint32(len(elem.packet))
+	if peer.udpWindow.Load() < udpWindow {
+		peer.udpWindow.Store(udpWindow)
+	}
+
+	if len(elem.packet) == 0 || elem.packet[0] == 0 {
+		device.log.Verbosef("%v - Receiving keepalive packet", peer)
+		return valid, false, rx
+	}
+	data = true
+
+	switch elem.packet[0] >> 4 {
+	case 4:
+		if len(elem.packet) < ipv4.HeaderLen {
+			return valid, data, rx
+		}
+		field := elem.packet[IPv4offsetTotalLength : IPv4offsetTotalLength+2]
+		length := binary.BigEndian.Uint16(field)
+		if int(length) > len(elem.packet) || int(length) < ipv4.HeaderLen {
+			return valid, data, rx
+		}
+		elem.packet = elem.packet[:length]
+		src := elem.packet[IPv4offsetSrc : IPv4offsetSrc+net.IPv4len]
+		if device.allowedips.Lookup(src) != peer {
+			device.log.Verbosef("IPv4 packet with disallowed source address from %v", peer)
+			return valid, data, rx
+		}
+
+	case 6:
+		if len(elem.packet) < ipv6.HeaderLen {
+			return valid, data, rx
+		}
+		field := elem.packet[IPv6offsetPayloadLength : IPv6offsetPayloadLength+2]
+		length := binary.BigEndian.Uint16(field)
+		length += ipv6.HeaderLen
+		if int(length) > len(elem.packet) {
+			return valid, data, rx
+		}
+		elem.packet = elem.packet[:length]
+		src := elem.packet[IPv6offsetSrc : IPv6offsetSrc+net.IPv6len]
+		if device.allowedips.Lookup(src) != peer {
+			device.log.Verbosef("IPv6 packet with disallowed source address from %v", peer)
+			return valid, data, rx
+		}
+
+	default:
+		device.log.Verbosef("Packet with invalid IP version from %v", peer)
+		return valid, data, rx
+	}
+
+	*bufs = append(*bufs, elem.buffer[int(elem.padding):int(elem.padding)+MessageTransportHeaderSize+len(elem.packet)])
+	return valid, data, rx
+}
+
 func (peer *Peer) RoutineSequentialReceiver(maxBatchSize int) {
 	device := peer.device
 	defer func() {
@@ -489,131 +571,207 @@ func (peer *Peer) RoutineSequentialReceiver(maxBatchSize int) {
 	device.log.Verbosef("%v - Routine: sequential receiver - started", peer)
 
 	bufs := make([][]byte, 0, maxBatchSize)
+	pending := make(map[uint64]*QueueInboundElement)
+	released := make([]*QueueInboundElement, 0, maxBatchSize)
 
-	for elemsContainer := range peer.queue.inbound.c {
-		if elemsContainer == nil {
-			return
+	var (
+		next        uint64
+		haveNext    bool
+		keypair     *Keypair
+		timer       *time.Timer
+		validAny    bool
+		dataAny     bool
+		releasedAny bool
+		rxBytesLen  uint64
+	)
+
+	putElem := func(elem *QueueInboundElement) {
+		device.PutMessageBuffer(elem.buffer)
+		device.PutInboundElement(elem)
+	}
+	process := func(elem *QueueInboundElement) {
+		valid, data, rx := peer.processInboundElem(device, elem, &bufs)
+		if valid {
+			validAny = true
 		}
-		elemsContainer.Lock()
-		// Параллельные decryption-воркеры и батчевый приём могут отдать
-		// элементы контейнера не в порядке counter. Для внешнего UDP это
-		// безобидно, но внутренний TCP видит reordering как потери и
-		// схлопывает окно (upload 1.4 Мбит/с при 48 Мбит/с в UDP).
-		// Восстанавливаем порядок по counter в пределах батча.
-		if len(elemsContainer.elems) > 1 {
-			sameKeypair := true
-			kp := elemsContainer.elems[0].keypair
-			for _, e := range elemsContainer.elems[1:] {
-				if e.keypair != kp {
-					sameKeypair = false
-					break
-				}
-			}
-			if sameKeypair {
-				sort.SliceStable(elemsContainer.elems, func(i, j int) bool {
-					return elemsContainer.elems[i].counter < elemsContainer.elems[j].counter
-				})
-			}
+		if data {
+			dataAny = true
 		}
-		validTailPacket := -1
-		dataPacketReceived := false
-		rxBytesLen := uint64(0)
-		for i, elem := range elemsContainer.elems {
-			if elem.packet == nil {
-				// decryption failed
-				continue
-			}
-
-			if !elem.keypair.replayFilter.ValidateCounter(elem.counter, RejectAfterMessages) {
-				continue
-			}
-
-			validTailPacket = i
-			if peer.ReceivedWithKeypair(elem.keypair) {
-				peer.SetEndpointFromPacket(elem.endpoint)
-				peer.timersHandshakeComplete()
-				peer.SendStagedPackets()
-			}
-			rxBytesLen += uint64(len(elem.packet) + MinMessageSize)
-
-			udpWindow := elem.padding + MessageTransportHeaderSize + uint32(len(elem.packet))
-			if peer.udpWindow.Load() < udpWindow {
-				peer.udpWindow.Store(udpWindow)
-			}
-
-			if len(elem.packet) == 0 || elem.packet[0] == 0 {
-				device.log.Verbosef("%v - Receiving keepalive packet", peer)
-				continue
-			}
-			dataPacketReceived = true
-
-			switch elem.packet[0] >> 4 {
-			case 4:
-				if len(elem.packet) < ipv4.HeaderLen {
-					continue
-				}
-				field := elem.packet[IPv4offsetTotalLength : IPv4offsetTotalLength+2]
-				length := binary.BigEndian.Uint16(field)
-				if int(length) > len(elem.packet) || int(length) < ipv4.HeaderLen {
-					continue
-				}
-				elem.packet = elem.packet[:length]
-				src := elem.packet[IPv4offsetSrc : IPv4offsetSrc+net.IPv4len]
-				if device.allowedips.Lookup(src) != peer {
-					device.log.Verbosef("IPv4 packet with disallowed source address from %v", peer)
-					continue
-				}
-
-			case 6:
-				if len(elem.packet) < ipv6.HeaderLen {
-					continue
-				}
-				field := elem.packet[IPv6offsetPayloadLength : IPv6offsetPayloadLength+2]
-				length := binary.BigEndian.Uint16(field)
-				length += ipv6.HeaderLen
-				if int(length) > len(elem.packet) {
-					continue
-				}
-				elem.packet = elem.packet[:length]
-				src := elem.packet[IPv6offsetSrc : IPv6offsetSrc+net.IPv6len]
-				if device.allowedips.Lookup(src) != peer {
-					device.log.Verbosef("IPv6 packet with disallowed source address from %v", peer)
-					continue
-				}
-
-			default:
-				device.log.Verbosef(
-					"Packet with invalid IP version from %v",
-					peer,
-				)
-				continue
-			}
-
-			bufs = append(bufs, elem.buffer[int(elem.padding):int(elem.padding)+MessageTransportHeaderSize+len(elem.packet)])
-		}
-
-		peer.rxBytes.Add(rxBytesLen)
-		if validTailPacket >= 0 {
-			peer.SetEndpointFromPacket(elemsContainer.elems[validTailPacket].endpoint)
-			peer.keepKeyFreshReceiving()
-			peer.timersAnyAuthenticatedPacketTraversal()
-			peer.timersAnyAuthenticatedPacketReceived()
-		}
-		if dataPacketReceived {
-			peer.timersDataReceived()
-		}
+		rxBytesLen += rx
+		released = append(released, elem)
+	}
+	flushBuffers := func() {
 		if len(bufs) > 0 {
 			_, err := device.tun.device.Write(bufs, MessageTransportOffsetContent)
 			if err != nil && !device.isClosed() {
 				device.log.Errorf("Failed to write packets to TUN device: %v", err)
 			}
+			bufs = bufs[:0]
 		}
+		for _, elem := range released {
+			putElem(elem)
+		}
+		released = released[:0]
+		if validAny {
+			peer.keepKeyFreshReceiving()
+			peer.timersAnyAuthenticatedPacketTraversal()
+			peer.timersAnyAuthenticatedPacketReceived()
+			validAny = false
+		}
+		if dataAny {
+			peer.timersDataReceived()
+			dataAny = false
+		}
+		if rxBytesLen > 0 {
+			peer.rxBytes.Add(rxBytesLen)
+			rxBytesLen = 0
+		}
+	}
+	lowestPending := func() (uint64, bool) {
+		var (
+			min   uint64
+			found bool
+		)
+		for counter := range pending {
+			if !found || counter < min {
+				min = counter
+				found = true
+			}
+		}
+		return min, found
+	}
+	release := func() {
+		releasedCount := 0
+		for haveNext {
+			elem, ok := pending[next]
+			if !ok {
+				break
+			}
+			delete(pending, next)
+			process(elem)
+			releasedCount++
+			next++
+		}
+		if releasedCount > 0 {
+			releasedAny = true
+		}
+		flushBuffers()
+	}
+	// flushAll is the no-loss fallback: release every buffered element in
+	// counter order, even if a gap is missing. The gap is left to inner TCP
+	// retransmission; dropping buffered packets would amplify loss.
+	flushAll := func() {
+		if len(pending) > 0 {
+			keys := make([]uint64, 0, len(pending))
+			for counter := range pending {
+				keys = append(keys, counter)
+			}
+			sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+			for _, counter := range keys {
+				elem := pending[counter]
+				delete(pending, counter)
+				process(elem)
+			}
+			releasedAny = true
+		}
+		haveNext = false
+		next = 0
+		flushBuffers()
+	}
+
+	for {
+		var elemsContainer *QueueInboundElementsContainer
+		if haveNext && len(pending) > 0 {
+			if _, ok := pending[next]; !ok {
+				if timer == nil {
+					timer = time.NewTimer(reorderTimeout)
+				} else {
+					timer.Reset(reorderTimeout)
+				}
+				select {
+				case elemsContainer = <-peer.queue.inbound.c:
+					if !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
+					}
+				case <-timer.C:
+					flushAll()
+					continue
+				}
+			} else {
+				elemsContainer = <-peer.queue.inbound.c
+			}
+		} else {
+			elemsContainer = <-peer.queue.inbound.c
+		}
+
+		if elemsContainer == nil {
+			flushAll()
+			if timer != nil {
+				timer.Stop()
+			}
+			return
+		}
+
+		elemsContainer.Lock()
 		for _, elem := range elemsContainer.elems {
-			device.PutMessageBuffer(elem.buffer)
-			device.PutInboundElement(elem)
+			if elem.packet == nil || elem.keypair == nil {
+				putElem(elem)
+				continue
+			}
+			if elem.keypair != keypair {
+				flushAll()
+				keypair = elem.keypair
+				releasedAny = false
+			}
+			if !haveNext {
+				if _, exists := pending[elem.counter]; exists {
+					putElem(elem)
+					continue
+				}
+				pending[elem.counter] = elem
+				continue
+			}
+			if elem.counter < next {
+				// Пока не выпустили ни одного пакета текущего keypair,
+				// более ранний counter мог прийти во втором контейнере.
+				if !releasedAny {
+					next = elem.counter
+					if _, exists := pending[elem.counter]; exists {
+						putElem(elem)
+						continue
+					}
+					pending[elem.counter] = elem
+					continue
+				}
+				// Поздний пакет уже после выпуска: отдаём его сразу,
+				// не теряя данные.
+				process(elem)
+				flushBuffers()
+				continue
+			}
+			if _, exists := pending[elem.counter]; exists {
+				putElem(elem)
+				continue
+			}
+			pending[elem.counter] = elem
 		}
-		bufs = bufs[:0]
+		if !haveNext {
+			if min, ok := lowestPending(); ok {
+				next = min
+				haveNext = true
+			}
+		}
+		elemsContainer.elems = nil
+		elemsContainer.Unlock()
 		device.PutInboundElementsContainer(elemsContainer)
+
+		if len(pending) > reorderWindow {
+			flushAll()
+		}
+		release()
 	}
 }
 
