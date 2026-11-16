@@ -116,7 +116,12 @@ func New(
 		return nil, fmt.Errorf("invalid global CIDR: %w", err)
 	}
 
+	// Минимум 4 воркера: на 2 vCPU этого достаточно, чтобы upload и download
+	// разных соединений реже попадали в один канал.
 	workersNum := runtime.GOMAXPROCS(0)
+	if workersNum < 4 {
+		workersNum = 4
+	}
 	workers := make([]chan datagramMessageInfo, workersNum)
 	for i := range workers {
 		workers[i] = make(chan datagramMessageInfo, 1000)
