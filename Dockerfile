@@ -19,6 +19,8 @@ FROM golang:1.26.2-alpine AS builder
 WORKDIR /src
 
 COPY go.mod go.sum ./
+# Локальный replace-модуль нужен уже на этапе go mod download.
+COPY third_party ./third_party
 RUN go mod download
 
 COPY . .
