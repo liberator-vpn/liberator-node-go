@@ -32,7 +32,7 @@ func (r *Router) HandleTransportPacket(packet *dgmessage.DatagramMessage) {
 // никто не читает, иначе TUN readLoop / QUIC-сессия / приём AWG висели бы
 // навсегда, не давая приложению завершиться.
 func (r *Router) enqueue(packet *dgmessage.DatagramMessage, from fromType) {
-	worker := r.getWorker(packet.HoleInfo)
+	worker := r.getWorker(packet.HoleInfo, from)
 	select {
 	case worker <- datagramMessageInfo{Msg: packet, From: from}:
 	case <-r.ctx.Done():
@@ -40,7 +40,7 @@ func (r *Router) enqueue(packet *dgmessage.DatagramMessage, from fromType) {
 	}
 }
 
-func (r *Router) getWorker(hi dgmessage.HoleInfo) chan datagramMessageInfo {
+func (r *Router) getWorker(hi dgmessage.HoleInfo, from fromType) chan datagramMessageInfo {
 	// Направленный хэш: все пакеты одного направления (один 5-tuple) идут
 	// в один воркер и сохраняют порядок. Обратное направление — отдельный
 	// поток, и его не нужно держать в том же воркере: при симметричном хэше
@@ -63,7 +63,15 @@ func (r *Router) getWorker(hi dgmessage.HoleInfo) chan datagramMessageInfo {
 	hash *= 0xc2b2ae35
 	hash ^= hash >> 16
 
-	// 4. Вычисляем индекс воркера
-	idx := hash % uint32(len(r.shardedWorkers))
-	return r.shardedWorkers[idx]
+	// 4. Раздельные пулы: upload (из AWG) и download (из TUN/меша) не делят
+	// воркеры. Иначе крупный download заполнял канал, upload-пакеты вставали
+	// в очередь, AWG-receive блокировался и переполнял UDP-сокет.
+	n := len(r.shardedWorkers)
+	half := n / 2
+	pool := r.shardedWorkers[half:]
+	if from == fromTransport {
+		pool = r.shardedWorkers[:half]
+	}
+	idx := hash % uint32(len(pool))
+	return pool[idx]
 }
