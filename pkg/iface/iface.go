@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"net"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -156,6 +157,13 @@ func NewTUN(
 		return nil, fmt.Errorf("failed to up iface: %w", err)
 	}
 
+	// Forwarded client traffic arrives on liberator with a source from the
+	// overlay. Strict/loose rp_filter can drop it depending on the kernel
+	// default, so pin the TUN to 0 explicitly.
+	if err := os.WriteFile("/proc/sys/net/ipv4/conf/"+cfg.IfaceInName+"/rp_filter", []byte("0"), 0o644); err != nil {
+		log.Printf("failed to disable rp_filter on %s: %v", cfg.IfaceInName, err)
+	}
+
 	// Настраиваем NAT через go-iptables
 	eg.ipt, err = iptables.New()
 	if err != nil {
@@ -206,7 +214,13 @@ func (eg *TUNIface) setupNAT() error {
 	}
 
 	// Б) Маскарадинг (NAT) трафика из подсети туннеля наружу.
-	if err := eg.ipt.AppendUnique("nat", "POSTROUTING", "-s", tunNet, "-o", eg.cfg.IfaceOutName, "-j", "MASQUERADE"); err != nil {
+	//
+	// Вставляем в начало POSTROUTING, а не в конец: иначе upload-пакеты
+	// проходят Docker-правила POSTROUTING до MASQUERADE на каждом пакете.
+	// Download NAT не использует, поэтому конец цепочки давал асимметрию.
+	if err := eg.ipt.InsertUnique("nat", "POSTROUTING", 1,
+		"-s", tunNet, "-o", eg.cfg.IfaceOutName, "-j", "MASQUERADE",
+	); err != nil {
 		return fmt.Errorf("failed to setup NAT: %w", err)
 	}
 
