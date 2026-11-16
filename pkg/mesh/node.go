@@ -117,6 +117,54 @@ func (n *MeshNode) Snapshot() []MeshPeer {
 	return out
 }
 
+// MeshPeerStats — расширенная диагностика соединения: к обычному снимку
+// добавляются RTT и потери на уровне QUIC.
+type MeshPeerStats struct {
+	MeshPeer
+	MinRTTMillis      float64 `json:"min_rtt_ms"`
+	SmoothedRTTMillis float64 `json:"smoothed_rtt_ms"`
+	PacketsSent       uint64  `json:"packets_sent"`
+	PacketsRecv       uint64  `json:"packets_recv"`
+	PacketsLost       uint64  `json:"packets_lost"`
+	BytesLost         uint64  `json:"bytes_lost"`
+	LossPercent       float64 `json:"loss_percent"`
+}
+
+// DetailedSnapshot возвращает снимок mesh-соединений с потерями QUIC.
+func (n *MeshNode) DetailedSnapshot() []MeshPeerStats {
+	sessions := n.registry.ListActive()
+	out := make([]MeshPeerStats, 0, len(sessions))
+	for _, s := range sessions {
+		if s == nil || s.Conn == nil {
+			continue
+		}
+		item := MeshPeerStats{
+			MeshPeer: MeshPeer{
+				PeerID:     s.PeerID,
+				RemoteAddr: s.Conn.RemoteAddr().String(),
+				RTTMillis:  float64(s.Conn.RTT().Microseconds()) / 1000.0,
+				Initiator:  s.Conn.IsInitiator(),
+				SentBytes:  s.Conn.TotalSent(),
+				RecvBytes:  s.Conn.TotalRecv(),
+			},
+		}
+		if sp, ok := s.Conn.(transport.StatsProvider); ok {
+			st := sp.Stats()
+			item.MinRTTMillis = float64(st.MinRTT.Microseconds()) / 1000.0
+			item.SmoothedRTTMillis = float64(st.SmoothedRTT.Microseconds()) / 1000.0
+			item.PacketsSent = st.PacketsSent
+			item.PacketsRecv = st.PacketsRecv
+			item.PacketsLost = st.PacketsLost
+			item.BytesLost = st.BytesLost
+			if st.PacketsSent > 0 {
+				item.LossPercent = float64(st.PacketsLost) * 100 / float64(st.PacketsSent)
+			}
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
 // SetDynamicPeers обновляет список соседей, полученный из API directory.
 func (n *MeshNode) SetDynamicPeers(peers []string) {
 	seen := make(map[string]struct{}, len(peers))

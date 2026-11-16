@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -252,6 +253,11 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		app.httpMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 		app.httpMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 		app.httpMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		// Диагностика mesh: RTT и потери QUIC по каждому соединению.
+		app.httpMux.HandleFunc("/debug/mesh", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(app.node.DetailedSnapshot())
+		})
 	}
 	app.httpServer = &http.Server{
 		Addr:    cfg.Server.ListenAddr,

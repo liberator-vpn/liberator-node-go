@@ -261,6 +261,22 @@ func (pc *quicPeerConnection) RTT() time.Duration {
 	return pc.conn.ConnectionStats().SmoothedRTT
 }
 
+// Stats отдаёт счётчики QUIC: RTT и потери пакетов на канале. По ним видно,
+// упирается ли mesh-хоп в congestion control/потери, а не в CPU приложения.
+func (pc *quicPeerConnection) Stats() ConnectionStats {
+	st := pc.conn.ConnectionStats()
+	return ConnectionStats{
+		MinRTT:      st.MinRTT,
+		SmoothedRTT: st.SmoothedRTT,
+		BytesSent:   st.BytesSent,
+		PacketsSent: st.PacketsSent,
+		BytesRecv:   st.BytesReceived,
+		PacketsRecv: st.PacketsReceived,
+		BytesLost:   st.BytesLost,
+		PacketsLost: st.PacketsLost,
+	}
+}
+
 func (pc *quicPeerConnection) Context() context.Context { return pc.ctx }
 func (pc *quicPeerConnection) ID() string               { return pc.id }
 func (pc *quicPeerConnection) RemoteAddr() net.Addr     { return pc.conn.RemoteAddr() }
