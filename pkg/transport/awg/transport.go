@@ -85,6 +85,12 @@ func (ig *AWGTransport) dropOversize(size int) {
 		ig.nodeID, size, ig.cfg.MTU)
 }
 
+// UAPI отдаёт дамп состояния устройства AWG: endpoint, last_handshake_time,
+// rx_bytes/tx_bytes по каждому пиру. Нужен для диагностики потерь и rekey.
+func (ig *AWGTransport) UAPI() (string, error) {
+	return ig.awgDevice.IpcGet()
+}
+
 func (ig *AWGTransport) Type() string {
 	return "awg"
 }

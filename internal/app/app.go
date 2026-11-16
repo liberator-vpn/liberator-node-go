@@ -258,6 +258,21 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(app.node.DetailedSnapshot())
 		})
+		// Диагностика AWG: endpoint, last handshake, rx/tx по каждому пиру.
+		app.httpMux.HandleFunc("/debug/awg", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			app.transports.Foreach(func(name string, t transport.Transport) {
+				u, ok := t.(interface{ UAPI() (string, error) })
+				if !ok {
+					return
+				}
+				out, err := u.UAPI()
+				_, _ = fmt.Fprintf(w, "# transport=%s\n%s", name, out)
+				if err != nil {
+					_, _ = fmt.Fprintf(w, "# error: %v\n", err)
+				}
+			})
+		})
 	}
 	app.httpServer = &http.Server{
 		Addr:    cfg.Server.ListenAddr,
