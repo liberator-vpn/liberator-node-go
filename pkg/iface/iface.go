@@ -195,12 +195,19 @@ func (eg *TUNIface) setupNAT() error {
 	}
 
 	// В) Разрешаем трафик из TUN во внешний мир.
-	if err := eg.ipt.AppendUnique("filter", "FORWARD", "-i", eg.cfg.IfaceInName, "-o", eg.cfg.IfaceOutName, "-j", "ACCEPT"); err != nil {
+	//
+	// ВАЖНО: вставляем в начало FORWARD, а не в конец. Иначе каждый
+	// forward-пакет клиента проходит Docker/ufw-цепочки (DOCKER-USER,
+	// DOCKER-FORWARD, ufw-*) до нашего ACCEPT, а TUN-write обрабатывает
+	// netif_rx_ni синхронно — это и упирало upload в единицы Мбит/с.
+	if err := eg.ipt.InsertUnique("filter", "FORWARD", 1,
+		"-i", eg.cfg.IfaceInName, "-o", eg.cfg.IfaceOutName, "-j", "ACCEPT",
+	); err != nil {
 		return fmt.Errorf("failed to setup FORWARD IN->OUT: %w", err)
 	}
 
 	// Разрешаем обратный трафик только для уже установленных соединений.
-	if err := eg.ipt.AppendUnique("filter", "FORWARD",
+	if err := eg.ipt.InsertUnique("filter", "FORWARD", 1,
 		"-i", eg.cfg.IfaceOutName,
 		"-o", eg.cfg.IfaceInName,
 		"-m", "conntrack",
