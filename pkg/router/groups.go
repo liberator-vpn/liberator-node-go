@@ -153,6 +153,18 @@ func (r *Router) ReplaceGroupRules(inputs []GroupInput) {
 		next[in.ID] = gp
 	}
 
+	hasDomains := false
+	for _, in := range inputs {
+		for _, ru := range in.Rules {
+			if ru.Domain != "" {
+				hasDomains = true
+				break
+			}
+		}
+	}
+	r.hasGroupDomains.Store(hasDomains)
+	r.hasDomainRules.Store(r.hasDomainRules.Load() || hasDomains)
+
 	r.groupsMu.Lock()
 	r.groupsByID = next
 	r.rebuildClientGroupsLocked()

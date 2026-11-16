@@ -80,6 +80,12 @@ type Router struct {
 	clientGrpFP    uint64
 	clientGrpReady bool
 
+	// hasDomainRules — есть ли вообще domain-правила (user или group).
+	// Если нет, не трогаем DNS-кэш и pins на каждом пакете: два мьютекса
+	// и две аллокации на пакет заметны при 5k+ pps и тормозят воркер.
+	hasDomainRules  atomic.Bool
+	hasGroupDomains atomic.Bool
+
 	groupsMu       sync.RWMutex
 	groupsByID     map[string]*groupPolicy
 	clientGroupIDs map[uint32][]string
@@ -159,6 +165,7 @@ func (r *Router) SetDomainPolicy(rules *domainrules.Table, cache *dnsproxy.Cache
 }
 
 func (r *Router) ReplaceDomainRules(entries []domainrules.Entry) {
+	r.hasDomainRules.Store(len(entries) > 0 || r.hasGroupDomains.Load())
 	r.invalidatePinsIfChanged(domainRulesFingerprint(entries), &r.domainFPReady, &r.domainRulesFP)
 	if r.domainRules != nil {
 		r.domainRules.ReplaceAll(entries)
@@ -188,7 +195,7 @@ func (r *Router) lookupPolicy(src, dst uint32) (string, string) {
 	}
 
 	var clientDomains, globalDomains []string
-	if r.domainRules != nil && r.domainCache != nil {
+	if r.hasDomainRules.Load() && r.domainRules != nil && r.domainCache != nil {
 		for _, hit := range r.domainCache.DomainsForClient(src, dst) {
 			clientDomains = append(clientDomains, hit.Domain)
 		}
