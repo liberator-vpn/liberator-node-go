@@ -189,14 +189,17 @@ func (device *Device) RoutineReceiveIncoming(
 				value := device.indexTable.Lookup(receiver)
 				keypair := value.keypair
 				if keypair == nil {
+					device.rxStats.droppedKey.Add(1)
 					continue
 				}
 
 				// check keypair expiry
 
 				if keypair.created.Add(device.keychainExpireTime()).Before(time.Now()) {
+					device.rxStats.droppedKey.Add(1)
 					continue
 				}
+				device.rxStats.transport.Add(1)
 
 				// create work element
 				peer := value.peer
@@ -493,13 +496,20 @@ const reorderTimeout = 10 * time.Millisecond
 // processInboundElem validates one decrypted element and appends its inner IP
 // packet to bufs. It is called in counter order by RoutineSequentialReceiver.
 func (peer *Peer) processInboundElem(device *Device, elem *QueueInboundElement, bufs *[][]byte) (valid, data bool, rx uint64) {
-	if elem.packet == nil || elem.keypair == nil {
+	if elem.packet == nil {
+		device.rxStats.droppedDecrypt.Add(1)
+		return false, false, 0
+	}
+	if elem.keypair == nil {
+		device.rxStats.droppedKey.Add(1)
 		return false, false, 0
 	}
 	if !elem.keypair.replayFilter.ValidateCounter(elem.counter, RejectAfterMessages) {
+		device.rxStats.droppedReplay.Add(1)
 		return false, false, 0
 	}
 	valid = true
+	device.rxStats.delivered.Add(1)
 	if peer.ReceivedWithKeypair(elem.keypair) {
 		peer.SetEndpointFromPacket(elem.endpoint)
 		peer.timersHandshakeComplete()
@@ -554,6 +564,7 @@ func (peer *Peer) processInboundElem(device *Device, elem *QueueInboundElement, 
 		}
 
 	default:
+		device.rxStats.droppedInvalid.Add(1)
 		device.log.Verbosef("Packet with invalid IP version from %v", peer)
 		return valid, data, rx
 	}

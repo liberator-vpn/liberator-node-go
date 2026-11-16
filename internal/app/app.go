@@ -271,6 +271,12 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 				if err != nil {
 					_, _ = fmt.Fprintf(w, "# error: %v\n", err)
 				}
+				if st, ok := t.(interface{ RxStats() map[string]uint64 }); ok {
+					stats := st.RxStats()
+					_, _ = fmt.Fprintf(w, "# rx transport=%s transport=%d delivered=%d dropped_key=%d dropped_decrypt=%d dropped_replay=%d dropped_invalid=%d\n",
+						name, stats["transport"], stats["delivered"], stats["dropped_key"],
+						stats["dropped_decrypt"], stats["dropped_replay"], stats["dropped_invalid"])
+				}
 			})
 		})
 	}

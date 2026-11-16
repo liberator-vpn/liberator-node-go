@@ -129,6 +129,36 @@ type Device struct {
 
 	randomTrailers atomic.Bool
 	disableCookies atomic.Bool
+
+	rxStats struct {
+		transport      atomic.Uint64
+		delivered      atomic.Uint64
+		droppedKey     atomic.Uint64
+		droppedDecrypt atomic.Uint64
+		droppedReplay  atomic.Uint64
+		droppedInvalid atomic.Uint64
+	}
+}
+
+// ReceiveStats is a diagnostic snapshot of the AWG receive path.
+type ReceiveStats struct {
+	Transport      uint64
+	Delivered      uint64
+	DroppedKey     uint64
+	DroppedDecrypt uint64
+	DroppedReplay  uint64
+	DroppedInvalid uint64
+}
+
+func (device *Device) RxStats() ReceiveStats {
+	return ReceiveStats{
+		Transport:      device.rxStats.transport.Load(),
+		Delivered:      device.rxStats.delivered.Load(),
+		DroppedKey:     device.rxStats.droppedKey.Load(),
+		DroppedDecrypt: device.rxStats.droppedDecrypt.Load(),
+		DroppedReplay:  device.rxStats.droppedReplay.Load(),
+		DroppedInvalid: device.rxStats.droppedInvalid.Load(),
+	}
 }
 
 // deviceState represents the state of a Device.
