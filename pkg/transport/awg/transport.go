@@ -107,7 +107,7 @@ func New(
 		cfg:       cfg,
 		router:    router,
 		nodeID:    nodeID,
-		in:        make(chan []byte, 1000),
+		in:        make(chan []byte, 4096),
 		peersByIP: safemap.New[uint32, *AWGPeer](),
 		deltaChan: make(chan transport.TransportPeerStats, 100),
 	}
