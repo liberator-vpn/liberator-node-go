@@ -34,3 +34,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	olympos.io/encoding/edn v0.0.0-20201019073823-d3554ca0b0a3 // indirect
 )
+
+replace github.com/amnezia-vpn/amneziawg-go/v3 => ./third_party/amneziawg-go

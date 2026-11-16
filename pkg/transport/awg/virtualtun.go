@@ -48,7 +48,9 @@ func NewChannelTun(ctx context.Context, in <-chan []byte, router transport.Route
 
 func (t *ChannelTun) File() *os.File        { return nil }
 func (t *ChannelTun) Name() (string, error) { return "liberator-awg-channel", nil }
-func (t *ChannelTun) BatchSize() int        { return 128 }
+// 512 вместо 128: больший батч даёт reorder-буферу в RoutineSequentialReceiver
+// больше шансов восстановить порядок counter до записи в TUN.
+func (t *ChannelTun) BatchSize() int        { return 512 }
 
 // Close закрывает канал событий: Device.Close() ждет RoutineTUNEventReader, а тот
 // висит в range по Events(). Раньше здесь на каждый вызов отдавался новый канал,
