@@ -55,10 +55,16 @@ var (
 		Name:      "iface_dropped_packets_total",
 		Help:      "Packets dropped because the TUN writer queue is full.",
 	}, []string{"dir"})
+
+	policyDroppedRules = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "node",
+		Name:      "policy_dropped_rules_total",
+		Help:      "Rules dropped while applying the desired policy (invalid format).",
+	})
 )
 
 func init() {
-	prometheus.MustRegister(trafficBytes, packetLifetime, connectedPeers, activeClients, ifaceDropped)
+	prometheus.MustRegister(trafficBytes, packetLifetime, connectedPeers, activeClients, ifaceDropped, policyDroppedRules)
 }
 
 // ObserveTraffic учитывает прошедшие байты по направлению, peer'у и протоколу.
@@ -78,6 +84,9 @@ func SetConnectedPeers(n int) {
 
 // ObserveIfaceDrop учитывает пакет, отброшенный при переполнении очереди TUN.
 func ObserveIfaceDrop(dir string) { ifaceDropped.WithLabelValues(dir).Inc() }
+
+// ObservePolicyDrop учитывает правила, отброшенные при применении политики.
+func ObservePolicyDrop(n int) { policyDroppedRules.Add(float64(n)) }
 
 // Handler возвращает HTTP-хендлер /metrics поверх default-регистра (включая
 // Go/process-коллекторы).

@@ -83,25 +83,43 @@ func (app *App) syncLoop(ctx context.Context) {
 
 // syncPolicy забирает политику только при смене policy_version. Старый API
 // присылает правила прямо в state — тогда используем их (совместимость).
+// policyFullSyncInterval — как часто перезапрашивать политику целиком, даже
+// если версия не менялась. Защита от тихого дрейфа (устаревший кэш, баг
+// применения): раз в 10 минут сверяемся с API.
+const policyFullSyncInterval = 10 * time.Minute
+
 func (app *App) syncPolicy(ctx context.Context, client *apiclient.Client, nodeID string, st *apiclient.State) {
 	if st.PolicyVersion == "" {
-		app.reconcileEgress(st.Policies, st.Groups, st.UserGroups, st.Egress, st.BlockedPrefixes)
+		// Старый API: политика приходит прямо в state.
+		if dropped := app.reconcileEgress(st.Policies, st.Groups, st.UserGroups, st.Egress, st.BlockedPrefixes); dropped > 0 {
+			metrics.ObservePolicyDrop(dropped)
+		}
 		return
 	}
-	if st.PolicyVersion == app.policyVersion {
+	force := app.lastPolicySync.IsZero() || time.Since(app.lastPolicySync) > policyFullSyncInterval
+	if st.PolicyVersion == app.policyVersion && !force {
 		return
 	}
-	pol, notModified, err := client.GetPolicy(ctx, nodeID, app.policyVersion)
+	known := app.policyVersion
+	if force {
+		known = "" // игнорируем 304, забираем политику целиком
+	}
+	pol, notModified, err := client.GetPolicy(ctx, nodeID, known)
 	if err != nil {
 		log.Printf("api policy pull failed: %v", err)
 		return
 	}
 	if notModified {
 		app.policyVersion = st.PolicyVersion
+		app.lastPolicySync = time.Now()
 		return
 	}
-	app.reconcileEgress(pol.Policies, pol.Groups, pol.UserGroups, pol.Egress, pol.BlockedPrefixes)
+	dropped := app.reconcileEgress(pol.Policies, pol.Groups, pol.UserGroups, pol.Egress, pol.BlockedPrefixes)
+	if dropped > 0 {
+		metrics.ObservePolicyDrop(dropped)
+	}
 	app.policyVersion = pol.PolicyVersion
+	app.lastPolicySync = time.Now()
 }
 
 // pushAlive отправляет API отчёт о реально активных сессиях (по last_seen).
@@ -301,7 +319,7 @@ func applyQuotaLimits(c *appconfig.ClientConfig, q *apiclient.Quota) {
 // в общую таблицу групп (tier 1), а клиент получает только список group_id.
 // Наборы подменяются атомарно, чтобы между Clear и Set не было окна, когда
 // весь egress уходил в локальный NAT.
-func (app *App) reconcileEgress(policies []apiclient.PolicyRule, groups []apiclient.GroupPolicy, userGroups []apiclient.UserGroups, items []apiclient.Egress, deny []apiclient.DenyRule) {
+func (app *App) reconcileEgress(policies []apiclient.PolicyRule, groups []apiclient.GroupPolicy, userGroups []apiclient.UserGroups, items []apiclient.Egress, deny []apiclient.DenyRule) int {
 	entries := make([]userrules.Entry, 0, len(policies)+len(items)+len(deny))
 	domainEntries := make([]domainrules.Entry, 0, len(policies))
 
@@ -395,9 +413,11 @@ func (app *App) reconcileEgress(policies []apiclient.PolicyRule, groups []apicli
 	app.router.ReplaceDomainRules(domainEntries)
 	app.router.ReplaceGroupRules(groupInputs)
 	app.router.ReplaceClientGroups(clientGroups)
-	if invalid := app.router.ReplaceEgressRules(entries); invalid > 0 {
+	invalid := app.router.ReplaceEgressRules(entries)
+	if invalid > 0 {
 		log.Printf("policy: dropped %d invalid rules from desired state", invalid)
 	}
+	return invalid
 }
 
 func meshPeers(peers []mesh.MeshPeer) []apiclient.MeshPeer {

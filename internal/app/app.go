@@ -40,8 +40,10 @@ type App struct {
 	apiSecret string // per-node secret для /v1/node/*
 	// policyVersion — версия политики, уже применённой нодой.
 	policyVersion string
-	tunIface      *iface.TUNIface
-	transports    safemap.Safemap[string, transport.Transport]
+	// lastPolicySync — когда политика последний раз сверялась с API.
+	lastPolicySync time.Time
+	tunIface       *iface.TUNIface
+	transports     safemap.Safemap[string, transport.Transport]
 	// protocol -> имя транспорта. Позволяет направлять сессии из /state
 	// в awg/vless/hysteria2, а не в один «последний зарегистрированный».
 	protocolTransport map[string]string
