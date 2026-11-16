@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"strings"
 	"sync"
@@ -244,6 +245,14 @@ func New(ctx context.Context, cfg *appconfig.AppConfig) (*App, error) {
 		_, _ = w.Write([]byte("ok"))
 	})
 	app.httpMux.Handle("/metrics", metrics.Handler())
+	// Диагностика: pprof включается только явно, порт 18080 не публикуется.
+	if os.Getenv("LIBERATOR_PPROF") == "1" {
+		app.httpMux.HandleFunc("/debug/pprof/", pprof.Index)
+		app.httpMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		app.httpMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		app.httpMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		app.httpMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	}
 	app.httpServer = &http.Server{
 		Addr:    cfg.Server.ListenAddr,
 		Handler: app.httpMux,
