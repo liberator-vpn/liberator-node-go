@@ -157,22 +157,6 @@ func NewTUN(
 		return nil, fmt.Errorf("failed to up iface: %w", err)
 	}
 
-	// Forwarded client traffic arrives on liberator with a source from the
-	// overlay. Strict/loose rp_filter can drop it depending on the kernel
-	// default, so pin the TUN to 0 explicitly. The per-interface sysctl entry
-	// can appear slightly after LinkSetUp, so retry instead of racing it.
-	rpFilterPath := "/proc/sys/net/ipv4/conf/" + cfg.IfaceInName + "/rp_filter"
-	for i := 0; i < 50; i++ {
-		err := os.WriteFile(rpFilterPath, []byte("0"), 0o644)
-		if err == nil {
-			break
-		}
-		if i == 49 {
-			log.Printf("failed to disable rp_filter on %s: %v", cfg.IfaceInName, err)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
 	// Настраиваем NAT через go-iptables
 	eg.ipt, err = iptables.New()
 	if err != nil {
@@ -183,6 +167,23 @@ func NewTUN(
 	if err := eg.setupNAT(); err != nil {
 		eg.Close()
 		return nil, err
+	}
+
+	// Forwarded client traffic arrives on liberator with a source from the
+	// overlay. Strict/loose rp_filter can drop it depending on the kernel
+	// default, so pin the TUN to 0 explicitly. Do it after setupNAT as well:
+	// the per-interface sysctl entry can appear slightly after LinkSetUp, and
+	// later netlink/iptables work must not win the race.
+	rpFilterPath := "/proc/sys/net/ipv4/conf/" + cfg.IfaceInName + "/rp_filter"
+	for i := 0; i < 50; i++ {
+		err := os.WriteFile(rpFilterPath, []byte("0"), 0o644)
+		if err == nil {
+			break
+		}
+		if i == 49 {
+			log.Printf("failed to disable rp_filter on %s: %v", cfg.IfaceInName, err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	return eg, nil
