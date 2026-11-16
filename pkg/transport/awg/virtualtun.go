@@ -48,9 +48,10 @@ func NewChannelTun(ctx context.Context, in <-chan []byte, router transport.Route
 
 func (t *ChannelTun) File() *os.File        { return nil }
 func (t *ChannelTun) Name() (string, error) { return "liberator-awg-channel", nil }
+
 // 512 вместо 128: больший батч даёт reorder-буферу в RoutineSequentialReceiver
 // больше шансов восстановить порядок counter до записи в TUN.
-func (t *ChannelTun) BatchSize() int        { return 512 }
+func (t *ChannelTun) BatchSize() int { return 512 }
 
 // Close закрывает канал событий: Device.Close() ждет RoutineTUNEventReader, а тот
 // висит в range по Events(). Раньше здесь на каждый вызов отдавался новый канал,
@@ -80,6 +81,7 @@ func (t *ChannelTun) Write(bufs [][]byte, offset int) (int, error) {
 
 		msg, err := t.router.NewMessageCopyFrom(pkt)
 		if err != nil {
+			metrics.ObserveAWGParseError()
 			continue
 		}
 		metrics.ObserveTraffic(metrics.DirIn, metrics.PeerClient, t.protocol, len(pkt))

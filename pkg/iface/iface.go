@@ -60,7 +60,15 @@ type TUNIface struct {
 }
 
 const tun_iface_offset = 10
-const ringSize = 3
+
+// writeProjection возвращает срез пакета с capacity, ограниченной одним
+// сегментом flatBuffer. Это критично для wireguard/tun: при vnetHdr он
+// вызывает handleGRO, который коалесцирует TCP-пакеты через append. Если
+// capacity уходит до конца всего flatBuffer, GRO склеивает весь батч в один
+// пакет, переполняет uint16 длины IP и отдаёт в ядро битый GSO.
+func writeProjection(flat []byte, start, end, maxPacketLen int) []byte {
+	return flat[start : end : start+maxPacketLen]
+}
 
 // NewTUN создаёт и настраивает TUN-интерфейс.
 func NewTUN(
@@ -132,6 +140,14 @@ func NewTUN(
 			eg.Close()
 			return nil, fmt.Errorf("failed to set MTU: %w", err)
 		}
+	}
+
+	// Увеличиваем очередь TUN. При синхронном readLoop и батчевом writeLoop
+	// дефолтных 500 пакетов мало: kernel дропает download-пакеты
+	// (IpOutDiscards), и TCP видит потери.
+	if err := netlink.LinkSetTxQLen(link, 8192); err != nil {
+		eg.Close()
+		return nil, fmt.Errorf("failed to set txqueuelen: %w", err)
 	}
 
 	// Поднимаем интерфейс
@@ -298,29 +314,23 @@ func (eg *TUNIface) Run() {
 	eg.Close()
 }
 
-// readLoop – батчевое чтение из TUN
+// readLoop – батчевое чтение из TUN.
+//
+// Важно: батчи обрабатываются строго последовательно. Раньше на каждый батч
+// запускалась отдельная горутина, и HandleTunPacket вызывался в порядке
+// завершения горутин, а не в порядке чтения из TUN. Это давало reordering на
+// download-пути: клиент видел перестановку пакетов и слал duplicate ACK.
 func (eg *TUNIface) readLoop(batchSize int) {
 	maxPacketLen := math.MaxUint16 + tun_iface_offset
 
-	locks := make([]sync.Mutex, ringSize)
-	ringSizes := make([][]int, ringSize)
-	for i := 0; i < ringSize; i++ {
-		ringSizes[i] = make([]int, batchSize)
+	flatBuffer := make([]byte, batchSize*maxPacketLen)
+	readProjections := make([][]byte, batchSize)
+	for i := 0; i < batchSize; i++ {
+		start := i * maxPacketLen
+		end := start + maxPacketLen
+		readProjections[i] = writeProjection(flatBuffer, start, end, maxPacketLen)
 	}
-
-	flatBuffer := make([]byte, ringSize*batchSize*maxPacketLen)
-	readProjections := make([][][]byte, ringSize)
-	for r := 0; r < ringSize; r++ {
-		readProjections[r] = make([][]byte, batchSize)
-		for i := 0; i < batchSize; i++ {
-			// Нарезаем плоский буфер на правильные сегменты по формуле смещения
-			start := (r * batchSize * maxPacketLen) + (i * maxPacketLen)
-			end := start + maxPacketLen
-			readProjections[r][i] = flatBuffer[start:end]
-		}
-	}
-
-	bufferIndex := 0
+	sizes := make([]int, batchSize)
 
 	for {
 		select {
@@ -329,11 +339,8 @@ func (eg *TUNIface) readLoop(batchSize int) {
 		default:
 		}
 
-		locks[bufferIndex].Lock()
-
-		n, err := eg.ifce.Read(readProjections[bufferIndex], ringSizes[bufferIndex], tun_iface_offset)
+		n, err := eg.ifce.Read(readProjections, sizes, tun_iface_offset)
 		if err != nil {
-			locks[bufferIndex].Unlock()
 			// После Close read возвращает os.ErrClosed: не крутим busy-loop
 			// со sleep и не спамим лог до выхода по ctx.
 			select {
@@ -346,30 +353,26 @@ func (eg *TUNIface) readLoop(batchSize int) {
 			continue
 		}
 		if n == 0 {
-			locks[bufferIndex].Unlock()
 			continue
 		}
+		metrics.ObserveIfaceReadBatch(n)
 
-		go func(idx int, count int, sizes []int) {
-			defer locks[idx].Unlock()
-			for i := 0; i < count; i++ {
-				if sizes[i] <= 0 {
-					continue
-				}
-
-				// sizes[i] это длина самого пакета, лежащего уже после offset.
-				flatStart := (idx * batchSize * maxPacketLen) + (i * maxPacketLen) + tun_iface_offset
-				flatEnd := flatStart + sizes[i]
-
-				msg, err := eg.router.NewMessageCopyFrom(flatBuffer[flatStart:flatEnd])
-				if err != nil {
-					continue
-				}
-				metrics.ObserveTraffic(metrics.DirIn, metrics.PeerInternet, metrics.NoProtocol, sizes[i])
-
-				eg.router.HandleTunPacket(msg)
+		// Обрабатываем батч синхронно: порядок HandleTunPacket совпадает с
+		// порядком пакетов в TUN. Backpressure от router.enqueue — это ок.
+		for i := 0; i < n; i++ {
+			if sizes[i] <= 0 {
+				continue
 			}
-		}(bufferIndex, n, ringSizes[bufferIndex])
+			flatStart := (i * maxPacketLen) + tun_iface_offset
+			flatEnd := flatStart + sizes[i]
+
+			msg, err := eg.router.NewMessageCopyFrom(flatBuffer[flatStart:flatEnd])
+			if err != nil {
+				continue
+			}
+			metrics.ObserveTraffic(metrics.DirIn, metrics.PeerInternet, metrics.NoProtocol, sizes[i])
+			eg.router.HandleTunPacket(msg)
+		}
 	}
 }
 
@@ -383,7 +386,7 @@ func (eg *TUNIface) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize i
 	for i := 0; i < batchSize; i++ {
 		start := i * maxPacketLen
 		end := start + maxPacketLen
-		writeProjections[i] = flatBuffer[start:end]
+		writeProjections[i] = writeProjection(flatBuffer, start, end, maxPacketLen)
 	}
 
 	msgs := make([]*dgmessage.DatagramMessage, batchSize)
@@ -402,7 +405,12 @@ func (eg *TUNIface) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize i
 		case <-eg.ctx.Done():
 			return
 		case msg := <-toEgr:
-			if len(msg.Data) == 0 || len(msg.Data) > eg.cfg.MTU {
+			if len(msg.Data) == 0 {
+				msg.Free()
+				continue
+			}
+			if len(msg.Data) > eg.cfg.MTU {
+				metrics.ObserveTUNOversizeDrop()
 				msg.Free()
 				continue
 			}
@@ -421,7 +429,12 @@ func (eg *TUNIface) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize i
 		for idx < batchSize {
 			select {
 			case msg := <-toEgr:
-				if len(msg.Data) == 0 || len(msg.Data) > eg.cfg.MTU {
+				if len(msg.Data) == 0 {
+					msg.Free()
+					continue
+				}
+				if len(msg.Data) > eg.cfg.MTU {
+					metrics.ObserveTUNOversizeDrop()
 					msg.Free()
 					continue
 				}
@@ -442,14 +455,19 @@ func (eg *TUNIface) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize i
 			for i := 0; i < idx; i++ {
 				start := i * maxPacketLen
 				end := start + tun_iface_offset + len(msgs[i].Data)
-				writeProjections[i] = flatBuffer[start:end]
+				writeProjections[i] = writeProjection(flatBuffer, start, end, maxPacketLen)
 				out += len(msgs[i].Data)
 			}
 			metrics.ObserveTraffic(metrics.DirOut, metrics.PeerInternet, metrics.NoProtocol, out)
 
-			_, err := eg.ifce.Write(writeProjections[:idx], tun_iface_offset)
+			n, err := eg.ifce.Write(writeProjections[:idx], tun_iface_offset)
+			metrics.ObserveTUNWrite(n, idx)
 			if err != nil {
+				metrics.ObserveTUNWriteError()
 				log.Printf("failed to write batch to iface: %v", err)
+			}
+			if n == 0 && out > 0 {
+				metrics.ObserveTUNWriteZero()
 			}
 
 			for i := 0; i < idx; i++ {
