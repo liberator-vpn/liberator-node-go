@@ -388,12 +388,17 @@ func (ig *AWGTransport) watchPeers() {
 }
 
 // writePacket вызывается абстракцией AWGPeer.SendDatagram для отправки данных клиенту
+// writePacket не блокирует роутер. Раньше при переполнении очереди воркер
+// ждал AWG-отправитель, и upload-пакеты того же шарда (а с симметричным
+// хэшем — и обратное направление) стояли в очереди: TCP схлопывал окно.
+// Теперь при переполнении пакет дропается, а TCP восстановит его ретрансмиссией.
 func (ig *AWGTransport) writePacket(data []byte) error {
 	metrics.ObserveTraffic(metrics.DirOut, metrics.PeerClient, ig.cfg.Protocol, len(data))
 	select {
 	case ig.in <- data:
 		return nil
-	case <-ig.ctx.Done():
-		return fmt.Errorf("transport is closed")
+	default:
+		metrics.ObserveIfaceDrop(metrics.DirOut)
+		return nil
 	}
 }
