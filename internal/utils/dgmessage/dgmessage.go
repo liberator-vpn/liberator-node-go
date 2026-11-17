@@ -4,10 +4,16 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
 )
+
+// Headroom — место перед IP-пакетом под virtio-net заголовок TUN. Благодаря
+// ему iface.writeLoop может отдавать буфер сообщения в TUN.Write напрямую,
+// без копирования в отдельный flatBuffer.
+const Headroom = 10
 
 type HoleInfo struct {
 	SrcIP    uint32
@@ -22,7 +28,12 @@ type DatagramMessage struct {
 	IPVersion int
 	HoleInfo  HoleInfo
 
-	// createdAt фиксирует момент появления пакета (unix ns) для метрики времени жизни.
+	// raw — весь буфер: raw[:Headroom] — headroom, raw[Headroom:] — данные.
+	raw []byte
+
+	// createdAt фиксирует момент появления пакета (unix ns) для метрики времени
+	// жизни. Заполняется только для сэмплированных пакетов (1 из 256), чтобы
+	// не тратить time.Now() и Observe на каждый пакет.
 	createdAt int64
 
 	pool *dgMessagePoolImpl
@@ -37,17 +48,23 @@ type dgMessagePoolImpl struct {
 	maxSize int
 }
 
+// lifetimeSample — счётчик для сэмплирования метрики packet_lifetime.
+var lifetimeSample atomic.Uint64
+
 func NewDGMessagePool(maxSize int) DGMessagePool {
+	if maxSize <= 0 {
+		maxSize = 2048
+	}
 	return &dgMessagePoolImpl{
 		maxSize: maxSize,
 		pool: sync.Pool{
 			New: func() any {
+				raw := make([]byte, Headroom+maxSize)
 				msg := &DatagramMessage{
-					Data:      make([]byte, 0, maxSize),
+					Data:      raw[Headroom:Headroom],
+					raw:       raw,
 					IPVersion: 4,
 				}
-				msg.HoleInfo.SrcIP = 0
-				msg.HoleInfo.DstIP = 0
 				return msg
 			},
 		},
@@ -91,17 +108,20 @@ func (dgpool *dgMessagePoolImpl) NewMessageCopyFrom(copyFrom []byte) (*DatagramM
 		return nil, fmt.Errorf("unsupported L4 protocol")
 	}
 
-	// 2. Берем ОЧИЩЕННЫЙ готовый объект из пула
+	// Берём очищенный готовый объект из пула.
 	msg := dgpool.pool.Get().(*DatagramMessage)
 	msg.pool = dgpool
-	msg.createdAt = time.Now().UnixNano()
+	msg.createdAt = 0
+	if lifetimeSample.Add(1)&255 == 0 {
+		msg.createdAt = time.Now().UnixNano()
+	}
 
-	msg.Data = msg.Data[:len(copyFrom)]
+	msg.Data = msg.raw[Headroom : Headroom+len(copyFrom)]
 
-	// Копируем данные напрямую в память объекта
+	// Копируем данные напрямую в память объекта.
 	copy(msg.Data, copyFrom)
 
-	// Заполняем превыделенные IP и порты
+	// Заполняем предвыделенные IP и порты.
 	msg.HoleInfo.SrcIP = binary.BigEndian.Uint32(copyFrom[12:16])
 	msg.HoleInfo.DstIP = binary.BigEndian.Uint32(copyFrom[16:20])
 	msg.HoleInfo.SrcPort = srcPort
@@ -109,6 +129,12 @@ func (dgpool *dgMessagePoolImpl) NewMessageCopyFrom(copyFrom []byte) (*DatagramM
 	msg.HoleInfo.Protocol = protocol
 
 	return msg, nil
+}
+
+// Raw возвращает полный буфер сообщения: raw[Headroom:Headroom+len(Data)] —
+// IP-пакет, raw[:Headroom] — место под virtio-заголовок.
+func (msg *DatagramMessage) Raw() []byte {
+	return msg.raw
 }
 
 func (msg *DatagramMessage) Free() {
@@ -120,8 +146,8 @@ func (msg *DatagramMessage) Free() {
 		metrics.ObservePacketLifetime(time.Duration(time.Now().UnixNano() - msg.createdAt))
 	}
 
-	// СБРОС: возвращаем длину в 0, но СОХРАНЯЕМ емкость (cap) для следующего пакета
-	msg.Data = msg.Data[:0]
+	// Сбрасываем длину, но сохраняем capacity для следующего пакета.
+	msg.Data = msg.raw[Headroom:Headroom]
 	msg.HoleInfo.Protocol = ""
 	msg.createdAt = 0
 

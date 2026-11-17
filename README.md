@@ -159,8 +159,8 @@ IP-туннельный протокол (AWG/WireGuard) или отдельны
    ```
 
 3. Открыть на хосте:
-   - `2200/udp` — клиентам amnesiav2;
-   - `2201/udp` — клиентам amnesiav31;
+   - `42000/udp` — клиентам amnesiav2;
+   - `42001/udp` — клиентам amnesiav31;
    - `9000/udp` — другим нодам;
    - `8080/tcp` — только внутри кластера.
 
@@ -184,6 +184,44 @@ IP-туннельный протокол (AWG/WireGuard) или отдельны
 Ротация секрета (`rotate-secret`) выдаёт новый secret; нода читает identity только
 при старте, поэтому после ротации нужно обновить `node-identity.json` и
 перезапустить ноду.
+
+## Производительность
+
+- **GRO включён** на внешнем интерфейсе (`ethtool -K <iface> gro on`,
+  юнит `liberator-gro-on.service`). Ядро склеивает входящий TCP в GSO-пакеты,
+  и `iface.readLoop` обрабатывает батч за один `read()`, а не по одному
+  пакету. Официальный `amneziawg-go/v3` поддерживает UDP GRO; quic-go
+  `UDP_GRO` не использует, поэтому mesh это не затрагивает.
+- **TUN без лишней копии**: pooled-буфер `dgmessage` содержит 10 байт
+  headroom под virtio-заголовок, поэтому `writeLoop` отдаёт `Raw()` напрямую
+  в `TUN.Write`. Слоты read-буфера ограничены `MTU + headroom`, а не 64 КБ.
+- **Mesh без фрагментации**: датаграмма до 1400 байт уходит одной QUIC
+  DATAGRAM (`InitialPacketSize=1452`); фрагментация остаётся только
+  fallback'ом по `DatagramTooLargeError`.
+- **Роутер**: по `GOMAXPROCS` воркеров на upstream и downstream (на 3 vCPU —
+  3+3). Метрики трафика считаются на батч, а не на пакет.
+- **Быстрый путь policy**: если user/group/domain/egress-правил нет,
+  `lookupPolicy` сразу возвращает `direct`, не трогая `pins`, `groups` и
+  `time.Now()`.
+
+Проверка после запуска:
+
+```bash
+# GRO on
+ethtool -k "$(ip route show default | awk '{print $5}' | head -1)" \
+  | grep -E 'generic-receive-offload|rx-gro-hw'
+
+# батчи TUN: batches должно быть сильно меньше packets
+curl -s http://127.0.0.1:18080/metrics \
+  | grep -E 'node_iface_read_(batches|packets)_total'
+
+# mesh: пакеты больше не режутся на куски по 1000 байт
+tcpdump -i "$(ip route show default | awk '{print $5}' | head -1)" -nn -s0 \
+  'udp port 9000' -c 100
+```
+
+Если GRO снова уронит upload — откат: `ethtool -K <iface> gro off` и
+`systemctl disable --now liberator-gro-on.service`.
 
 ## Запуск
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log"
-	"math"
 	"runtime"
 	"sort"
 	"sync"
@@ -86,6 +85,13 @@ type Router struct {
 	hasDomainRules  atomic.Bool
 	hasGroupDomains atomic.Bool
 
+	// hasAnyRules — есть ли вообще user/group/domain/egress-правила.
+	// Если нет, lookupPolicy возвращает direct без мьютексов pins/groups и
+	// без time.Now(): это заметно на каждом outbound-пакете.
+	hasAnyRules    atomic.Bool
+	hasEgressRules atomic.Bool
+	hasGroupRules  atomic.Bool
+
 	groupsMu       sync.RWMutex
 	groupsByID     map[string]*groupPolicy
 	clientGroupIDs map[uint32][]string
@@ -116,11 +122,12 @@ func New(
 		return nil, fmt.Errorf("invalid global CIDR: %w", err)
 	}
 
-	// Минимум 4 воркера: на 2 vCPU этого достаточно, чтобы upload и download
-	// разных соединений реже попадали в один канал.
-	workersNum := runtime.GOMAXPROCS(0)
-	if workersNum < 4 {
-		workersNum = 4
+	// По GOMAXPROCS воркеров на upstream и downstream: на 3 vCPU это 3+3.
+	// Раньше было max(4, GOMAXPROCS) = 2+2, то есть два направления делили
+	// два воркера, а на 3 CPU оставался неиспользованный parallelism.
+	workersNum := 2 * runtime.GOMAXPROCS(0)
+	if workersNum < 2 {
+		workersNum = 2
 	}
 	workers := make([]chan datagramMessageInfo, workersNum)
 	for i := range workers {
@@ -128,8 +135,10 @@ func New(
 	}
 
 	br := &Router{
-		ctx:         ctx,
-		packetsPool: dgmessage.NewDGMessagePool(math.MaxUint16),
+		ctx: ctx,
+		// MTU ноды 1376: 4096 с запасом покрывает пакет + headroom TUN.
+		// Раньше каждый буфер был 65535 байт, что раздувало working set.
+		packetsPool: dgmessage.NewDGMessagePool(4096),
 
 		routingTable: routingtable.New(),
 		firewall:     firewall.New(),
@@ -171,6 +180,7 @@ func (r *Router) SetDomainPolicy(rules *domainrules.Table, cache *dnsproxy.Cache
 
 func (r *Router) ReplaceDomainRules(entries []domainrules.Entry) {
 	r.hasDomainRules.Store(len(entries) > 0 || r.hasGroupDomains.Load())
+	r.refreshHasAnyRules()
 	r.invalidatePinsIfChanged(domainRulesFingerprint(entries), &r.domainFPReady, &r.domainRulesFP)
 	if r.domainRules != nil {
 		r.domainRules.ReplaceAll(entries)
@@ -190,7 +200,19 @@ func (r *Router) SetDNSHandler(h UDPDNSHandler) {
 	r.dnsHandler = h
 }
 
+func (r *Router) refreshHasAnyRules() {
+	r.hasAnyRules.Store(
+		r.hasDomainRules.Load() || r.hasGroupDomains.Load() ||
+			r.hasGroupRules.Load() || r.hasEgressRules.Load(),
+	)
+}
+
 func (r *Router) lookupPolicy(src, dst uint32) (string, string) {
+	// Нет ни одного правила — весь egress идёт в локальный NAT. Не трогаем
+	// pins/groups/userRules и не вызываем time.Now() на каждом пакете.
+	if !r.hasAnyRules.Load() {
+		return userrules.ActionDirect, ""
+	}
 	ipAction, ipExit, ipTier := r.userRules.LookupWithTier(src, dst)
 	if ipAction == userrules.ActionDeny {
 		return userrules.ActionDeny, ""

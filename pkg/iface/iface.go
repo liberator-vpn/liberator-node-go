@@ -7,7 +7,6 @@ import (
 	"math"
 	"net"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -16,9 +15,9 @@ import (
 	"github.com/liberator-vpn/liberator-node-go/internal/metrics"
 	"github.com/liberator-vpn/liberator-node-go/internal/utils/dgmessage"
 
+	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 	"github.com/coreos/go-iptables/iptables"
 	"github.com/vishvananda/netlink"
-	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 )
 
 // defaultGatewayInterface возвращает имя интерфейса с default-маршрутом IPv4.
@@ -345,7 +344,12 @@ func (eg *TUNIface) Run() {
 // завершения горутин, а не в порядке чтения из TUN. Это давало reordering на
 // download-пути: клиент видел перестановку пакетов и слал duplicate ACK.
 func (eg *TUNIface) readLoop(batchSize int) {
-	maxPacketLen := math.MaxUint16 + tun_iface_offset
+	// Каждый слот — один сегмент после GRO (≤ MTU), а не 64 КБ: библиотека
+	// читает GSO-суперпакет в свой readBuff и режет его на сегменты.
+	maxPacketLen := eg.cfg.MTU + tun_iface_offset
+	if maxPacketLen <= tun_iface_offset {
+		maxPacketLen = math.MaxUint16 + tun_iface_offset
+	}
 
 	flatBuffer := make([]byte, batchSize*maxPacketLen)
 	readProjections := make([][]byte, batchSize)
@@ -383,36 +387,33 @@ func (eg *TUNIface) readLoop(batchSize int) {
 
 		// Обрабатываем батч синхронно: порядок HandleTunPacket совпадает с
 		// порядком пакетов в TUN. Backpressure от router.enqueue — это ок.
+		total := 0
 		for i := 0; i < n; i++ {
 			if sizes[i] <= 0 {
 				continue
 			}
 			flatStart := (i * maxPacketLen) + tun_iface_offset
 			flatEnd := flatStart + sizes[i]
+			total += sizes[i]
 
 			msg, err := eg.router.NewMessageCopyFrom(flatBuffer[flatStart:flatEnd])
 			if err != nil {
 				continue
 			}
-			metrics.ObserveTraffic(metrics.DirIn, metrics.PeerInternet, metrics.NoProtocol, sizes[i])
 			eg.router.HandleTunPacket(msg)
+		}
+		// Одна метрика на батч вместо WithLabelValues на каждый пакет.
+		if total > 0 {
+			metrics.ObserveTraffic(metrics.DirIn, metrics.PeerInternet, metrics.NoProtocol, total)
 		}
 	}
 }
 
-// writeLoop – батчевая запись в TUN с линеаризованной памятью
+// writeLoop – батчевая запись в TUN. Пакеты уже лежат в pooled-буферах
+// сообщений с 10-байтовым headroom, поэтому копирование в отдельный
+// flatBuffer не нужно: TUN.Write получает срезы Raw() напрямую.
 func (eg *TUNIface) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize int) {
-	maxPacketLen := math.MaxUint16 + tun_iface_offset
-
-	flatBuffer := make([]byte, batchSize*maxPacketLen)
-
 	writeProjections := make([][]byte, batchSize)
-	for i := 0; i < batchSize; i++ {
-		start := i * maxPacketLen
-		end := start + maxPacketLen
-		writeProjections[i] = writeProjection(flatBuffer, start, end, maxPacketLen)
-	}
-
 	msgs := make([]*dgmessage.DatagramMessage, batchSize)
 	idx := 0
 	lastOversizeLog := time.Time{}
@@ -446,18 +447,13 @@ func (eg *TUNIface) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize i
 				msg.Free()
 				continue
 			}
-
-			flatStart := (idx * maxPacketLen) + tun_iface_offset
-			copy(flatBuffer[flatStart:], msg.Data)
-
 			msgs[idx] = msg
 			idx++
 		}
 
-		// Пытаемся добрать пачку до batchSize из канала без блокировки
-		if idx < 4 {
-			runtime.Gosched()
-		}
+		// Пытаемся добрать пачку до batchSize из канала без блокировки.
+		// Без runtime.Gosched(): с GRO батчи приходят крупными, а yield на
+		// каждый мелкий батч только лишний раз дергает планировщик.
 		for idx < batchSize {
 			select {
 			case msg := <-toEgr:
@@ -470,10 +466,6 @@ func (eg *TUNIface) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize i
 					msg.Free()
 					continue
 				}
-
-				flatStart := (idx * maxPacketLen) + tun_iface_offset
-				copy(flatBuffer[flatStart:], msg.Data)
-
 				msgs[idx] = msg
 				idx++
 			default:
@@ -485,9 +477,7 @@ func (eg *TUNIface) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize i
 		if idx > 0 {
 			out := 0
 			for i := 0; i < idx; i++ {
-				start := i * maxPacketLen
-				end := start + tun_iface_offset + len(msgs[i].Data)
-				writeProjections[i] = writeProjection(flatBuffer, start, end, maxPacketLen)
+				writeProjections[i] = msgs[i].Raw()[:tun_iface_offset+len(msgs[i].Data)]
 				out += len(msgs[i].Data)
 			}
 			metrics.ObserveTraffic(metrics.DirOut, metrics.PeerInternet, metrics.NoProtocol, out)

@@ -1,7 +1,6 @@
 package firewall
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
@@ -62,7 +61,31 @@ type firewallEngineImpl struct {
 	rulesByID   map[ruleKey]PortRule
 	rulesMu     sync.RWMutex
 
-	holes sync.Map // map[string]hole | Активные дырки (stateful)
+	holes sync.Map // map[flowKey]hole | Активные дырки (stateful)
+}
+
+// flowKey — comparable-ключ потока. Раньше он собирался через fmt.Sprintf
+// в string: на каждый пакет приходились Sprintf и две аллокации. Структура
+// не аллоцирует и быстрее хэшируется.
+type flowKey struct {
+	srcIP   uint32
+	dstIP   uint32
+	srcPort uint16
+	dstPort uint16
+	proto   uint8
+}
+
+func protocolID(p string) uint8 {
+	switch p {
+	case "tcp":
+		return 6
+	case "udp":
+		return 17
+	case "icmp":
+		return 1
+	default:
+		return 0
+	}
 }
 
 // hole — разрешенный поток. HoleInfo храним, чтобы дырку можно было перепроверить
@@ -190,12 +213,12 @@ func (fw *firewallEngineImpl) dropUnauthorizedHoles() {
 // holeInfo должен содержать SrcIP, DstIP, SrcPort, DstPort (как net.IP) и Protocol (string).
 func (fw *firewallEngineImpl) RuleCheck(holeInfo dgmessage.HoleInfo) bool {
 	// 1. Проверяем активную дырку (stateful)
-	flowKey := makeFlowKey(holeInfo.SrcIP, holeInfo.DstIP, holeInfo.SrcPort, holeInfo.DstPort, holeInfo.Protocol)
-	if val, ok := fw.holes.Load(flowKey); ok {
+	key := makeFlowKey(holeInfo.SrcIP, holeInfo.DstIP, holeInfo.SrcPort, holeInfo.DstPort, holeInfo.Protocol)
+	if val, ok := fw.holes.Load(key); ok {
 		if h, ok := val.(hole); ok && time.Now().Before(h.expire) {
 			return true
 		} else {
-			fw.holes.Delete(flowKey)
+			fw.holes.Delete(key)
 		}
 	}
 
@@ -253,30 +276,38 @@ func (fw *firewallEngineImpl) rulesAllow(holeInfo dgmessage.HoleInfo) bool {
 
 // Holepunch создаёт (или обновляет) дырку для данного потока на заданное время.
 // Вызывается после успешной проверки правил для первого пакета.
+//
+// На каждый пакет из mesh в сторону локального клиента Store делать нельзя:
+// это аллокация hole + запись в sync.Map на 100% download-трафика. Продлеваем
+// дырку только когда до истечения осталось меньше половины TTL.
 func (fw *firewallEngineImpl) Holepunch(holeInfo dgmessage.HoleInfo, duration time.Duration) {
-	flowKey := makeFlowKey(holeInfo.SrcIP, holeInfo.DstIP, holeInfo.SrcPort, holeInfo.DstPort, holeInfo.Protocol)
-	fw.holes.Store(flowKey, hole{
-		expire: time.Now().Add(duration),
+	key := makeFlowKey(holeInfo.SrcIP, holeInfo.DstIP, holeInfo.SrcPort, holeInfo.DstPort, holeInfo.Protocol)
+	now := time.Now()
+	if val, ok := fw.holes.Load(key); ok {
+		if h, ok := val.(hole); ok && h.expire.Sub(now) > duration/2 {
+			return
+		}
+	}
+	fw.holes.Store(key, hole{
+		expire: now.Add(duration),
 		info:   holeInfo,
 	})
 }
 
 // makeFlowKey строит канонический ключ потока (упорядочивает IP и порты).
-func makeFlowKey(srcIP, dstIP uint32, srcPort, dstPort uint16, protocol string) string {
-
-	// Для ICMP порты не учитываем
-	if protocol == "icmp" {
-		if srcIP < dstIP {
-			return fmt.Sprintf("%d|%d|icmp", srcIP, dstIP)
-		} else {
-			return fmt.Sprintf("%d|%d|icmp", dstIP, srcIP)
+func makeFlowKey(srcIP, dstIP uint32, srcPort, dstPort uint16, protocol string) flowKey {
+	proto := protocolID(protocol)
+	// Для ICMP порты не учитываем.
+	if proto == 1 {
+		if srcIP > dstIP {
+			srcIP, dstIP = dstIP, srcIP
 		}
+		return flowKey{srcIP: srcIP, dstIP: dstIP, proto: proto}
 	}
-
-	// Для TCP/UDP – упорядочиваем пары (IP, порт)
-	if srcIP < dstIP || (srcIP == dstIP && srcPort < dstPort) {
-		return fmt.Sprintf("%d|%d|%d|%d|%s", srcIP, dstIP, srcPort, dstPort, protocol)
-	} else {
-		return fmt.Sprintf("%d|%d|%d|%d|%s", dstIP, srcIP, dstPort, srcPort, protocol)
+	// Для TCP/UDP – упорядочиваем пары (IP, порт).
+	if srcIP > dstIP || (srcIP == dstIP && srcPort > dstPort) {
+		srcIP, dstIP = dstIP, srcIP
+		srcPort, dstPort = dstPort, srcPort
 	}
+	return flowKey{srcIP: srcIP, dstIP: dstIP, srcPort: srcPort, dstPort: dstPort, proto: proto}
 }

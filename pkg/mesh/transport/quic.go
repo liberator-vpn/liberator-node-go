@@ -11,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -127,6 +128,11 @@ func NewQuicTransport(listenAddr, secret string) (NetworkTransport, error) {
 		MaxIdleTimeout:        30 * time.Second,
 		KeepAlivePeriod:       10 * time.Second,
 		EnableDatagrams:       true,
+		// Не ждём PMTUD с 1280: сразу разрешаем пакеты до 1452 байт UDP
+		// (protocol.MaxPacketBufferSize в quic-go). Это позволяет
+		// overlay-пакету до 1376 байт уходить одной датаграммой, без
+		// фрагментации на два QUIC-пакета.
+		InitialPacketSize: 1452,
 	}
 
 	listener, err := transport.Listen(serverTLS, quicConfig)
@@ -213,19 +219,49 @@ func (pc *quicPeerConnection) SendDatagram(data []byte) error {
 	metrics.ObserveTraffic(metrics.DirOut, metrics.PeerNode, metrics.NoProtocol, len(data))
 	pc.totalSent.Add(uint64(len(data)))
 
-	if len(data) <= maxFragmentPayload {
-		return pc.conn.SendDatagram(data)
-	}
-	// Пакет больше безопасного размера QUIC DATAGRAM: режем на фрагменты.
-	// Без этого SendDatagram возвращал DatagramTooLargeError, и любой
-	// полноразмерный пакет overlay терялся на mesh-хопе.
-	id := pc.nextFragmentID.Add(1)
-	for _, frag := range fragmentDatagram(id, data) {
-		if err := pc.conn.SendDatagram(frag); err != nil {
+	// Быстрый путь: одна QUIC DATAGRAM. Реальный лимит пути знает quic-go
+	// (PMTUD); 1400 — верхняя граница, при которой overlay-пакет 1376
+	// должен влезать целиком. Если не влез — фрагментируем ровно по
+	// лимиту, который вернул quic-go.
+	if len(data) <= maxDirectDatagram {
+		err := pc.conn.SendDatagram(data)
+		if err == nil {
+			return nil
+		}
+		var tooLarge *quic.DatagramTooLargeError
+		if !errors.As(err, &tooLarge) {
 			return err
 		}
+		return pc.sendFragmented(data, int(tooLarge.MaxDatagramPayloadSize))
 	}
-	return nil
+	// Пакет заведомо больше одной датаграммы: сразу режем безопасным
+	// chunk'ом, чтобы не отправить половину фрагментов большим размером
+	// и не упереться в лимит пути на середине.
+	return pc.sendFragmented(data, defaultFragmentChunk+fragmentHeaderSize)
+}
+
+// sendFragmented отправляет пакет фрагментами. limit — максимальный размер
+// одной QUIC DATAGRAM (payload + наш заголовок). Если фрагмент всё равно не
+// влезает (лимит пути уменьшился между вызовами), делаем один retry с новым
+// fragment id и размером из ошибки: старый частичный набор дочистит TTL.
+func (pc *quicPeerConnection) sendFragmented(data []byte, limit int) error {
+	chunk := limit - fragmentHeaderSize
+	if chunk <= 0 || chunk > maxFragmentChunk {
+		chunk = defaultFragmentChunk
+	}
+	err := sendFragments(pc.conn.SendDatagram, pc.nextFragmentID.Add(1), data, chunk)
+	if err == nil {
+		return nil
+	}
+	var tooLarge *quic.DatagramTooLargeError
+	if !errors.As(err, &tooLarge) {
+		return err
+	}
+	retry := int(tooLarge.MaxDatagramPayloadSize) - fragmentHeaderSize
+	if retry <= 0 || retry >= chunk {
+		return err
+	}
+	return sendFragments(pc.conn.SendDatagram, pc.nextFragmentID.Add(1), data, retry)
 }
 func (pc *quicPeerConnection) RecvDatagram(ctx context.Context) ([]byte, error) {
 	data, err := pc.conn.ReceiveDatagram(ctx)

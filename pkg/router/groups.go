@@ -154,7 +154,11 @@ func (r *Router) ReplaceGroupRules(inputs []GroupInput) {
 	}
 
 	hasDomains := false
+	hasRules := false
 	for _, in := range inputs {
+		if len(in.Rules) > 0 {
+			hasRules = true
+		}
 		for _, ru := range in.Rules {
 			if ru.Domain != "" {
 				hasDomains = true
@@ -163,7 +167,9 @@ func (r *Router) ReplaceGroupRules(inputs []GroupInput) {
 		}
 	}
 	r.hasGroupDomains.Store(hasDomains)
+	r.hasGroupRules.Store(hasRules)
 	r.hasDomainRules.Store(r.hasDomainRules.Load() || hasDomains)
+	r.refreshHasAnyRules()
 
 	r.groupsMu.Lock()
 	r.groupsByID = next

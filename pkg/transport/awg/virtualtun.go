@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"runtime"
 	"sync"
 	"time"
 
@@ -74,6 +73,7 @@ func (t *ChannelTun) Write(bufs [][]byte, offset int) (int, error) {
 	// интерпретирует возвращённое значение как «сколько пакетов записано»,
 	// поэтому жёсткий 0 раньше выглядел как 100% потерь на приёме.
 	c := int(0)
+	total := 0
 	for _, buf := range bufs {
 		pkt := buf[offset:]
 
@@ -82,7 +82,7 @@ func (t *ChannelTun) Write(bufs [][]byte, offset int) (int, error) {
 			metrics.ObserveAWGParseError()
 			continue
 		}
-		metrics.ObserveTraffic(metrics.DirIn, metrics.PeerClient, t.protocol, len(pkt))
+		total += len(pkt)
 		// ОБНОВЛЯЕМ lastSeen (критически важно для watchdog)
 		if peer, ok := t.peers.Get(msg.HoleInfo.SrcIP); ok {
 			peer.TouchLastSeen(now)
@@ -92,10 +92,22 @@ func (t *ChannelTun) Write(bufs [][]byte, offset int) (int, error) {
 		t.router.HandleTransportPacket(msg)
 		c++
 	}
+	if total > 0 {
+		metrics.ObserveTraffic(metrics.DirIn, metrics.PeerClient, t.protocol, total)
+	}
 	return c, nil
 }
 
 func (t *ChannelTun) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
+	total := 0
+	// Одна метрика на батч: writePacket вызывается на каждый пакет, а
+	// WithLabelValues на 100k pps — это заметный hash+RLock в hot path.
+	defer func() {
+		if total > 0 {
+			metrics.ObserveTraffic(metrics.DirOut, metrics.PeerClient, t.protocol, total)
+		}
+	}()
+
 	// Ждём первый пакет
 	select {
 	case pkt := <-t.in:
@@ -107,6 +119,7 @@ func (t *ChannelTun) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 		}
 		copy(bufs[0][offset:], pkt)
 		sizes[0] = len(pkt)
+		total += len(pkt)
 		n := 1
 
 		// Пытаемся прочитать дополнительные пакеты, если есть место в буферах
@@ -122,27 +135,11 @@ func (t *ChannelTun) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 				}
 				copy(bufs[i][offset:], pkt2)
 				sizes[i] = len(pkt2)
+				total += len(pkt2)
 				n++
 			default:
-				// Если набрали мало пакетов, уступаем квант времени CPU (разрешаем батчинг)
-				if n < 4 {
-					runtime.Gosched()
-					// Делаем еще одну быструю попытку вычитать из канала
-					select {
-					case pkt2, ok2 := <-t.in:
-						if !ok2 || len(pkt2) == 0 {
-							return n, nil
-						}
-						if len(pkt2) > len(bufs[n])-offset {
-							return n, nil
-						}
-						copy(bufs[n][offset:], pkt2)
-						sizes[n] = len(pkt2)
-						n++
-						continue
-					default:
-					}
-				}
+				// Без runtime.Gosched(): лишний scheduler round-trip на
+				// каждый мелкий батч. Батчинг даёт GRO/очередь, а не yield.
 				return n, nil
 			}
 		}

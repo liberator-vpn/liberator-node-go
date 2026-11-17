@@ -35,8 +35,15 @@ type MeshNode struct {
 	dynamicMu sync.RWMutex
 	dynamic   []string
 
-	outboundMu sync.Mutex
+	// outbound читается на каждом egress-пакете, поэтому быстрый путь
+	// держит RLock, а не эксклюзивный мьютекс.
+	outboundMu sync.RWMutex
 	outbound   map[string]transport.PeerConnection // "ip:port" -> живое соединение
+
+	// keyCache: endpoint -> канонический "ip:port". resolveKey вызывается
+	// на каждый пакет; без кэша это SplitHostPort + ParseIP + JoinHostPort
+	// и две аллокации на пакет.
+	keyCache sync.Map // string -> string
 
 	remoteMu     sync.Mutex
 	remotes      map[uint32]string                      // remote virtual IP -> mesh endpoint
@@ -205,9 +212,9 @@ func (n *MeshNode) SendTo(ctx context.Context, endpoint string, data []byte) err
 
 	// Быстрый путь: соединение уже в пуле. Не держим outboundMu во время
 	// Dial — иначе один медленный/недоступный пир блокирует отправку всем.
-	n.outboundMu.Lock()
+	n.outboundMu.RLock()
 	pc := n.outbound[key]
-	n.outboundMu.Unlock()
+	n.outboundMu.RUnlock()
 	if pc != nil {
 		return pc.SendDatagram(data)
 	}
@@ -256,13 +263,20 @@ func (n *MeshNode) SendTo(ctx context.Context, endpoint string, data []byte) err
 }
 
 // resolveKey приводит endpoint к каноническому "ip:port" (резолвит hostname).
+// Для IP-эндпоинтов (обычный случай: mesh_endpoint из API) результат кэшируется:
+// функция вызывается на каждом egress-пакете.
 func (n *MeshNode) resolveKey(endpoint string) (string, error) {
+	if v, ok := n.keyCache.Load(endpoint); ok {
+		return v.(string), nil
+	}
 	host, port, err := net.SplitHostPort(endpoint)
 	if err != nil {
 		return "", fmt.Errorf("invalid endpoint %q: %w", endpoint, err)
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		return net.JoinHostPort(host, port), nil
+		key := net.JoinHostPort(host, port)
+		n.keyCache.Store(endpoint, key)
+		return key, nil
 	}
 	ips, err := net.LookupHost(host)
 	if err != nil || len(ips) == 0 {

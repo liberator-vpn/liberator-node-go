@@ -91,7 +91,6 @@ func (ig *AWGTransport) UAPI() (string, error) {
 	return ig.awgDevice.IpcGet()
 }
 
-
 func (ig *AWGTransport) Type() string {
 	return "awg"
 }
@@ -400,7 +399,8 @@ func (ig *AWGTransport) watchPeers() {
 // хэшем — и обратное направление) стояли в очереди: TCP схлопывал окно.
 // Теперь при переполнении пакет дропается, а TCP восстановит его ретрансмиссией.
 func (ig *AWGTransport) writePacket(data []byte) error {
-	metrics.ObserveTraffic(metrics.DirOut, metrics.PeerClient, ig.cfg.Protocol, len(data))
+	// Байты учитываются в ChannelTun.Read одним ObserveTraffic на батч:
+	// здесь метрика вызывалась бы на каждый пакет.
 	select {
 	case ig.in <- data:
 		return nil
