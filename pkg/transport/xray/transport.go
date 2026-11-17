@@ -23,7 +23,7 @@ import (
 	"github.com/liberator-vpn/liberator-node-go/pkg/routingtable"
 	"github.com/liberator-vpn/liberator-node-go/pkg/transport"
 	"github.com/vishvananda/netlink"
-	"golang.zx2c4.com/wireguard/tun"
+	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 )
 
 var _ transport.Transport = (*XrayTransport)(nil)

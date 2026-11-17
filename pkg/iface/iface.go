@@ -18,7 +18,7 @@ import (
 
 	"github.com/coreos/go-iptables/iptables"
 	"github.com/vishvananda/netlink"
-	"golang.zx2c4.com/wireguard/tun"
+	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 )
 
 // defaultGatewayInterface возвращает имя интерфейса с default-маршрутом IPv4.
@@ -63,7 +63,7 @@ type TUNIface struct {
 const tun_iface_offset = 10
 
 // writeProjection возвращает срез пакета с capacity, ограниченной одним
-// сегментом flatBuffer. Это критично для wireguard/tun: при vnetHdr он
+// сегментом flatBuffer. Это критично для amneziawg-go/tun: при vnetHdr он
 // вызывает handleGRO, который коалесцирует TCP-пакеты через append. Если
 // capacity уходит до конца всего flatBuffer, GRO склеивает весь батч в один
 // пакет, переполняет uint16 длины IP и отдаёт в ядро битый GSO.

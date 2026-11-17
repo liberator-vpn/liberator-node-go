@@ -91,19 +91,6 @@ func (ig *AWGTransport) UAPI() (string, error) {
 	return ig.awgDevice.IpcGet()
 }
 
-// RxStats отдаёт счётчики приёмного тракта AWG: сколько transport-пакетов
-// пришло, сколько доставлено и сколько отброшено на key/decrypt/replay/IP.
-func (ig *AWGTransport) RxStats() map[string]uint64 {
-	s := ig.awgDevice.RxStats()
-	return map[string]uint64{
-		"transport":       s.Transport,
-		"delivered":       s.Delivered,
-		"dropped_key":     s.DroppedKey,
-		"dropped_decrypt": s.DroppedDecrypt,
-		"dropped_replay":  s.DroppedReplay,
-		"dropped_invalid": s.DroppedInvalid,
-	}
-}
 
 func (ig *AWGTransport) Type() string {
 	return "awg"
