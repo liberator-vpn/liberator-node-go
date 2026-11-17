@@ -56,7 +56,13 @@ type AWGTransport struct {
 
 	awgDevice  *amneziawgdevice.Device
 	channelTun *ChannelTun
-	in         chan []byte
+
+	// in — очередь пакетов на шифрование/отправку клиенту (download).
+	// Буфер копируется из pooled-сообщения роутера: роутер освобождает
+	// DatagramMessage сразу после SendDatagram, поэтому хранить его слайс
+	// в канале нельзя (буфер будет переиспользован до ChannelTun.Read).
+	in     chan inPacket
+	inPool sync.Pool
 
 	peersByIP safemap.Safemap[uint32, *AWGPeer]
 
@@ -113,9 +119,15 @@ func New(
 		cfg:       cfg,
 		router:    router,
 		nodeID:    nodeID,
-		in:        make(chan []byte, 4096),
+		in:        make(chan inPacket, 4096),
 		peersByIP: safemap.New[uint32, *AWGPeer](),
 		deltaChan: make(chan transport.TransportPeerStats, 100),
+	}
+	ig.inPool = sync.Pool{
+		New: func() any {
+			b := make([]byte, 0, 2048)
+			return &b
+		},
 	}
 
 	pubKey, err := getServerPubKey(cfg.PrivateKey)
@@ -401,10 +413,24 @@ func (ig *AWGTransport) watchPeers() {
 func (ig *AWGTransport) writePacket(data []byte) error {
 	// Байты учитываются в ChannelTun.Read одним ObserveTraffic на батч:
 	// здесь метрика вызывалась бы на каждый пакет.
+	//
+	// Копируем в собственный буфер: вызывающий (роутер) сразу освобождает
+	// DatagramMessage, а ChannelTun.Read читает из очереди асинхронно.
+	bp := ig.inPool.Get().(*[]byte)
+	buf := *bp
+	if cap(buf) < len(data) {
+		buf = make([]byte, len(data))
+	}
+	buf = buf[:len(data)]
+	copy(buf, data)
+	*bp = buf
+
 	select {
-	case ig.in <- data:
+	case ig.in <- inPacket{buf: buf, bp: bp, pool: &ig.inPool}:
 		return nil
 	default:
+		*bp = buf[:0]
+		ig.inPool.Put(bp)
 		metrics.ObserveIfaceDrop(metrics.DirOut)
 		return nil
 	}

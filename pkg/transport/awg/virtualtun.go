@@ -19,9 +19,27 @@ import (
 // 2. Адаптер TUN -> Каналы
 // ---------------------------------------------------------
 
+// inPacket — пакет на шифрование/отправку клиенту. Буфер берётся из
+// inPool в AWGTransport.writePacket и возвращается туда после копирования
+// в буферы amneziawg-go: роутер освобождает своё сообщение сразу после
+// SendDatagram, поэтому хранить его слайс в канале нельзя.
+type inPacket struct {
+	buf  []byte
+	bp   *[]byte
+	pool *sync.Pool
+}
+
+func releaseInPacket(p inPacket) {
+	if p.pool == nil || p.bp == nil {
+		return
+	}
+	*p.bp = p.buf[:0]
+	p.pool.Put(p.bp)
+}
+
 type ChannelTun struct {
 	ctx      context.Context
-	in       <-chan []byte
+	in       <-chan inPacket
 	router   transport.Router
 	mtu      int
 	protocol string
@@ -34,7 +52,7 @@ type ChannelTun struct {
 
 var _ tun.Device = (*ChannelTun)(nil)
 
-func NewChannelTun(ctx context.Context, in <-chan []byte, router transport.Router, mtu int, protocol string) *ChannelTun {
+func NewChannelTun(ctx context.Context, in <-chan inPacket, router transport.Router, mtu int, protocol string) *ChannelTun {
 	return &ChannelTun{
 		ctx:      ctx,
 		in:       in,
@@ -111,32 +129,40 @@ func (t *ChannelTun) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 
 	// Ждём первый пакет
 	select {
-	case pkt := <-t.in:
+	case p := <-t.in:
+		pkt := p.buf
 		if len(pkt) == 0 {
+			releaseInPacket(p)
 			return 0, nil
 		}
 		if len(pkt) > len(bufs[0])-offset {
+			releaseInPacket(p)
 			return 0, fmt.Errorf("packet larger than MTU")
 		}
 		copy(bufs[0][offset:], pkt)
 		sizes[0] = len(pkt)
 		total += len(pkt)
+		releaseInPacket(p)
 		n := 1
 
 		// Пытаемся прочитать дополнительные пакеты, если есть место в буферах
 		for i := 1; i < len(bufs); i++ {
 			select {
-			case pkt2 := <-t.in:
+			case p2 := <-t.in:
+				pkt2 := p2.buf
 				if len(pkt2) == 0 {
+					releaseInPacket(p2)
 					return n, nil
 				}
 				if len(pkt2) > len(bufs[i])-offset {
 					// Если не влезает, возвращаем уже прочитанные
+					releaseInPacket(p2)
 					return n, nil
 				}
 				copy(bufs[i][offset:], pkt2)
 				sizes[i] = len(pkt2)
 				total += len(pkt2)
+				releaseInPacket(p2)
 				n++
 			default:
 				// Если набрали мало пакетов, уступаем квант времени CPU,
@@ -146,16 +172,23 @@ func (t *ChannelTun) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 				if n < 4 {
 					runtime.Gosched()
 					select {
-					case pkt2, ok2 := <-t.in:
-						if !ok2 || len(pkt2) == 0 {
+					case p2, ok2 := <-t.in:
+						if !ok2 {
+							return n, nil
+						}
+						pkt2 := p2.buf
+						if len(pkt2) == 0 {
+							releaseInPacket(p2)
 							return n, nil
 						}
 						if len(pkt2) > len(bufs[n])-offset {
+							releaseInPacket(p2)
 							return n, nil
 						}
 						copy(bufs[n][offset:], pkt2)
 						sizes[n] = len(pkt2)
 						total += len(pkt2)
+						releaseInPacket(p2)
 						n++
 						continue
 					default:

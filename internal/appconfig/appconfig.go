@@ -17,6 +17,11 @@ type TUNConfig struct {
 	IfaceInName  string `yaml:"iface_in_name"`
 	IfaceOutName string `yaml:"iface_out_name"`
 	MTU          int    `yaml:"mtu"`
+	// MSS — если >0, нода ставит явный TCPMSS --set-mss в обе стороны
+	// liberator↔out. Нужен, когда mesh-путь между нодами уже MTU туннеля:
+	// clamp-mss-to-pmtu для SYN клиента смотрит на MTU физического
+	// выходного интерфейса и не уменьшает MSS до размера туннеля.
+	MSS int `yaml:"mss"`
 }
 
 // RouterConfig

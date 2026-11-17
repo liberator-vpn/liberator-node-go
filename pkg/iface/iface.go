@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -223,6 +224,28 @@ func (eg *TUNIface) setupNAT() error {
 		return fmt.Errorf("failed to setup MSS Clamping: %w", err)
 	}
 
+	// Явный MSS для туннеля. clamp-mss-to-pmtu для SYN клиента берёт MTU
+	// выходного физического интерфейса (1500/1400) и не уменьшает MSS до
+	// размера mesh-пути. Поэтому ставим --set-mss в обе стороны: SYN клиента
+	// (liberator -> out) и SYN-ACK интернета (out -> liberator).
+	if eg.cfg.MSS > 0 {
+		mss := strconv.Itoa(eg.cfg.MSS)
+		if err := eg.ipt.InsertUnique("mangle", "FORWARD", 1,
+			"-i", eg.cfg.IfaceInName, "-o", eg.cfg.IfaceOutName,
+			"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
+			"-j", "TCPMSS", "--set-mss", mss,
+		); err != nil {
+			return fmt.Errorf("failed to setup tunnel MSS clamp (in): %w", err)
+		}
+		if err := eg.ipt.InsertUnique("mangle", "FORWARD", 1,
+			"-i", eg.cfg.IfaceOutName, "-o", eg.cfg.IfaceInName,
+			"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
+			"-j", "TCPMSS", "--set-mss", mss,
+		); err != nil {
+			return fmt.Errorf("failed to setup tunnel MSS clamp (out): %w", err)
+		}
+	}
+
 	// Б) Маскарадинг (NAT) трафика из подсети туннеля наружу.
 	//
 	// Вставляем в начало POSTROUTING, а не в конец: иначе upload-пакеты
@@ -282,7 +305,7 @@ func (eg *TUNIface) close() error {
 	if eg.ipt != nil && eg.ipNet != nil && eg.cfg.IfaceOutName != "" {
 		tunNet := eg.tunNetwork().String()
 
-		for _, rule := range []struct {
+		rules := []struct {
 			table, chain string
 			args         []string
 		}{
@@ -295,7 +318,29 @@ func (eg *TUNIface) close() error {
 				"-i", eg.cfg.IfaceOutName, "-o", eg.cfg.IfaceInName,
 				"-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT",
 			}},
-		} {
+		}
+		if eg.cfg.MSS > 0 {
+			mss := strconv.Itoa(eg.cfg.MSS)
+			rules = append(rules,
+				struct {
+					table, chain string
+					args         []string
+				}{"mangle", "FORWARD", []string{
+					"-i", eg.cfg.IfaceInName, "-o", eg.cfg.IfaceOutName,
+					"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
+					"-j", "TCPMSS", "--set-mss", mss,
+				}},
+				struct {
+					table, chain string
+					args         []string
+				}{"mangle", "FORWARD", []string{
+					"-i", eg.cfg.IfaceOutName, "-o", eg.cfg.IfaceInName,
+					"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
+					"-j", "TCPMSS", "--set-mss", mss,
+				}},
+			)
+		}
+		for _, rule := range rules {
 			if err := eg.ipt.DeleteIfExists(rule.table, rule.chain, rule.args...); err != nil {
 				errs = append(errs, fmt.Sprintf("failed to remove %s/%s rule: %v", rule.table, rule.chain, err))
 			}
