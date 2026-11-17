@@ -215,7 +215,13 @@ func (eg *TUNIface) setupNAT() error {
 	// правила могут остаться, и Append копил бы дубликаты.
 	//
 	// А) MSS Clamping: заставляет TCP-клиентов подстраивать MSS под PMTU.
+	// Generic clamp только для НЕ-туннельного трафика. Для туннеля ниже
+	// стоит max-clamp, который только понижает MSS; clamp-mss-to-pmtu
+	// может выставить MSS по PMTU физического интерфейса и увеличить
+	// маленький клиентский MSS (1200), что даёт PMTU-blackhole.
 	if err := eg.ipt.AppendUnique("mangle", "FORWARD",
+		"!", "-i", eg.cfg.IfaceInName,
+		"!", "-o", eg.cfg.IfaceInName,
 		"-p", "tcp",
 		"--tcp-flags", "SYN,RST", "SYN",
 		"-j", "TCPMSS",
@@ -228,15 +234,23 @@ func (eg *TUNIface) setupNAT() error {
 	// amneziawg "tcp option maxseg size > 1336 -> 1336":匹配 только MSS
 	// больше cfg.MSS и понижает его. Клиент с меньшим MSS (например, 1200)
 	// не трогается — увеличивать MSS нельзя, иначе получаем PMTU-blackhole.
+	// Правило ограничено направлениями liberator↔out, чтобы не резать
+	// Docker/другой forwarded-трафик.
 	if eg.cfg.MSS > 0 {
 		mss := strconv.Itoa(eg.cfg.MSS)
 		match := fmt.Sprintf("%d:65535", eg.cfg.MSS+1)
-		if err := eg.ipt.InsertUnique("mangle", "FORWARD", 1,
-			"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
-			"-m", "tcpmss", "--mss", match,
-			"-j", "TCPMSS", "--set-mss", mss,
-		); err != nil {
-			return fmt.Errorf("failed to setup tunnel MSS max clamp: %w", err)
+		for _, dir := range []struct{ in, out string }{
+			{eg.cfg.IfaceInName, eg.cfg.IfaceOutName},
+			{eg.cfg.IfaceOutName, eg.cfg.IfaceInName},
+		} {
+			if err := eg.ipt.InsertUnique("mangle", "FORWARD", 1,
+				"-i", dir.in, "-o", dir.out,
+				"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
+				"-m", "tcpmss", "--mss", match,
+				"-j", "TCPMSS", "--set-mss", mss,
+			); err != nil {
+				return fmt.Errorf("failed to setup tunnel MSS max clamp (%s->%s): %w", dir.in, dir.out, err)
+			}
 		}
 	}
 
@@ -304,6 +318,7 @@ func (eg *TUNIface) close() error {
 			args         []string
 		}{
 			{"mangle", "FORWARD", []string{
+				"!", "-i", eg.cfg.IfaceInName, "!", "-o", eg.cfg.IfaceInName,
 				"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu",
 			}},
 			{"nat", "POSTROUTING", []string{"-s", tunNet, "-o", eg.cfg.IfaceOutName, "-j", "MASQUERADE"}},
@@ -316,14 +331,20 @@ func (eg *TUNIface) close() error {
 		if eg.cfg.MSS > 0 {
 			mss := strconv.Itoa(eg.cfg.MSS)
 			match := fmt.Sprintf("%d:65535", eg.cfg.MSS+1)
-			rules = append(rules, struct {
-				table, chain string
-				args         []string
-			}{"mangle", "FORWARD", []string{
-				"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
-				"-m", "tcpmss", "--mss", match,
-				"-j", "TCPMSS", "--set-mss", mss,
-			}})
+			for _, dir := range []struct{ in, out string }{
+				{eg.cfg.IfaceInName, eg.cfg.IfaceOutName},
+				{eg.cfg.IfaceOutName, eg.cfg.IfaceInName},
+			} {
+				rules = append(rules, struct {
+					table, chain string
+					args         []string
+				}{"mangle", "FORWARD", []string{
+					"-i", dir.in, "-o", dir.out,
+					"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
+					"-m", "tcpmss", "--mss", match,
+					"-j", "TCPMSS", "--set-mss", mss,
+				}})
+			}
 		}
 		for _, rule := range rules {
 			if err := eg.ipt.DeleteIfExists(rule.table, rule.chain, rule.args...); err != nil {
