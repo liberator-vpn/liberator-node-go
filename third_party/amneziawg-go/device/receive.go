@@ -590,6 +590,7 @@ func (peer *Peer) RoutineSequentialReceiver(maxBatchSize int) {
 		haveNext    bool
 		keypair     *Keypair
 		timer       *time.Timer
+		gapActive   bool
 		validAny    bool
 		dataAny     bool
 		releasedAny bool
@@ -668,6 +669,17 @@ func (peer *Peer) RoutineSequentialReceiver(maxBatchSize int) {
 		}
 		flushBuffers()
 	}
+	stopTimer := func() {
+		if timer != nil {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		}
+		gapActive = false
+	}
 	// flushAll is the no-loss fallback: release every buffered element in
 	// counter order, even if a gap is missing. The gap is left to inner TCP
 	// retransmission; dropping buffered packets would amplify loss.
@@ -687,6 +699,7 @@ func (peer *Peer) RoutineSequentialReceiver(maxBatchSize int) {
 		}
 		haveNext = false
 		next = 0
+		stopTimer()
 		flushBuffers()
 	}
 
@@ -694,35 +707,46 @@ func (peer *Peer) RoutineSequentialReceiver(maxBatchSize int) {
 		var elemsContainer *QueueInboundElementsContainer
 		if haveNext && len(pending) > 0 {
 			if _, ok := pending[next]; !ok {
-				if timer == nil {
-					timer = time.NewTimer(reorderTimeout)
-				} else {
-					timer.Reset(reorderTimeout)
+				// Arm the gap timer once. Resetting it on every container
+				// kept it alive forever under continuous traffic: delivery
+				// stalled until reorderWindow packets accumulated and then
+				// flushed in one burst (~100 ms of added latency).
+				if !gapActive {
+					gapActive = true
+					if timer == nil {
+						timer = time.NewTimer(reorderTimeout)
+					} else {
+						if !timer.Stop() {
+							select {
+							case <-timer.C:
+							default:
+							}
+						}
+						timer.Reset(reorderTimeout)
+					}
 				}
 				select {
 				case elemsContainer = <-peer.queue.inbound.c:
-					if !timer.Stop() {
-						select {
-						case <-timer.C:
-						default:
-						}
-					}
+					// Keep the original deadline; do not reset the timer.
 				case <-timer.C:
 					flushAll()
 					continue
 				}
 			} else {
+				if gapActive {
+					stopTimer()
+				}
 				elemsContainer = <-peer.queue.inbound.c
 			}
 		} else {
+			if gapActive {
+				stopTimer()
+			}
 			elemsContainer = <-peer.queue.inbound.c
 		}
 
 		if elemsContainer == nil {
 			flushAll()
-			if timer != nil {
-				timer.Stop()
-			}
 			return
 		}
 

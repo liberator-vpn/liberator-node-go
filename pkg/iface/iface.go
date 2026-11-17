@@ -415,6 +415,14 @@ func (eg *TUNIface) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize i
 
 	msgs := make([]*dgmessage.DatagramMessage, batchSize)
 	idx := 0
+	lastOversizeLog := time.Time{}
+	oversize := func(n int) {
+		metrics.ObserveTUNOversizeDrop()
+		if time.Since(lastOversizeLog) > 5*time.Second {
+			log.Printf("dropping oversize packet: len=%d mtu=%d", n, eg.cfg.MTU)
+			lastOversizeLog = time.Now()
+		}
+	}
 
 	defer func() {
 		for i := 0; i < idx; i++ {
@@ -434,7 +442,7 @@ func (eg *TUNIface) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize i
 				continue
 			}
 			if len(msg.Data) > eg.cfg.MTU {
-				metrics.ObserveTUNOversizeDrop()
+				oversize(len(msg.Data))
 				msg.Free()
 				continue
 			}
@@ -458,7 +466,7 @@ func (eg *TUNIface) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize i
 					continue
 				}
 				if len(msg.Data) > eg.cfg.MTU {
-					metrics.ObserveTUNOversizeDrop()
+					oversize(len(msg.Data))
 					msg.Free()
 					continue
 				}
