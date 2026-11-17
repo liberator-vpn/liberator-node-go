@@ -100,7 +100,7 @@ func (c *TransportConfig) normalize() error {
 		c.Binary = "xray"
 	}
 	if c.MTU <= 0 {
-		c.MTU = 1420
+		c.MTU = 1376
 	}
 	if c.ProxyTUN == "" {
 		c.ProxyTUN = "liberator-proxy"
