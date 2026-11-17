@@ -128,11 +128,10 @@ func NewQuicTransport(listenAddr, secret string) (NetworkTransport, error) {
 		MaxIdleTimeout:        30 * time.Second,
 		KeepAlivePeriod:       10 * time.Second,
 		EnableDatagrams:       true,
-		// Не ждём PMTUD с 1280: сразу разрешаем пакеты до 1452 байт UDP
-		// (protocol.MaxPacketBufferSize в quic-go). Это позволяет
-		// overlay-пакету до 1376 байт уходить одной датаграммой, без
-		// фрагментации на два QUIC-пакета.
-		InitialPacketSize: 1452,
+		// InitialPacketSize не форсируем: на части путей между нодами
+		// MTU меньше 1500 (проверено ping -M do: 1452+28 не проходит).
+		// quic-go сам поднимет лимит через PMTUD, а SendDatagram уже умеет
+		// откатываться на фрагментацию по DatagramTooLargeError.
 	}
 
 	listener, err := transport.Listen(serverTLS, quicConfig)
