@@ -219,9 +219,9 @@ func (pc *quicPeerConnection) SendDatagram(data []byte) error {
 	pc.totalSent.Add(uint64(len(data)))
 
 	// Быстрый путь: одна QUIC DATAGRAM. Реальный лимит пути знает quic-go
-	// (PMTUD); 1400 — верхняя граница, при которой overlay-пакет 1376
-	// должен влезать целиком. Если не влез — фрагментируем ровно по
-	// лимиту, который вернул quic-go.
+	// (PMTUD); 1400 — верхняя граница для одной датаграммы. TCP-пакеты
+	// ограничены max-clamp'ом MSS 1260 (inner 1300) и влезают; если не
+	// влезли — фрагментируем ровно по лимиту, который вернул quic-go.
 	if len(data) <= maxDirectDatagram {
 		err := pc.conn.SendDatagram(data)
 		if err == nil {

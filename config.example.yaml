@@ -5,12 +5,12 @@ auth:
   secret_key: "CHANGE_ME_random_secret_min_16_chars"
 
 tun:
-  mtu: 1376 # Всегда должен быть меньше наименьшего транспорта
-  # Явный TCP MSS для туннеля (0 = не трогать). Должен быть НЕ БОЛЬШЕ MSS
-  # клиента: Amnezia-клиент часто использует TUN MTU 1200/1240, и
-  # --set-mss 1260 увеличивает его MSS, ломая PMTU. Если клиентский MTU
-  # 1300, клиент сам присылает MSS 1260 — правило не нужно.
-  mss: 0
+  mtu: 1420 # Как официальный awg0; клиентский MTU в ключе — 1376
+  # Максимальный TCP MSS для туннеля (0 = не трогать). Нода ставит
+  # "MSS > mss -> mss", то есть только понижает и не увеличивает клиентский.
+  # 1260 = inner 1300 - 40: mesh-путь server4→server1 1400, inner 1376 +
+  # QUIC не влезает. Клиент с MSS 1200 не трогается.
+  mss: 1260
   iface_in_name: "liberator"
   iface_out_name: ""
 router:
@@ -18,7 +18,7 @@ router:
     amnesiav2:
       type: "awg"
       protocol: "amnesiav2"
-      mtu: 1376
+      mtu: 1420
       listen_port: 2200
       # Приватный ключ сервера AmneziaWG (32 байта hex). Сгенерировать свой
       # (openssl rand -hex 32), не переиспользовать. В git/k8s ConfigMap не
@@ -52,7 +52,7 @@ router:
     amnesiav31:
       type: "awg"
       protocol: "amnesiav31"
-      mtu: 1376
+      mtu: 1420
       listen_port: 2201
       # Для 3.1 нужен отдельный ключ и отдельный порт.
       private_key: "CHANGE_ME_32byte_hex_private_key_v31"
@@ -99,7 +99,7 @@ router:
     xray:
       type: "xray"
       binary: "/usr/local/bin/xray"
-      mtu: 1376
+      mtu: 1420
       proxy_tun: "liberator-proxy"
       dummy: "liberator-proxy-dummy"
       state_dir: "/var/lib/liberator"

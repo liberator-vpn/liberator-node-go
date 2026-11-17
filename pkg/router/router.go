@@ -136,7 +136,7 @@ func New(
 
 	br := &Router{
 		ctx: ctx,
-		// MTU ноды 1376: 4096 с запасом покрывает пакет + headroom TUN.
+		// MTU ноды 1420: 4096 с запасом покрывает пакет + headroom TUN.
 		// Раньше каждый буфер был 65535 байт, что раздувало working set.
 		packetsPool: dgmessage.NewDGMessagePool(4096),
 

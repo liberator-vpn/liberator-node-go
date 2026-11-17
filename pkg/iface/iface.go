@@ -224,25 +224,19 @@ func (eg *TUNIface) setupNAT() error {
 		return fmt.Errorf("failed to setup MSS Clamping: %w", err)
 	}
 
-	// Явный MSS для туннеля. clamp-mss-to-pmtu для SYN клиента берёт MTU
-	// выходного физического интерфейса (1500/1400) и не уменьшает MSS до
-	// размера mesh-пути. Поэтому ставим --set-mss в обе стороны: SYN клиента
-	// (liberator -> out) и SYN-ACK интернета (out -> liberator).
+	// Максимальный MSS для туннеля. Это аналог официального правила
+	// amneziawg "tcp option maxseg size > 1336 -> 1336":匹配 только MSS
+	// больше cfg.MSS и понижает его. Клиент с меньшим MSS (например, 1200)
+	// не трогается — увеличивать MSS нельзя, иначе получаем PMTU-blackhole.
 	if eg.cfg.MSS > 0 {
 		mss := strconv.Itoa(eg.cfg.MSS)
+		match := fmt.Sprintf("%d:65535", eg.cfg.MSS+1)
 		if err := eg.ipt.InsertUnique("mangle", "FORWARD", 1,
-			"-i", eg.cfg.IfaceInName, "-o", eg.cfg.IfaceOutName,
 			"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
+			"-m", "tcpmss", "--mss", match,
 			"-j", "TCPMSS", "--set-mss", mss,
 		); err != nil {
-			return fmt.Errorf("failed to setup tunnel MSS clamp (in): %w", err)
-		}
-		if err := eg.ipt.InsertUnique("mangle", "FORWARD", 1,
-			"-i", eg.cfg.IfaceOutName, "-o", eg.cfg.IfaceInName,
-			"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
-			"-j", "TCPMSS", "--set-mss", mss,
-		); err != nil {
-			return fmt.Errorf("failed to setup tunnel MSS clamp (out): %w", err)
+			return fmt.Errorf("failed to setup tunnel MSS max clamp: %w", err)
 		}
 	}
 
@@ -321,24 +315,15 @@ func (eg *TUNIface) close() error {
 		}
 		if eg.cfg.MSS > 0 {
 			mss := strconv.Itoa(eg.cfg.MSS)
-			rules = append(rules,
-				struct {
-					table, chain string
-					args         []string
-				}{"mangle", "FORWARD", []string{
-					"-i", eg.cfg.IfaceInName, "-o", eg.cfg.IfaceOutName,
-					"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
-					"-j", "TCPMSS", "--set-mss", mss,
-				}},
-				struct {
-					table, chain string
-					args         []string
-				}{"mangle", "FORWARD", []string{
-					"-i", eg.cfg.IfaceOutName, "-o", eg.cfg.IfaceInName,
-					"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
-					"-j", "TCPMSS", "--set-mss", mss,
-				}},
-			)
+			match := fmt.Sprintf("%d:65535", eg.cfg.MSS+1)
+			rules = append(rules, struct {
+				table, chain string
+				args         []string
+			}{"mangle", "FORWARD", []string{
+				"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
+				"-m", "tcpmss", "--mss", match,
+				"-j", "TCPMSS", "--set-mss", mss,
+			}})
 		}
 		for _, rule := range rules {
 			if err := eg.ipt.DeleteIfExists(rule.table, rule.chain, rule.args...); err != nil {
