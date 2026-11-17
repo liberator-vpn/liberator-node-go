@@ -15,6 +15,13 @@ import (
 // без копирования в отдельный flatBuffer.
 const Headroom = 10
 
+// minRawCap — capacity буфера сообщения. maxSize ограничивает размер
+// принимаемого пакета (MTU + запас), а rawCap даёт amneziawg-go/tun
+// запас для handleGRO: он склеивает TCP-пакеты через append в этот же
+// буфер. С 4 КБ GRO склеивал ~3 пакета и писал в TUN почти по одному
+// пакету; 64 КБ возвращает старое поведение flatBuffer, но без копии.
+const minRawCap = 65535
+
 type HoleInfo struct {
 	SrcIP    uint32
 	DstIP    uint32
@@ -55,11 +62,15 @@ func NewDGMessagePool(maxSize int) DGMessagePool {
 	if maxSize <= 0 {
 		maxSize = 2048
 	}
+	rawCap := maxSize
+	if rawCap < minRawCap {
+		rawCap = minRawCap
+	}
 	return &dgMessagePoolImpl{
 		maxSize: maxSize,
 		pool: sync.Pool{
 			New: func() any {
-				raw := make([]byte, Headroom+maxSize)
+				raw := make([]byte, Headroom+rawCap)
 				msg := &DatagramMessage{
 					Data:      raw[Headroom:Headroom],
 					raw:       raw,

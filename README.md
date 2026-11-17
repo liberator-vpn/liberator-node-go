@@ -194,10 +194,13 @@ IP-туннельный протокол (AWG/WireGuard) или отдельны
   `UDP_GRO` не использует, поэтому mesh это не затрагивает.
 - **TUN без лишней копии**: pooled-буфер `dgmessage` содержит 10 байт
   headroom под virtio-заголовок, поэтому `writeLoop` отдаёт `Raw()` напрямую
-  в `TUN.Write`. Слоты read-буфера ограничены `MTU + headroom`, а не 64 КБ.
+  в `TUN.Write`. Ёмкость буфера (64 КБ) оставлена под `handleGRO`: он
+  склеивает TCP-пакеты в GSO-суперпакет, и на один `write()` приходится
+  несколько пакетов. Слоты read-буфера ограничены `MTU + headroom`.
 - **Mesh без фрагментации**: датаграмма до 1400 байт уходит одной QUIC
-  DATAGRAM (`InitialPacketSize=1452`); фрагментация остаётся только
-  fallback'ом по `DatagramTooLargeError`.
+  DATAGRAM; `InitialPacketSize` не форсируется (на части путей MTU < 1500),
+  лимит поднимает PMTUD, а фрагментация остаётся fallback'ом по
+  `DatagramTooLargeError`.
 - **Роутер**: по `GOMAXPROCS` воркеров на upstream и downstream (на 3 vCPU —
   3+3). Метрики трафика считаются на батч, а не на пакет.
 - **Быстрый путь policy**: если user/group/domain/egress-правил нет,

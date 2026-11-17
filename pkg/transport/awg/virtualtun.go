@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 
@@ -127,7 +128,7 @@ func (t *ChannelTun) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 			select {
 			case pkt2 := <-t.in:
 				if len(pkt2) == 0 {
-					break
+					return n, nil
 				}
 				if len(pkt2) > len(bufs[i])-offset {
 					// Если не влезает, возвращаем уже прочитанные
@@ -138,8 +139,28 @@ func (t *ChannelTun) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 				total += len(pkt2)
 				n++
 			default:
-				// Без runtime.Gosched(): лишний scheduler round-trip на
-				// каждый мелкий батч. Батчинг даёт GRO/очередь, а не yield.
+				// Если набрали мало пакетов, уступаем квант времени CPU,
+				// чтобы router-воркеры успели доложить ещё пакеты в ig.in.
+				// Без этого AWG получает по одному пакету за round-trip:
+				// upload становится latency-bound, throughput и CPU падают.
+				if n < 4 {
+					runtime.Gosched()
+					select {
+					case pkt2, ok2 := <-t.in:
+						if !ok2 || len(pkt2) == 0 {
+							return n, nil
+						}
+						if len(pkt2) > len(bufs[n])-offset {
+							return n, nil
+						}
+						copy(bufs[n][offset:], pkt2)
+						sizes[n] = len(pkt2)
+						total += len(pkt2)
+						n++
+						continue
+					default:
+					}
+				}
 				return n, nil
 			}
 		}

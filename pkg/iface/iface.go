@@ -7,6 +7,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -452,8 +453,12 @@ func (eg *TUNIface) writeLoop(toEgr chan *dgmessage.DatagramMessage, batchSize i
 		}
 
 		// Пытаемся добрать пачку до batchSize из канала без блокировки.
-		// Без runtime.Gosched(): с GRO батчи приходят крупными, а yield на
-		// каждый мелкий батч только лишний раз дергает планировщик.
+		// Gosched на мелком батче важен: он даёт router-воркерам доложить
+		// следующие пакеты, иначе writeLoop уходит в ping-pong по одному
+		// пакету (latency-bound, throughput падает вместе с CPU).
+		if idx < 4 {
+			runtime.Gosched()
+		}
 		for idx < batchSize {
 			select {
 			case msg := <-toEgr:
